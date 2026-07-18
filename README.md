@@ -141,4 +141,3 @@ The envelopes are also self-teaching: every reply carries a `next` array of conc
 ## License
 
 pairmux is released under the MIT License. See [LICENSE](./LICENSE).
-</content>

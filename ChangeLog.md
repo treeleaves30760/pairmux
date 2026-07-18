@@ -19,5 +19,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Output shaping and `pairmux.v1` JSON envelopes: every command replies through a self-describing envelope (`--json`) carrying `status`, ANSI-stripped and carriage-return-collapsed `output`, a `truncated.get_full` pointer when output is elided, `notes`, `next` step hints, and stable `error.code` values (`E_NO_TERMINAL`, `E_EXISTS`, `E_BUSY`, `E_DEAD`, `E_BAD_ARGS`, `E_TMUX`, `E_INTERNAL`).
 
 [Unreleased]: https://github.com/treeleaves30760/pairmux/commits/main
-</content>
-</invoke>

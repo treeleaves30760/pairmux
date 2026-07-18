@@ -1,0 +1,140 @@
+---
+title: Getting Started
+slug: /
+description: Install pairmux and run the core loop in 60 seconds.
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# pairmux
+
+**Reliable terminal primitives for AI agents on tmux — and humans can watch, attach, and help in the same live terminal.**
+
+Driving a raw terminal is hard for agents for three separate reasons:
+
+- **Timing.** After sending a command, an agent has no signal for when it is done, so it guesses `sleep N` — and reads half-finished output or wastes time.
+- **Information quality.** `capture-pane` shows only the current viewport, mangled with ANSI escapes, spinners, and progress bars, with no exit code and no "is it finished?" signal.
+- **Human access.** Headless PTY tools lock humans out entirely, so no one can step in when the agent is stuck.
+
+pairmux is an **ACI (Agent-Computer Interface) layer** on top of tmux that closes all three: a blocking CLI that returns exactly when a command finishes, a journal that keeps clean full history with exit codes, and native `tmux attach` so a human can take over and hand back.
+
+## Requirements
+
+- **tmux >= 3.2** (for stable `pipe-pane` and pane user-option behavior).
+- **macOS or Linux.** On Windows, use WSL.
+- No runtime dependencies otherwise — pairmux is a single static Go binary.
+
+## Install
+
+<Tabs groupId="install">
+<TabItem value="uv" label="uv / pipx" default>
+
+pairmux publishes platform wheels that bundle the binary, so `uv` (or `pipx`) installs it like any tool:
+
+```bash
+uv tool install pairmux
+# or: pipx install pairmux
+```
+
+</TabItem>
+<TabItem value="curl" label="curl | bash">
+
+The installer detects your OS and architecture, downloads the matching release, and checks for tmux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.sh | bash
+```
+
+</TabItem>
+<TabItem value="brew" label="Homebrew">
+
+```bash
+brew install treeleaves30760/tap/pairmux
+```
+
+</TabItem>
+</Tabs>
+
+## Verify your environment
+
+`pairmux doctor` probes everything pairmux depends on and prints an actionable report:
+
+```bash
+pairmux doctor
+```
+
+```text
+pairmux doctor
+
+✓  tmux        3.7b at /opt/homebrew/bin/tmux (>= 3.2)
+✓  state dir   writable: ~/.local/state/pairmux
+✓  live probe  zsh: hooks;  bash: hooks-no-C;  dash: sentinel
+✓  notifier    osascript at /usr/bin/osascript (macOS notifications available)
+```
+
+The **live probe** line reports which completion-detection tier each shell reaches — see [Concepts](./concepts.md#three-tier-completion-detection).
+
+## Quick start
+
+Every command accepts `--json` for a machine-readable [`pairmux.v1` envelope](./cli-reference.md#the-envelope-schema); without it you get a friendly text block. The examples below show the JSON an agent sees.
+
+### 1. Open a terminal
+
+```bash
+pairmux new --name build
+```
+
+```json
+{"schema":"pairmux.v1","ok":true,"status":"created","terminal":"build","mode":"hooks","next":["pairmux run build \"echo hello\""]}
+```
+
+This opens a tmux window, starts capturing its output into a journal, and injects shell integration so completions are detected precisely (`mode: hooks`).
+
+### 2. Run a command and block until it finishes
+
+No `sleep`, no guessing — `run` returns when the command actually completes, with the exit code and duration:
+
+```bash
+pairmux run build "echo hello world"
+```
+
+```json
+{"schema":"pairmux.v1","ok":true,"status":"done","terminal":"build","mode":"hooks","exit_code":0,"duration_ms":101,"output":"hello world"}
+```
+
+### 3. Long-running commands: the run → wait → peek loop
+
+If a command outlives `--timeout` (default 60s), `run` returns `status: running` with the current tail instead of failing. You then keep waiting or look whenever you like:
+
+```bash
+pairmux run build "make -j4" --timeout 30s   # -> status: running, with a tail + next steps
+pairmux wait build --idle 800                 # block until output goes quiet for 800ms
+pairmux peek build                            # read-only snapshot, any time
+```
+
+See the [long-running commands guide](./guides/long-running-commands.md).
+
+### 4. Interactive programs
+
+When a command goes quiet on a prompt, pairmux reports `awaiting-input` and tells you exactly how to answer:
+
+```bash
+pairmux run deploy "terraform apply"   # -> status: awaiting-input on the [y/N] prompt
+pairmux send deploy --text yes --enter
+```
+
+Passwords are special: pairmux refuses to guess and hands off to a human. See [interactive programs](./guides/interactive-programs.md) and [human collaboration](./guides/human-collaboration.md).
+
+### 5. Humans jump into the same terminal
+
+```bash
+pairmux attach build   # take over the live tmux session
+pairmux watch          # live dashboard of every terminal
+```
+
+## Next steps
+
+- [CLI Reference](./cli-reference.md) — every command, every flag, one real JSON example each, and the full envelope schema.
+- [Concepts](./concepts.md) — why pairmux is built the way it is: tmux as a state engine, the journal, three-tier completion detection.
+- [Guides](./guides/long-running-commands.md) — task-oriented playbooks.

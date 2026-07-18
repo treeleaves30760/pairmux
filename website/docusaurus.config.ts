@@ -21,7 +21,7 @@ const config: Config = {
   trailingSlash: false,
 
   onBrokenLinks: 'throw',
-  onBrokenMarkdownLinks: 'throw',
+  onBrokenAnchors: 'throw',
 
   i18n: {
     defaultLocale: 'en',
@@ -33,6 +33,9 @@ const config: Config = {
     // command-line snippets never trip MDX's JSX parser.
     format: 'detect',
     mermaid: true,
+    hooks: {
+      onBrokenMarkdownLinks: 'throw',
+    },
   },
   themes: ['@docusaurus/theme-mermaid'],
 
@@ -105,4 +108,3 @@ const config: Config = {
 };
 
 export default config;
-</content>
