@@ -177,6 +177,10 @@ func TestNewReady(t *testing.T) {
 	if env.Mode != string(core.ModeHooks) {
 		t.Fatalf("mode = %q, want hooks", env.Mode)
 	}
+	listed, code := pmx(t, e, "ls")
+	if code != 0 || statusOf(listed, "t1") != "idle" {
+		t.Fatalf("new terminal is not live in ls: code=%d env=%+v", code, listed)
+	}
 }
 
 func TestRunExitCodes(t *testing.T) {

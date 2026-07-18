@@ -272,12 +272,12 @@ func TestNewWindow(t *testing.T) {
 
 func TestListManaged(t *testing.T) {
 	out := strings.Join([]string{
-		"%0\tmain\t\tzsh\t0",          // unmanaged: empty @pairmux_name
-		"%1\twork\tt1\tvim\t0",        // managed, alive
-		"%2\tbuild\tt2\tbash\t1",      // managed, dead
-		"",                            // blank line ignored
-		"%3\tx\tt3\tgit\tpush\t0",     // tab inside current_command
-		"malformed-line-without-tabs", // too few fields, skipped
+		"%0|main||zsh|0",     // unmanaged: empty @pairmux_name
+		"%1|work|t1|vim|0",   // managed, alive
+		"%2|build|t2|bash|1", // managed, dead
+		"",                   // blank line ignored
+		"%3|x|t3|git|push|0", // separator inside current_command
+		"malformed-line",     // too few fields, skipped
 	}, "\n")
 	r := &recRunner{outs: []string{out}}
 	got, err := newClient(r).ListManaged()
@@ -287,7 +287,7 @@ func TestListManaged(t *testing.T) {
 	want := []PaneInfo{
 		{PaneID: "%1", Window: "work", Name: "t1", CurrentCmd: "vim", Dead: false},
 		{PaneID: "%2", Window: "build", Name: "t2", CurrentCmd: "bash", Dead: true},
-		{PaneID: "%3", Window: "x", Name: "t3", CurrentCmd: "git\tpush", Dead: false},
+		{PaneID: "%3", Window: "x", Name: "t3", CurrentCmd: "git|push", Dead: false},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ListManaged() =\n %#v\nwant\n %#v", got, want)

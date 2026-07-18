@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `wait --idle` now treats output silence as a prompt to refresh terminal state, not as proof that a
   command completed. Quiet running commands continue waiting; prompts and dead panes surface their
   actual status.
+- Managed-pane discovery now uses a printable tmux format separator. Alpine's C locale can sanitize
+  control-character tabs into underscores, which previously made a newly created live pane look dead.
 - Bounded `peek` and default-`log` responses now report skipped raw prefixes as
   `truncated.omitted_bytes` and provide the executable `pairmux log NAME --range 1:end` recovery.
   Explicit `log --grep`, `--range`, and `--cmd` selections read the complete requested history;

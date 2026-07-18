@@ -180,7 +180,12 @@ type PaneInfo struct {
 	Dead       bool
 }
 
-const listFormat = "#{pane_id}\t#{window_name}\t#{@pairmux_name}\t#{pane_current_command}\t#{pane_dead}"
+// tmux may sanitize control characters in format output under a non-UTF-8
+// locale (notably Alpine's default C locale), turning tabs into underscores.
+// A printable separator is stable across those environments. The surrounding
+// fields are either tmux identifiers or pairmux-controlled names; if the
+// current command itself contains a separator, ListManaged joins it back.
+const listFormat = "#{pane_id}|#{window_name}|#{@pairmux_name}|#{pane_current_command}|#{pane_dead}"
 
 // ListManaged lists panes across all sessions on the socket, keeping only those
 // tagged with a non-empty @pairmux_name.
@@ -194,7 +199,7 @@ func (c *Client) ListManaged() ([]PaneInfo, error) {
 		if line == "" {
 			continue
 		}
-		parts := strings.Split(line, "\t")
+		parts := strings.Split(line, "|")
 		if len(parts) < 5 {
 			continue
 		}
@@ -209,7 +214,7 @@ func (c *Client) ListManaged() ([]PaneInfo, error) {
 			PaneID:     parts[0],
 			Window:     parts[1],
 			Name:       name,
-			CurrentCmd: strings.Join(parts[3:last], "\t"),
+			CurrentCmd: strings.Join(parts[3:last], "|"),
 			Dead:       parts[last] == "1",
 		})
 	}
