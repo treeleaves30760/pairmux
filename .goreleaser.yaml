@@ -1,0 +1,144 @@
+# GoReleaser configuration for pairmux.
+# Schema: v2 (goreleaser >= 2). Validate with `make release-check`.
+# Distribution strategy: see PLAN.md §5 (GitHub Releases + install.sh, PyPI
+# wheels, Homebrew tap, .deb/.rpm).
+version: 2
+
+project_name: pairmux
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: pairmux
+    main: ./cmd/pairmux
+    binary: pairmux
+    # Static, dependency-free binary: no cgo so cross-compiles cleanly.
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    # -s -w strips the symbol table and DWARF (smaller binary); the -X stamp
+    # mirrors the Makefile's LDFLAGS so `pairmux version` reports the tag.
+    ldflags:
+      - -s -w
+      - -X github.com/treeleaves30760/pairmux/internal/version.Version={{ .Version }}
+    # Reproducible builds: pin binary mtime to the commit timestamp.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: pairmux
+    ids:
+      - pairmux
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    # README.md is authored by a sibling and lives at the repo root; man page is
+    # committed at man/pairmux.1. Both ship inside every archive alongside the
+    # license.
+    files:
+      - LICENSE
+      - README.md
+      - man/pairmux.1
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+nfpms:
+  - id: pairmux
+    ids:
+      - pairmux
+    package_name: pairmux
+    vendor: treeleaves30760
+    homepage: https://github.com/treeleaves30760/pairmux
+    maintainer: treeleaves30760 <treeleaves30760.ai@gmail.com>
+    description: |-
+      Reliable terminal primitives for AI agents on tmux.
+      pairmux is an Agent-Computer Interface layer that lets AI agents drive
+      real terminals with a blocking, self-teaching CLI while humans watch,
+      attach, and help.
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    section: utils
+    priority: optional
+    bindir: /usr/bin
+    # Hard dependency on tmux >= 3.2 (PLAN.md §5). The Debian control syntax is
+    # `tmux (>= 3.2)`; rpm's Requires syntax differs, so it is overridden below.
+    dependencies:
+      - tmux (>= 3.2)
+    overrides:
+      rpm:
+        dependencies:
+          - tmux >= 3.2
+    contents:
+      - src: ./man/pairmux.1
+        dst: /usr/share/man/man1/pairmux.1
+        file_info:
+          mode: 0644
+      - src: ./LICENSE
+        dst: /usr/share/doc/pairmux/copyright
+        file_info:
+          mode: 0644
+
+# Homebrew tap. NOTE: the older `brews` (formula) key was removed in
+# goreleaser v2.16, so this uses `homebrew_casks`. GoReleaser migrated formulae
+# to casks because casks now install pre-compiled binaries on both macOS and
+# Linuxbrew (PLAN.md §5 wants both). Casks have no `test do` stanza, so the
+# `pairmux version` smoke test that a formula would run lives in CI instead
+# (install.sh runs it post-install; see .github/workflows).
+homebrew_casks:
+  - name: pairmux
+    ids:
+      - pairmux
+    # Publishes the cask to the tap repo. Requires a token with write access to
+    # treeleaves30760/homebrew-tap (secret HOMEBREW_TAP_GITHUB_TOKEN; see
+    # .github/workflows/release.yml).
+    repository:
+      owner: treeleaves30760
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: https://github.com/treeleaves30760/pairmux
+    description: Reliable terminal primitives for AI agents on tmux
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    commit_msg_template: "brew: pairmux {{ .Tag }}"
+    # Hard dependency on tmux (PLAN.md §5); casks express it as a formula dep.
+    dependencies:
+      - formula: tmux
+    # The CLI binary and man page shipped inside the release archive.
+    binaries:
+      - pairmux
+    manpages:
+      - man/pairmux.1
+
+release:
+  github:
+    owner: treeleaves30760
+    name: pairmux
+  draft: false
+  prerelease: auto
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch

@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # create GitHub releases and upload assets
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # goreleaser needs full history and tags
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: release --clean
+        env:
+          # Provided automatically by Actions; used to create the GitHub release.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # REQUIRED SECRET: a personal access token (classic `repo` scope, or a
+          # fine-grained token with Contents: write) on the tap repository
+          # treeleaves30760/homebrew-tap. The `brews` block in .goreleaser.yaml
+          # uses it to push the updated formula. Set it as a repository or org
+          # secret named HOMEBREW_TAP_GITHUB_TOKEN. Without it, the release still
+          # succeeds but the Homebrew formula push fails.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+  # PyPI platform wheels are built and published AFTER goreleaser, reusing the
+  # binaries it just released (PLAN.md §5 path 2: platform-tagged wheels, no
+  # sdist, so users never compile). packaging/pypi/build_wheels.py is owned by a
+  # sibling agent; this job only wires it into the release pipeline.
+  pypi:
+    needs: goreleaser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Install build tooling
+        run: python -m pip install --upgrade build twine uv
+      - name: Build and publish platform wheels
+        env:
+          # REQUIRED SECRET: a PyPI API token, set as a repository or org secret
+          # named PYPI_TOKEN. Consumed by build_wheels.py (sibling-owned) to
+          # publish the wheels.
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          # build_wheels.py is authored by a sibling agent (packaging/pypi/).
+          # Guarded so a release does not fail while that script is still
+          # landing; remove the guard once it is committed.
+          if [ -f packaging/pypi/build_wheels.py ]; then
+            python packaging/pypi/build_wheels.py
+          else
+            echo "packaging/pypi/build_wheels.py not present yet; skipping PyPI publish"
+          fi
