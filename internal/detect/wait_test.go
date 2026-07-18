@@ -115,6 +115,28 @@ func TestWaitCompletionTimeout(t *testing.T) {
 	}
 }
 
+func TestWaitCommandReturnsQuietPromptBeforeTimeout(t *testing.T) {
+	j := mustOpen(t)
+	if err := os.WriteFile(j.RawPath(), []byte("Continue [y/N]? "), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Second)
+	if err := os.Chtimes(j.RawPath(), old, old); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	res, err := WaitCommand(j, 0, core.ModeHooks, 5*time.Second, 20*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != OutcomeAwaitingInput || res.Prompt != "Continue [y/N]?" {
+		t.Fatalf("result = %+v, want awaiting-input prompt", res)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("prompt-aware wait took %v, want well before command timeout", elapsed)
+	}
+}
+
 // TestWaitCompletionModeSelect confirms sentinel mode ignores a D mark and
 // waits for the sentinel; hooks mode does the reverse.
 func TestWaitCompletionModeSelect(t *testing.T) {

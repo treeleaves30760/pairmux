@@ -36,6 +36,9 @@ func (c *Ctx) cmdDoctor(args []string) int {
 	if _, err := parseFlags(args, flagSpec{}); err != nil {
 		return c.usage("pairmux doctor", err.Error())
 	}
+	if rc, rejected := c.rejectInvalidSocket(); rejected {
+		return rc
+	}
 
 	tmuxCheck, tmuxOK := c.checkTmux()
 	checks := []doctorCheck{
@@ -79,7 +82,7 @@ func (c *Ctx) checkTmux() (doctorCheck, bool) {
 // checkStateDir confirms the state root can be created and written. c.StateDir
 // is state.BaseDir() for a normal invocation.
 func (c *Ctx) checkStateDir() doctorCheck {
-	dir := c.StateDir
+	dir := c.namespaceDir()
 	ck := doctorCheck{name: "state dir"}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		ck.detail = "cannot create " + dir + ": " + err.Error()
@@ -243,16 +246,14 @@ func probeShell(cl *tmux.Client, stateDir string, idx int, shell string) shellTi
 		return res
 	}
 
-	// Send a trivial command; in sentinel mode append the same suffix `run` uses
-	// so completion is detectable without shell hooks.
-	sent := "true"
-	if mode == core.ModeSentinel {
-		sent = "true" + core.SentinelSuffix
-	}
+	// Send a trivial command. If a nominal hooks shell emitted no ready mark,
+	// exercise the same shell-specific sentinel fallback that `new` records and
+	// `run` subsequently uses.
+	sent, completionMode := doctorProbeCommand(shell, mode, gotHooks)
 	sendOffset := j.Size()
 	_ = cl.SendLiteral(paneID, sent)
 	_ = cl.SendKeys(paneID, "Enter")
-	wr, err := detect.WaitCompletion(j, sendOffset, mode, 5*time.Second, 0)
+	wr, err := detect.WaitCompletion(j, sendOffset, completionMode, 5*time.Second, 0)
 	gotDone := err == nil && wr.Outcome == detect.OutcomeDone
 
 	// Hooks tier fidelity: bash 3.2 emits A/D but never C (no PS0), which
@@ -275,6 +276,17 @@ func probeShell(cl *tmux.Client, stateDir string, idx int, shell string) shellTi
 	return res
 }
 
+func doctorProbeCommand(shell string, preparedMode core.Mode, gotHooks bool) (string, core.Mode) {
+	completionMode := preparedMode
+	if preparedMode == core.ModeHooks && !gotHooks {
+		completionMode = core.ModeSentinel
+	}
+	if completionMode == core.ModeSentinel {
+		return "true" + shellhooks.SentinelSuffix(shell), completionMode
+	}
+	return "true", completionMode
+}
+
 // deriveTier maps the observed marks to a tier label:
 //
 //	hooks                    A + C + D — full shell integration
@@ -294,8 +306,10 @@ func deriveTier(mode core.Mode, gotHooks, gotC, gotDone bool) (tier, note string
 		return "hooks", "OSC 133 A + C + D detected"
 	case gotHooks && gotDone:
 		return "hooks-no-C", "A + D but no C (expected for bash 3.2): completion detection works, human-interleave correlation is weaker"
+	case !gotHooks && gotDone:
+		return "hooks-degraded->sentinel", "no prompt mark (A); sentinel fallback verified"
 	case !gotHooks:
-		return "hooks-degraded->sentinel", "no prompt mark (A); completion falls back to sentinel"
+		return "hooks-degraded->sentinel", "no prompt mark (A); sentinel fallback did not complete"
 	default:
 		return "hooks-degraded->sentinel", "prompt mark (A) seen but no completion mark (D)"
 	}

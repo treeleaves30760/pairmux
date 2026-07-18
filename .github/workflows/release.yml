@@ -6,63 +6,171 @@ on:
       - 'v*'
 
 permissions:
-  contents: write # create GitHub releases and upload assets
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  goreleaser:
+  # Tag pushes do not run the branch-only CI workflow. Build every native
+  # artifact once, verify those exact bytes, then preserve them for publishing.
+  validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          fetch-depth: 0 # goreleaser needs full history and tags
-      - uses: actions/setup-go@v5
+          fetch-depth: 0 # GoReleaser needs full history and tags
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
-      - uses: goreleaser/goreleaser-action@v6
-        with:
-          version: '~> v2'
-          args: release --clean
-        env:
-          # Provided automatically by Actions; used to create the GitHub release.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # REQUIRED SECRET: a personal access token (classic `repo` scope, or a
-          # fine-grained token with Contents: write) on the tap repository
-          # treeleaves30760/homebrew-tap. The `brews` block in .goreleaser.yaml
-          # uses it to push the updated formula. Set it as a repository or org
-          # secret named HOMEBREW_TAP_GITHUB_TOKEN. Without it, the release still
-          # succeeds but the Homebrew formula push fails.
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-
-  # PyPI platform wheels are built and published AFTER goreleaser, reusing the
-  # binaries it just released (PLAN.md §5 path 2: platform-tagged wheels, no
-  # sdist, so users never compile). packaging/pypi/build_wheels.py is owned by a
-  # sibling agent; this job only wires it into the release pipeline.
-  pypi:
-    needs: goreleaser
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.x'
-      - name: Install build tooling
-        run: python -m pip install --upgrade build twine uv
-      - name: Build and publish platform wheels
-        env:
-          # REQUIRED SECRET: a PyPI API token, set as a repository or org secret
-          # named PYPI_TOKEN. Consumed by build_wheels.py (sibling-owned) to
-          # publish the wheels.
-          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.ref_name }}
+      - name: Install integration and artifact inspection dependencies
         run: |
-          # build_wheels.py is authored by a sibling agent (packaging/pypi/).
-          # Guarded so a release does not fail while that script is still
-          # landing; remove the guard once it is committed.
-          if [ -f packaging/pypi/build_wheels.py ]; then
-            python packaging/pypi/build_wheels.py
-          else
-            echo "packaging/pypi/build_wheels.py not present yet; skipping PyPI publish"
+          sudo apt-get update
+          sudo apt-get install -y rpm shellcheck tmux
+      - name: Validate the release tag and its commit subject
+        run: |
+          python3 packaging/pypi/build_wheels.py \
+            --version "$GITHUB_REF_NAME" \
+            --validate-version-only
+          ./scripts/validate-commit-subjects.sh --commit "$GITHUB_SHA"
+      - name: Run static checks and unit tests
+        run: |
+          go vet ./...
+          go test -race -count=1 ./...
+          python3 -m unittest discover -s packaging/pypi -p 'test_*.py'
+          shellcheck install.sh scripts/*.sh
+          ./scripts/test-install.sh
+          ./scripts/validate-commit-subjects.sh --self-test
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+      - name: Run tmux integration tests
+        run: |
+          tmux -V
+          go test -race -tags integration -count=1 ./test/...
+      - name: Build the complete release without publishing
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+        with:
+          version: v2.17.0
+          args: release --clean --skip=publish
+      - name: Verify and stage native release assets
+        run: |
+          python3 packaging/pypi/verify_release.py \
+            --dist-dir dist \
+            --tag "$GITHUB_REF_NAME" \
+            --commit "$GITHUB_SHA" \
+            --out-dir dist/release-assets
+          for package in dist/release-assets/*.deb; do
+            dpkg-deb --info "$package" >/dev/null
+            dpkg-deb --contents "$package" | grep -q '/usr/bin/pairmux$'
+          done
+          for package in dist/release-assets/*.rpm; do
+            rpm -qpl "$package" | grep -q '/usr/bin/pairmux$'
+          done
+      - name: Build and verify all platform wheels from the same binaries
+        run: |
+          python3 packaging/pypi/build_wheels.py \
+            --version "$GITHUB_REF_NAME" \
+            --dist-dir dist \
+            --out-dir dist/wheels \
+            --check
+          test "$(find dist/wheels -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')" -eq 4
+      - name: Smoke-test the Linux runner wheel and package version
+        run: |
+          expected_version=${GITHUB_REF_NAME#v}
+          python3 -m venv dist/smoke-venv
+          dist/smoke-venv/bin/python -m pip install --no-deps \
+            dist/wheels/*manylinux_2_17_x86_64*.whl
+          test "$(dist/smoke-venv/bin/pairmux version)" = "$expected_version"
+          mkdir dist/smoke-deb
+          dpkg-deb -x dist/release-assets/*linux_amd64.deb dist/smoke-deb
+          test "$(dist/smoke-deb/usr/bin/pairmux version)" = "$expected_version"
+      - name: Preserve verified native release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: validated-release-assets
+          path: dist/release-assets/*
+          if-no-files-found: error
+          retention-days: 1
+      - name: Preserve verified wheels
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: validated-wheels
+          path: dist/wheels/*.whl
+          if-no-files-found: error
+          retention-days: 1
+
+  # Publishing never rebuilds. A draft holds the exact GitHub assets while
+  # PyPI is updated; only after PyPI succeeds does the release become visible.
+  publish:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: 0.11.16
+      - name: Download verified native release assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: validated-release-assets
+          path: dist/release-assets
+      - name: Download verified wheels
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: validated-wheels
+          path: dist/wheels
+      - name: Preflight credentials and artifact set
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN"
+          test -n "$UV_PUBLISH_TOKEN"
+          test "$(find dist/release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 9
+          test "$(find dist/wheels -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')" -eq 4
+          gh auth status
+          uv publish --dry-run dist/wheels/*.whl
+          if release=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" 2>/dev/null); then
+            test "$(jq -r .draft <<<"$release")" = true || {
+              echo "release $GITHUB_REF_NAME is already published" >&2
+              exit 1
+            }
           fi
+      - name: Stage exact assets in a draft GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            prerelease=()
+            case "$GITHUB_REF_NAME" in
+              *-*) prerelease=(--prerelease) ;;
+            esac
+            gh release create "$GITHUB_REF_NAME" \
+              --draft \
+              --verify-tag \
+              --generate-notes \
+              --title "$GITHUB_REF_NAME" \
+              "${prerelease[@]}"
+          fi
+          gh release upload "$GITHUB_REF_NAME" dist/release-assets/* --clobber
+      - name: Publish the exact verified wheels to PyPI
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          uv publish \
+            --check-url https://pypi.org/simple/pairmux/ \
+            dist/wheels/*.whl
+      - name: Publish the completed GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          case "$GITHUB_REF_NAME" in
+            *-*) gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease ;;
+            *) gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease=false ;;
+          esac

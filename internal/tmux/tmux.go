@@ -7,8 +7,10 @@ package tmux
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,6 +29,18 @@ type Client struct {
 	runner runner
 }
 
+// ErrInvalidSocket is returned before exec when a -L socket name could escape
+// tmux's per-user socket directory or otherwise falls outside pairmux's
+// conservative portable grammar.
+var ErrInvalidSocket = errors.New("tmux: invalid socket name")
+
+var socketNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
+
+// ValidSocketName reports whether socket is safe to pass to tmux -L. tmux
+// accepts path separators (including ../), so argv separation alone does not
+// prevent socket-directory traversal.
+func ValidSocketName(socket string) bool { return socketNameRe.MatchString(socket) }
+
 // New returns a Client for the given socket; "" selects core.DefaultSocket.
 func New(socket string) *Client {
 	if socket == "" {
@@ -37,6 +51,9 @@ func New(socket string) *Client {
 
 // run prepends the "tmux -L <socket>" prefix and dispatches to the runner.
 func (c *Client) run(args ...string) (string, error) {
+	if !ValidSocketName(c.Socket) {
+		return "", fmt.Errorf("%w: %q", ErrInvalidSocket, c.Socket)
+	}
 	argv := make([]string, 0, len(args)+3)
 	argv = append(argv, "tmux", "-L", c.Socket)
 	argv = append(argv, args...)

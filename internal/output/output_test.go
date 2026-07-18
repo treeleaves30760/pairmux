@@ -246,3 +246,28 @@ func TestHumanNotesBlock(t *testing.T) {
 		t.Fatalf("notes block misplaced or malformed, want to contain:\n%q\ngot:\n%s", block, out)
 	}
 }
+
+func TestHumanByteOnlyTruncationIsVisible(t *testing.T) {
+	var buf bytes.Buffer
+	Emit(&buf, false, Envelope{
+		OK: true, Status: "ok", Output: "tail",
+		Truncated: &TruncInfo{OmittedBytes: 65536, GetFull: "pairmux log t1 --range 1:end"},
+	})
+	out := buf.String()
+	for _, want := range []string{"65536 earlier byte(s) omitted", "pairmux log t1 --range 1:end"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("byte-only truncation missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestJSONIncludesOmittedBytes(t *testing.T) {
+	var buf bytes.Buffer
+	Emit(&buf, true, Envelope{
+		OK: true, Status: "ok",
+		Truncated: &TruncInfo{OmittedBytes: 42, GetFull: "pairmux log t1 --range 1:end"},
+	})
+	if !strings.Contains(buf.String(), `"omitted_bytes":42`) {
+		t.Fatalf("omitted byte count missing from JSON: %s", buf.String())
+	}
+}

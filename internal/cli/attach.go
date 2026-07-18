@@ -41,6 +41,20 @@ func (c *Ctx) cmdAttach(args []string) int {
 	if err != nil {
 		return c.usage("pairmux attach [name]", err.Error())
 	}
+	if len(pos) > 1 {
+		return c.usage("pairmux attach [name]", "unexpected argument "+pos[1])
+	}
+	if rc, rejected := c.rejectInvalidSocket(); rejected {
+		return rc
+	}
+
+	var name string
+	if len(pos) > 0 {
+		name = pos[0]
+		if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
+			return rc
+		}
+	}
 
 	// Environment refusals: politely decline rather than nest tmux or exec into
 	// a pipe. Both are E_BAD_ARGS with a concrete escape hatch.
@@ -55,13 +69,8 @@ func (c *Ctx) cmdAttach(args []string) int {
 			"run pairmux attach from an interactive shell")
 	}
 
-	var name string
-	if len(pos) > 0 {
-		name = pos[0]
-	}
-
 	if name != "" {
-		term, err := state.Resolve(c.Tmux, name)
+		term, err := state.ResolveAt(c.Tmux, c.StateDir, name)
 		if err != nil {
 			if errors.Is(err, state.ErrNotFound) {
 				return c.noTerminal(name)

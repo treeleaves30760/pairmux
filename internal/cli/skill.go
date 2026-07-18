@@ -17,7 +17,18 @@ const skillEmbedRoot = "skills/pairmux"
 
 // skillTargetNames is the ordered list of installable targets, paths per
 // pairmux-skills/install-map.md.
-var skillTargetNames = []string{"claude-code", "codex", "gemini", "cursor", "opencode", "agents"}
+var skillTargetNames = []string{
+	"claude-code",
+	"codex",
+	"gemini",
+	"cursor",
+	"opencode",
+	"copilot",
+	"windsurf",
+	"kiro",
+	"amp",
+	"agents",
+}
 
 // skillTargetDir resolves a target to the skills/pairmux directory it installs
 // into. projectRelative marks targets resolved against the current project
@@ -39,6 +50,14 @@ func skillTargetDir(target string) (dir string, projectRelative bool, err error)
 		return filepath.Join(home, ".gemini", "skills", "pairmux"), false, nil
 	case "opencode":
 		return filepath.Join(home, ".config", "opencode", "skills", "pairmux"), false, nil
+	case "copilot":
+		return filepath.Join(home, ".copilot", "skills", "pairmux"), false, nil
+	case "windsurf":
+		return filepath.Join(home, ".codeium", "windsurf", "skills", "pairmux"), false, nil
+	case "kiro":
+		return filepath.Join(home, ".kiro", "skills", "pairmux"), false, nil
+	case "amp":
+		return filepath.Join(home, ".config", "amp", "skills", "pairmux"), false, nil
 	case "agents":
 		return filepath.Join(home, ".agents", "skills", "pairmux"), false, nil
 	}
@@ -47,7 +66,7 @@ func skillTargetDir(target string) (dir string, projectRelative bool, err error)
 
 // cmdSkill routes the skill subcommand family (currently only install).
 func (c *Ctx) cmdSkill(args []string) int {
-	const usageLine = "pairmux skill install [--target claude-code|codex|gemini|cursor|opencode|agents|all] [--dry-run]"
+	const usageLine = "pairmux skill install [--target T|all] [--dry-run]"
 	if len(args) == 0 {
 		return c.usage(usageLine, "pairmux skill install")
 	}
@@ -61,7 +80,7 @@ func (c *Ctx) cmdSkill(args []string) int {
 // skills directory. It only ever writes our own files — a user's unrelated
 // files in the same directory are never touched or deleted.
 func (c *Ctx) cmdSkillInstall(args []string) int {
-	const usageLine = "pairmux skill install [--target claude-code|codex|gemini|cursor|opencode|agents|all] [--dry-run]"
+	const usageLine = "pairmux skill install [--target T|all] [--dry-run]"
 	var target string
 	var dryRun bool
 	pos, err := parseFlags(args, flagSpec{
@@ -130,7 +149,7 @@ func (c *Ctx) cmdSkillInstall(args []string) int {
 			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 				return c.fail(output.CodeInternal, "create "+filepath.Dir(dst)+": "+err.Error(), "")
 			}
-			if err := os.WriteFile(dst, f.data, 0o644); err != nil {
+			if err := writeSkillFile(dst, f.data); err != nil {
 				return c.fail(output.CodeInternal, "write "+dst+": "+err.Error(), "")
 			}
 		}
@@ -148,6 +167,37 @@ func (c *Ctx) cmdSkillInstall(args []string) int {
 			"pairmux skill install --target all",
 		},
 	})
+}
+
+// writeSkillFile atomically replaces one file without following an existing
+// destination symlink. Agents can reload skills while install runs, so they
+// should observe either the old complete file or the new complete file.
+func writeSkillFile(path string, data []byte) (err error) {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".pairmux-skill-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		_ = tmp.Close()
+		if err != nil {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err = tmp.Chmod(0o644); err != nil {
+		return err
+	}
+	if _, err = tmp.Write(data); err != nil {
+		return err
+	}
+	if err = tmp.Sync(); err != nil {
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 // skillFile is one embedded skill file: its path relative to the skill root,

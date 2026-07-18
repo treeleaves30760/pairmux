@@ -6,6 +6,10 @@ one **platform wheel per OS/arch**, each carrying the prebuilt native binary in
 the wheel's *scripts* section. No build backend, no compilation on the user's
 machine, and **no sdist**.
 
+> **Pre-release:** this documents the implemented artifact format and release
+> workflow. The `pairmux` PyPI project is not published as of 2026-07-19, so
+> `uv tool install pairmux` is not yet an available installation channel.
+
 ## The model
 
 * **Binary-in-wheel.** Each wheel contains the executable at
@@ -23,12 +27,12 @@ machine, and **no sdist**.
 
 ### Platform mapping
 
-The builder maps goreleaser's `goos_goarch` to a PyPI platform tag:
+The builder maps GoReleaser's `goos_goarch` to a PyPI platform tag:
 
-| goreleaser (`goos_goarch`) | wheel platform tag |
+| GoReleaser (`goos_goarch`) | wheel platform tag |
 | --- | --- |
-| `darwin_arm64` | `macosx_11_0_arm64` |
-| `darwin_amd64` | `macosx_10_12_x86_64` |
+| `darwin_arm64` | `macosx_12_0_arm64` |
+| `darwin_amd64` | `macosx_12_0_x86_64` |
 | `linux_amd64`  | `manylinux_2_17_x86_64.manylinux2014_x86_64` |
 | `linux_arm64`  | `manylinux_2_17_aarch64.manylinux2014_aarch64` |
 
@@ -55,8 +59,10 @@ python3 packaging/pypi/build_wheels.py --version 0.1.0 \
 ```
 
 `--platform` takes a goreleaser **`goos_goarch`** token (e.g. `darwin_arm64`),
-not a PyPI tag. `--version` accepts a normalized PEP 440 version (`0.1.0`,
-`0.1.0.dev1`); a leading `v` (as in a git tag `v0.1.0`) is stripped.
+not a PyPI tag. `--version` accepts canonical three-part SemVer (`v0.1.0` or
+`v0.2.0-rc.1`; the lowercase `v` is optional). Prereleases map to normalized
+PEP 440 wheel versions such as `0.2.0rc1`. Ambiguous forms, leading zeroes,
+local versions, and shortened releases are rejected.
 
 Wheels are written to `--out-dir` (default `dist/`) as
 `pairmux-<version>-py3-none-<platform-tag>.whl`.
@@ -65,44 +71,66 @@ Wheels are written to `--out-dir` (default `dist/`) as
 hash/size, that `RECORD`'s own row is empty, and that the script kept its exec
 bit. Build fails (non-zero exit) if any check fails.
 
-### CI invocation (after goreleaser)
+Native headers are checked before any wheel is emitted:
 
-goreleaser produces one binary per build under
-`<dist>/<build>_<goos>_<goarch>[_<variant>]/pairmux` (the default `goamd64: v1`
-adds a `_v1` suffix, e.g. `pairmux_linux_amd64_v1`). Point the builder at that
-directory and it scans for the four supported platforms, ignoring anything else
+- Darwin inputs must be thin, little-endian 64-bit Mach-O binaries whose CPU
+  architecture and deployment-target load command exactly match the
+  `macosx_*` wheel tag.
+- Linux inputs must be little-endian ELF64 executables (or PIE executables)
+  whose machine architecture matches the x86-64 or aarch64 manylinux tag.
+
+This rejects swapped cross-build artifacts and prevents a tag from claiming an
+older macOS release than the bundled binary actually supports.
+
+### CI invocation
+
+GoReleaser produces one binary per build under
+`<dist>/<build>_<goos>_<goarch>[_<variant>]/pairmux` (for example,
+`pairmux_linux_amd64_v1` and `pairmux_darwin_arm64_v8.0`). Point the builder at
+that directory and it scans for the four supported platforms, ignoring anything else
 (Windows builds, `checksums.txt`, `artifacts.json`, archives, ...):
 
 ```bash
 python3 packaging/pypi/build_wheels.py --version "$VERSION" \
-    --dist-dir dist/goreleaser --check
+    --dist-dir dist --out-dir dist/wheels --check
 ```
 
-This is the exact call the release workflow makes. It leaves four wheels in
-`dist/`. A workflow step would look roughly like:
+This is the exact directory layout and builder call used by the release
+workflow. Publishing is intentionally ordered after validation:
+
+1. The read-only `validate` job runs Go/Python/shell/workflow checks and
+   race-enabled unit and tmux integration tests.
+2. A single `goreleaser release --skip=publish` invocation builds four native
+   binaries, four archives, four Linux packages, and one checksum manifest.
+   `verify_release.py` checks the structured artifact manifest, archive contents,
+   binary identity, filenames, and every checksum before staging nine public assets.
+3. The wheel builder consumes those same four binaries, emits exactly four
+   wheels, and smoke-tests both the Linux wheel and Debian package with an exact
+   tag-version comparison.
+4. The native assets and wheels are preserved separately. The publish job
+   downloads those exact bytes and never invokes GoReleaser or a compiler.
+5. GitHub assets are first uploaded to a draft release. PyPI receives the exact
+   verified wheels; only after that succeeds is the GitHub release made visible.
+
+The validation step is equivalent to:
 
 ```yaml
-# after the goreleaser step has populated dist/goreleaser/
 - name: Build PyPI wheels
   run: |
     python3 packaging/pypi/build_wheels.py \
-      --version "${GITHUB_REF_NAME#v}" \
-      --dist-dir dist/goreleaser --check
-
-- name: Publish to PyPI
-  env:
-    UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
-  run: uv publish dist/*.whl
+      --version "$GITHUB_REF_NAME" \
+      --dist-dir dist \
+      --out-dir dist/wheels --check
+    test "$(find dist/wheels -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')" -eq 4
 ```
 
-> Keep goreleaser's output directory (`dist/goreleaser/`) separate from the
-> wheel output directory (`dist/`), so `uv publish dist/*.whl` matches only the
-> wheels and not goreleaser's archives.
+> Keep GoReleaser's build directories under `dist/` and wheel output under
+> `dist/wheels/`, so the uploaded artifact contains only verified wheel files.
 
 ## Publishing
 
 ```bash
-uv publish dist/*.whl
+uv publish dist/wheels/*.whl
 ```
 
 `uv publish` authenticates with a **PyPI API token** via the `UV_PUBLISH_TOKEN`
@@ -122,14 +150,16 @@ via OIDC needs no stored token — `uv publish` with `--trusted-publishing
 automatic` — but that requires configuring a publisher on PyPI and is out of
 scope here.)
 
-The PyPI name `pairmux` is reserved (a `0.0.1` placeholder exists); real
-releases are `0.1.0`+. Wheels for a version already on PyPI cannot be
-re-uploaded — bump the version.
+The PyPI name `pairmux` must be claimed before the first release; as of
+2026-07-19 the project endpoint still returns 404. Configure the repository's
+`PYPI_TOKEN` only after that ownership step. Publishing uses PyPI's simple index
+as a duplicate check, so a workflow retry can skip exact wheel files already
+accepted while the matching GitHub release is still a draft.
 
 ## Linting
 
 ```bash
-uvx check-wheel-contents dist/*.whl
+uvx check-wheel-contents dist/wheels/*.whl
 ```
 
 Expect one finding: **`W007: Wheel library is empty`**. That is correct and

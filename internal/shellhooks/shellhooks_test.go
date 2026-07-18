@@ -73,16 +73,23 @@ func TestPrepareModeSelection(t *testing.T) {
 			wantEnv:  func(string) map[string]string { return nil },
 		},
 		{
-			name:     "unknown shell name",
+			name:     "fish native hooks",
 			shell:    "fish",
 			wantArgv: func(string) []string { return []string{"fish"} },
-			wantMode: core.ModeSentinel,
+			wantMode: core.ModeHooks,
+			wantEnv:  func(string) map[string]string { return nil },
+		},
+		{
+			name:     "fish absolute path preserved",
+			shell:    "/usr/bin/fish",
+			wantArgv: func(string) []string { return []string{"/usr/bin/fish"} },
+			wantMode: core.ModeHooks,
 			wantEnv:  func(string) map[string]string { return nil },
 		},
 		{
 			name:     "unknown shell absolute path preserved",
-			shell:    "/usr/bin/fish",
-			wantArgv: func(string) []string { return []string{"/usr/bin/fish"} },
+			shell:    "/usr/bin/elvish",
+			wantArgv: func(string) []string { return []string{"/usr/bin/elvish"} },
 			wantMode: core.ModeSentinel,
 			wantEnv:  func(string) map[string]string { return nil },
 		},
@@ -102,6 +109,26 @@ func TestPrepareModeSelection(t *testing.T) {
 			}
 			if want := tt.wantEnv(dir); !reflect.DeepEqual(env, want) {
 				t.Errorf("env = %v, want %v", env, want)
+			}
+		})
+	}
+}
+
+func TestSentinelSuffix(t *testing.T) {
+	tests := []struct {
+		shell string
+		want  string
+	}{
+		{"fish", `; printf '\033]7779;p;%d\007' $status`},
+		{"/opt/homebrew/bin/fish", `; printf '\033]7779;p;%d\007' $status`},
+		{"bash", core.SentinelSuffix},
+		{"/bin/zsh", core.SentinelSuffix},
+		{"/bin/dash", core.SentinelSuffix},
+	}
+	for _, tt := range tests {
+		t.Run(tt.shell, func(t *testing.T) {
+			if got := SentinelSuffix(tt.shell); got != tt.want {
+				t.Fatalf("SentinelSuffix(%q) = %q, want %q", tt.shell, got, tt.want)
 			}
 		})
 	}

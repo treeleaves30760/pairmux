@@ -1,14 +1,13 @@
-// Package cli wires the pairmux subcommands (new, ls, run, send, peek, log,
-// kill) onto the foundation packages and renders every reply through the
-// output envelope. It owns argument parsing that is deliberately forgiving —
-// agents routinely misplace flags — and the agent-facing help text.
+// Package cli wires the pairmux subcommands onto the foundation packages and
+// renders non-interactive replies through the output envelope. It owns
+// argument parsing that is deliberately forgiving — agents routinely misplace
+// flags — and the agent-facing help text.
 package cli
 
 import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/treeleaves30760/pairmux/internal/output"
@@ -77,6 +76,8 @@ func (c *Ctx) dispatch(rest []string) int {
 		return c.cmdDoctor(args)
 	case "skill":
 		return c.cmdSkill(args)
+	case "mcp":
+		return c.cmdMCP(args)
 	case "version", "--version":
 		return c.cmdVersion()
 	case "help", "--help", "-h":
@@ -86,9 +87,6 @@ func (c *Ctx) dispatch(rest []string) int {
 		return c.unknownCmd(cmd)
 	}
 }
-
-// dir is the state directory for a terminal under this invocation's state root.
-func (c *Ctx) dir(name string) string { return filepath.Join(c.StateDir, name) }
 
 // emit writes a success envelope and returns exit code 0.
 func (c *Ctx) emit(e output.Envelope) int {
@@ -117,9 +115,30 @@ func (c *Ctx) usage(oneline, hint string) int {
 	return 2
 }
 
-// tmuxErr maps a raw tmux failure to an E_TMUX envelope.
+// tmuxErr maps a raw tmux failure to an E_TMUX envelope. The raw tmux stderr
+// stays in the message; the hint carries the recovery.
 func (c *Ctx) tmuxErr(err error) int {
-	return c.fail(output.CodeTmux, err.Error(), "pairmux ls")
+	return c.fail(output.CodeTmux, err.Error(), tmuxHint(err))
+}
+
+// tmuxHint picks the recovery hint for a tmux failure. Socket-path failures
+// get a teaching hint instead of the generic one: sandboxes (macOS Seatbelt,
+// containers) often block the default /tmp/tmux-* socket dir ("error
+// connecting ... No such file or directory", or "couldn't create directory ...
+// Permission denied" when the dir is visible but unwritable), and a too-deep
+// TMUX_TMPDIR overflows the 104-byte unix-socket path limit ("File name too
+// long"). All are fixed by pointing TMUX_TMPDIR at a short writable dir —
+// pairmux honors it because it execs tmux, which reads it.
+func tmuxHint(err error) string {
+	s := err.Error()
+	if strings.Contains(s, "error connecting") ||
+		strings.Contains(s, "File name too long") ||
+		strings.Contains(s, "couldn't create directory") {
+		return `tmux cannot use its socket path — sandboxes often block /tmp/tmux-*; ` +
+			`pairmux honors TMUX_TMPDIR, so set it to a short writable dir and retry: ` +
+			`export TMUX_TMPDIR="$TMPDIR"`
+	}
+	return "pairmux ls"
 }
 
 // noTerminal reports E_NO_TERMINAL, listing the terminals that do exist so an
@@ -139,7 +158,7 @@ func (c *Ctx) noTerminal(name string) int {
 
 // existingNames returns the names of all known terminals (best effort).
 func (c *Ctx) existingNames() []string {
-	terms, err := state.List(c.Tmux)
+	terms, err := state.ListAt(c.Tmux, c.StateDir)
 	if err != nil {
 		return nil
 	}
@@ -173,11 +192,11 @@ usage: pairmux [--json] [--socket S] <command> [args]
 
 agent commands:
   new   [--name N] [--cwd D] [--cmd "..."]         create a terminal            e.g. pairmux new --name build
-  run   <name> <cmd...> [--timeout 60s]            run a command, wait for it   e.g. pairmux run build "make -j4"
+  run   <name> <cmd...> [--timeout 60s] [--head N] [--tail N]  run and wait     e.g. pairmux run build "make -j4"
   peek  <name> [--screen | --tail N]               recent output + status       e.g. pairmux peek build
-  wait  <name> [--idle MS|--pattern RE|--human]    block until a condition      e.g. pairmux wait build --pattern "listening"
+  wait  <name> [--idle MS|--pattern RE|--human] [--notify] [--timeout D]        e.g. pairmux wait build --pattern "listening"
   send  <name> [--text S] [--key K] [--enter]      send input to a program      e.g. pairmux send build --text y --enter
-  log   <name> [--cmd N|--grep RE|--range A:B]     full or filtered output      e.g. pairmux log build --cmd 2
+  log   <name> [--cmd N|--grep RE|--range A:B|A:end] bounded tail or selection  e.g. pairmux log build --cmd 2
   ls                                               list terminals + status      e.g. pairmux ls
   kill  <name> | --all                             kill terminal(s), keep logs  e.g. pairmux kill build
 
@@ -187,9 +206,10 @@ human commands:
   note   <name> <text...>  leave a message for the agent     e.g. pairmux note build "fixed the token"
   doctor                   probe tmux + shell integration    e.g. pairmux doctor
   skill install [--target T | all] [--dry-run]  teach your agent pairmux   e.g. pairmux skill install --target all
+  mcp serve                serve typed tools over MCP stdio  e.g. pairmux mcp serve
   version                  print version
 
-add --json anywhere for machine-readable envelopes (before or after the command).
+add --json anywhere for machine-readable envelopes from non-interactive commands.
 put -- before a command that itself contains --json or --socket.
 `
 

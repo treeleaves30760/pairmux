@@ -66,6 +66,10 @@ func TestIsNoServer(t *testing.T) {
 		{nil, false},
 		{errors.New("tmux -L x list-panes: exit status 1: no server running on /tmp/x"), true},
 		{errors.New("error connecting to /tmp/tmux-501/x (No such file or directory)"), true},
+		{errors.New("error connecting to /tmp/tmux-501/x (Connection refused)"), true},
+		{errors.New("error connecting to /tmp/tmux-501/x (Permission denied)"), false},
+		{errors.New("error connecting to /deep/path/tmux-501/x (File name too long)"), false},
+		{errors.New("error connecting to /tmp/tmux-501/x (unexpected failure)"), false},
 		{errors.New("some other tmux failure"), false},
 	}
 	for _, tt := range tests {

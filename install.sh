@@ -175,8 +175,13 @@ do_install() {
 	[ -f "${TMPDIR_PM}/pairmux" ] || err "archive did not contain a pairmux binary"
 
 	mkdir -p "$INSTALL_DIR" || err "could not create ${INSTALL_DIR}"
-	cp "${TMPDIR_PM}/pairmux" "${INSTALL_DIR}/pairmux" || err "could not write to ${INSTALL_DIR} (set PAIRMUX_INSTALL_DIR to a writable dir)"
-	chmod 0755 "${INSTALL_DIR}/pairmux"
+	INSTALL_TMP=$(mktemp "${INSTALL_DIR}/.pairmux.XXXXXX") || err "could not create a temporary file in ${INSTALL_DIR}"
+	cp "${TMPDIR_PM}/pairmux" "$INSTALL_TMP" || err "could not write to ${INSTALL_DIR} (set PAIRMUX_INSTALL_DIR to a writable dir)"
+	chmod 0755 "$INSTALL_TMP" || err "could not make the downloaded pairmux executable"
+	staged_ver=$("$INSTALL_TMP" version 2>/dev/null) || err "the downloaded binary failed to run"
+	[ "$staged_ver" = "$VERSION_NUM" ] || err "downloaded binary reports ${staged_ver}; expected ${VERSION_NUM}"
+	mv -f "$INSTALL_TMP" "${INSTALL_DIR}/pairmux" || err "could not atomically replace ${INSTALL_DIR}/pairmux"
+	INSTALL_TMP=""
 	info "installed to ${INSTALL_DIR}/pairmux"
 }
 
@@ -200,6 +205,9 @@ print_quickstart() {
 }
 
 cleanup() {
+	if [ -n "${INSTALL_TMP:-}" ] && [ -f "${INSTALL_TMP:-}" ]; then
+		rm -f "$INSTALL_TMP"
+	fi
 	if [ -n "${TMPDIR_PM:-}" ] && [ -d "${TMPDIR_PM:-}" ]; then
 		rm -rf "$TMPDIR_PM"
 	fi
@@ -209,6 +217,7 @@ main() {
 	PINNED_TAG=""
 	DRY_RUN=0
 	TMPDIR_PM=""
+	INSTALL_TMP=""
 
 	while [ $# -gt 0 ]; do
 		case "$1" in
@@ -259,7 +268,8 @@ main() {
 	do_install
 
 	info "verifying: pairmux version"
-	installed_ver=$("${INSTALL_DIR}/pairmux" version 2>/dev/null) || err "the installed binary failed to run"
+	installed_ver=$("${INSTALL_DIR}/pairmux" version 2>/dev/null) || err "the installed binary failed to run after rename"
+	[ "$installed_ver" = "$VERSION_NUM" ] || err "installed binary reports ${installed_ver}; expected ${VERSION_NUM}"
 	info "pairmux ${installed_ver} is ready"
 
 	check_tmux

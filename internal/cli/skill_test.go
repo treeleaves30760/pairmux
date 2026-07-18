@@ -21,6 +21,10 @@ func TestSkillTargetDirs(t *testing.T) {
 		{"codex", "/fakehome/.codex/skills/pairmux", false},
 		{"gemini", "/fakehome/.gemini/skills/pairmux", false},
 		{"opencode", "/fakehome/.config/opencode/skills/pairmux", false},
+		{"copilot", "/fakehome/.copilot/skills/pairmux", false},
+		{"windsurf", "/fakehome/.codeium/windsurf/skills/pairmux", false},
+		{"kiro", "/fakehome/.kiro/skills/pairmux", false},
+		{"amp", "/fakehome/.config/amp/skills/pairmux", false},
 		{"agents", "/fakehome/.agents/skills/pairmux", false},
 		{"cursor", filepath.Join(".cursor", "skills", "pairmux"), true},
 	}
@@ -110,6 +114,42 @@ func TestSkillInstallWritesAndPreserves(t *testing.T) {
 	}
 }
 
+func TestSkillInstallReplacesSymlinkWithoutFollowingIt(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".claude", "skills", "pairmux")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "SKILL.md")
+	if err := os.Symlink(outside, dst); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	c := newTestCtx(&buf, true)
+	if rc := c.cmdSkill([]string{"install"}); rc != 0 {
+		t.Fatalf("rc = %d, output = %s", rc, buf.String())
+	}
+	if got, err := os.ReadFile(outside); err != nil || string(got) != "keep" {
+		t.Fatalf("symlink target changed: content=%q err=%v", got, err)
+	}
+	info, err := os.Lstat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("installed SKILL.md is still a symlink")
+	}
+	if got, err := os.ReadFile(dst); err != nil || !strings.Contains(string(got), "name: pairmux") {
+		t.Fatalf("installed SKILL.md invalid: err=%v", err)
+	}
+}
+
 func TestSkillInstallAllSkipsMissingAgents(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -149,7 +189,7 @@ func TestSkillUnknownTarget(t *testing.T) {
 	if e.Error == nil || e.Error.Code != output.CodeBadArgs {
 		t.Fatalf("envelope = %+v", e)
 	}
-	for _, name := range []string{"claude-code", "codex", "gemini", "cursor", "opencode", "agents", "all"} {
+	for _, name := range append(append([]string{}, skillTargetNames...), "all") {
 		if !strings.Contains(e.Error.Hint, name) {
 			t.Errorf("hint should list %q: %q", name, e.Error.Hint)
 		}

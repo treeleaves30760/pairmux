@@ -31,6 +31,7 @@ const (
 // TruncInfo describes an output that Render truncated and how to fetch the rest.
 type TruncInfo struct {
 	OmittedLines int    `json:"omitted_lines"`
+	OmittedBytes int64  `json:"omitted_bytes,omitempty"`
 	GetFull      string `json:"get_full"`
 }
 
@@ -183,9 +184,21 @@ func human(e Envelope) string {
 		}
 	}
 
-	// Truncation note.
-	if e.Truncated != nil && e.Truncated.OmittedLines > 0 {
-		fmt.Fprintf(&b, "%s %d more line(s)", truncEllipsis, e.Truncated.OmittedLines)
+	// Truncation note. Byte-capped views may not know how many shaped lines the
+	// skipped prefix contains, so every non-nil descriptor must remain visible.
+	if e.Truncated != nil {
+		b.WriteString(truncEllipsis)
+		switch {
+		case e.Truncated.OmittedLines > 0 && e.Truncated.OmittedBytes > 0:
+			fmt.Fprintf(&b, " %d more line(s) plus %d earlier byte(s)",
+				e.Truncated.OmittedLines, e.Truncated.OmittedBytes)
+		case e.Truncated.OmittedLines > 0:
+			fmt.Fprintf(&b, " %d more line(s)", e.Truncated.OmittedLines)
+		case e.Truncated.OmittedBytes > 0:
+			fmt.Fprintf(&b, " %d earlier byte(s) omitted", e.Truncated.OmittedBytes)
+		default:
+			b.WriteString(" output truncated")
+		}
 		if e.Truncated.GetFull != "" {
 			b.WriteString("; full: ")
 			b.WriteString(e.Truncated.GetFull)

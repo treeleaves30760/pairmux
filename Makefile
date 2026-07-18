@@ -29,11 +29,11 @@ integration: build
 fmt:
 	gofmt -w .
 
-# Validate the goreleaser config and prove it can build a real binary for the
-# host target. Needs goreleaser (brew install goreleaser).
+# Validate the GoReleaser config and build the complete archive/package set
+# without publishing. Needs goreleaser (brew install goreleaser).
 release-check:
 	goreleaser check
-	goreleaser build --snapshot --clean --single-target
+	goreleaser release --snapshot --clean --skip=publish
 
 # Lint the POSIX install script. Needs shellcheck (brew install shellcheck).
 installsh-check:

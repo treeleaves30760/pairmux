@@ -28,7 +28,7 @@ Explicit binary/platform pairs (repeatable)::
 
 Scan a goreleaser dist directory (this is how CI calls it)::
 
-    build_wheels.py --version 0.1.0 --dist-dir dist/goreleaser --check
+    build_wheels.py --version 0.1.0 --dist-dir dist --out-dir dist/wheels --check
 
 Scanning follows goreleaser's default binary layout: each build lives in a
 subdirectory named ``<build>_<goos>_<goarch>[_<variant>]`` (e.g.
@@ -50,6 +50,7 @@ import base64
 import hashlib
 import os
 import re
+import struct
 import sys
 import time
 import zipfile
@@ -70,8 +71,11 @@ METADATA_VERSION = "2.1"
 # manylinux tags are compressed (two sub-tags joined by "."); that expands into
 # multiple WHEEL "Tag:" lines, see expand_tags().
 PLATFORM_TAGS = {
-    ("darwin", "arm64"): "macosx_11_0_arm64",
-    ("darwin", "amd64"): "macosx_10_12_x86_64",
+    # Go 1.25 emits LC_BUILD_VERSION minos 12.0 for both Darwin targets. The
+    # builder parses every Mach-O and rejects a mismatch so a future Go
+    # toolchain cannot silently produce an over-permissive wheel tag.
+    ("darwin", "arm64"): "macosx_12_0_arm64",
+    ("darwin", "amd64"): "macosx_12_0_x86_64",
     ("linux", "amd64"): "manylinux_2_17_x86_64.manylinux2014_x86_64",
     ("linux", "arm64"): "manylinux_2_17_aarch64.manylinux2014_aarch64",
 }
@@ -124,32 +128,145 @@ Homepage / source: https://github.com/treeleaves30760/pairmux
 License: MIT
 """
 
-# PEP 440 normalized public versions (no local "+segment" — PyPI rejects those
-# on wheels anyway). Covers epoch, release, pre/post/dev.
-VERSION_RE = re.compile(
-    r"^([0-9]+!)?[0-9]+(\.[0-9]+)*((a|b|rc)[0-9]+)?(\.post[0-9]+)?(\.dev[0-9]+)?$"
+# Release tags use one canonical SemVer shape. Keeping this stricter than the
+# full PEP 440 grammar prevents GitHub, GoReleaser, and wheel metadata from
+# assigning subtly different versions to the same artifact set.
+SEMVER_RE = re.compile(
+    r"^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-(alpha|beta|rc)\.(0|[1-9][0-9]*))?$"
 )
 
-# goreleaser build-subdir names end with _<goos>_<goarch>[_<variant>].
-GORELEASER_DIR_RE = re.compile(r"_(darwin|linux)_(amd64|arm64)(?:_[0-9a-z]+)?$")
+MACHO_MAGIC_64 = 0xFEEDFACF
+LC_VERSION_MIN_MACOSX = 0x24
+LC_BUILD_VERSION = 0x32
+PLATFORM_MACOS = 1
+MACHO_CPU_TO_WHEEL_ARCH = {
+    0x01000007: "x86_64",
+    0x0100000C: "arm64",
+}
+ELF_MAGIC = b"\x7fELF"
+ELFCLASS64 = 2
+ELFDATA2LSB = 1
+EV_CURRENT = 1
+ET_EXEC = 2
+ET_DYN = 3
+ELF64_HEADER_FORMAT = "<16sHHIQQQIHHHHHH"
+ELF64_HEADER_SIZE = struct.calcsize(ELF64_HEADER_FORMAT)
+ELF_MACHINE_TO_WHEEL_ARCH = {
+    62: "x86_64",    # EM_X86_64
+    183: "aarch64",  # EM_AARCH64
+}
+LINUX_PLATFORM_ARCHES = {
+    PLATFORM_TAGS[("linux", "amd64")]: "x86_64",
+    PLATFORM_TAGS[("linux", "arm64")]: "aarch64",
+}
+
+# goreleaser build-subdir names end with _<goos>_<goarch>[_<variant>]. Go's
+# arm64 default is rendered as ``v8.0``, so variants may contain dots.
+GORELEASER_DIR_RE = re.compile(
+    r"_(darwin|linux)_(amd64|arm64)(?:_[0-9A-Za-z][0-9A-Za-z.]*)?$"
+)
 
 
 # --- helpers -----------------------------------------------------------------
 
 def normalize_version(v: str) -> str:
-    """Strip a leading v, lowercase, and validate as a normalized PEP 440 version."""
-    v = v.strip()
-    if v[:1] in ("v", "V"):
-        v = v[1:]
-    v = v.lower()
-    if not VERSION_RE.match(v):
+    """Map a canonical SemVer release tag to its PEP 440 wheel version.
+
+    Stable ``v1.2.3``/``1.2.3`` versions pass through without the optional
+    prefix. Canonical prereleases translate ``1.2.3-rc.1`` to ``1.2.3rc1``.
+    """
+    match = SEMVER_RE.fullmatch(v)
+    if match is None:
         raise ValueError(
-            "version %r is not a normalized PEP 440 public version "
-            "(examples: 0.1.0, 0.1.0.dev1, 1.2.3rc1); "
-            "a git tag like v0.1.0 is fine, but hyphenated forms like "
-            "0.1.0-dev are not" % v
+            "version %r is not canonical SemVer (expected v1.2.3 or "
+            "v1.2.3-rc.1; a missing lowercase v prefix is also accepted)" % v
         )
-    return v
+    release = ".".join(match.group(index) for index in (1, 2, 3))
+    if match.group(4) is None:
+        return release
+    pre = {"alpha": "a", "beta": "b", "rc": "rc"}[match.group(4)]
+    return release + pre + match.group(5)
+
+
+def macos_platform_tag(binary_path: Path) -> str:
+    """Read a thin 64-bit Mach-O's architecture and minimum macOS version."""
+    with binary_path.open("rb") as f:
+        header = f.read(32)
+        if len(header) != 32:
+            raise ValueError("%s is too short to be a 64-bit Mach-O" % binary_path)
+        magic, cpu, _, _, ncmds, sizeofcmds, _, _ = struct.unpack(
+            "<IiiIIIII", header
+        )
+        if magic != MACHO_MAGIC_64:
+            raise ValueError("%s is not a little-endian 64-bit Mach-O" % binary_path)
+        if sizeofcmds > 16 * 1024 * 1024:
+            raise ValueError("%s has an unreasonable Mach-O command table" % binary_path)
+        commands = f.read(sizeofcmds)
+    if len(commands) != sizeofcmds:
+        raise ValueError("%s has a truncated Mach-O command table" % binary_path)
+
+    arch = MACHO_CPU_TO_WHEEL_ARCH.get(cpu)
+    if arch is None:
+        raise ValueError("%s has unsupported Mach-O cpu type %#x" % (binary_path, cpu))
+
+    offset = 0
+    minos = None
+    for _ in range(ncmds):
+        if offset + 8 > len(commands):
+            raise ValueError("%s has a truncated Mach-O load command" % binary_path)
+        cmd, cmdsize = struct.unpack_from("<II", commands, offset)
+        if cmdsize < 8 or offset + cmdsize > len(commands):
+            raise ValueError("%s has an invalid Mach-O load command size" % binary_path)
+        if cmd == LC_BUILD_VERSION and cmdsize >= 24:
+            platform, minos = struct.unpack_from("<II", commands, offset + 8)
+            if platform != PLATFORM_MACOS:
+                raise ValueError("%s is a Mach-O for platform %d, not macOS" % (binary_path, platform))
+            break
+        if cmd == LC_VERSION_MIN_MACOSX and cmdsize >= 16:
+            (minos,) = struct.unpack_from("<I", commands, offset + 8)
+            break
+        offset += cmdsize
+    if minos is None:
+        raise ValueError("%s has no macOS deployment-target load command" % binary_path)
+
+    major = minos >> 16
+    minor = (minos >> 8) & 0xFF
+    return "macosx_%d_%d_%s" % (major, minor, arch)
+
+
+def linux_elf_arch(binary_path: Path) -> str:
+    """Read a little-endian ELF64 header and return its wheel architecture."""
+    with binary_path.open("rb") as f:
+        header = f.read(ELF64_HEADER_SIZE)
+    if len(header) < ELF64_HEADER_SIZE:
+        raise ValueError("%s is too short to be an ELF64 binary" % binary_path)
+    (ident, file_type, machine, version, _, _, _, _, header_size,
+     _, _, _, _, _) = struct.unpack(ELF64_HEADER_FORMAT, header)
+    if ident[:4] != ELF_MAGIC:
+        raise ValueError("%s is not an ELF binary" % binary_path)
+    if ident[4] != ELFCLASS64:
+        raise ValueError("%s is not a 64-bit ELF binary" % binary_path)
+    if ident[5] != ELFDATA2LSB:
+        raise ValueError("%s is not a little-endian ELF binary" % binary_path)
+    if ident[6] != EV_CURRENT:
+        raise ValueError("%s has unsupported ELF identification version %d" %
+                         (binary_path, ident[6]))
+    if version != EV_CURRENT:
+        raise ValueError("%s has unsupported ELF header version %d" %
+                         (binary_path, version))
+    if file_type not in (ET_EXEC, ET_DYN):
+        raise ValueError("%s is not an ELF executable (type %d)" %
+                         (binary_path, file_type))
+    if header_size != ELF64_HEADER_SIZE:
+        raise ValueError("%s has invalid ELF64 header size %d" %
+                         (binary_path, header_size))
+
+    arch = ELF_MACHINE_TO_WHEEL_ARCH.get(machine)
+    if arch is None:
+        raise ValueError("%s has unsupported ELF machine type %d" %
+                         (binary_path, machine))
+    return arch
 
 
 def parse_platform_token(token: str) -> Tuple[str, str]:
@@ -167,7 +284,7 @@ def parse_platform_token(token: str) -> Tuple[str, str]:
 def expand_tags(plat: str) -> List[str]:
     """Expand a (possibly compressed) platform tag into full WHEEL Tag lines.
 
-    'macosx_11_0_arm64' -> ['py3-none-macosx_11_0_arm64']
+    'macosx_12_0_arm64' -> ['py3-none-macosx_12_0_arm64']
     'manylinux_2_17_x86_64.manylinux2014_x86_64' ->
         ['py3-none-manylinux_2_17_x86_64', 'py3-none-manylinux2014_x86_64']
     """
@@ -236,6 +353,21 @@ def render_record(rows: List[Tuple[str, str, str]]) -> bytes:
 
 
 def build_one(version: str, binary_path: Path, plat: str, out_dir: Path) -> Path:
+    if plat.startswith("macosx_"):
+        actual = macos_platform_tag(binary_path)
+        if actual != plat:
+            raise ValueError(
+                "%s declares %s but its Mach-O requires %s"
+                % (binary_path, plat, actual)
+            )
+    elif plat in LINUX_PLATFORM_ARCHES:
+        expected = LINUX_PLATFORM_ARCHES[plat]
+        actual = linux_elf_arch(binary_path)
+        if actual != expected:
+            raise ValueError(
+                "%s declares %s but its ELF architecture is %s"
+                % (binary_path, plat, actual)
+            )
     binary = binary_path.read_bytes()
     prefix = "%s-%s" % (PROJECT_NAME, version)
     scripts_arc = "%s.data/scripts/%s" % (prefix, SCRIPT_NAME)
@@ -342,7 +474,7 @@ def main(argv=None) -> int:
         description="Build pairmux platform wheels (binary-in-scripts, no sdist).",
     )
     p.add_argument("--version", required=True,
-                   help="release version, e.g. 0.1.0 or 0.1.0.dev1 (v-prefix ok)")
+                   help="canonical SemVer release, e.g. v0.1.0 or v0.2.0-rc.1")
     p.add_argument("--binary", action="append", default=[], metavar="PATH",
                    help="path to a pairmux binary; pair with --platform (repeatable)")
     p.add_argument("--platform", action="append", default=[], metavar="GOOS_GOARCH",
@@ -353,12 +485,18 @@ def main(argv=None) -> int:
                    help="where to write the .whl files (default: dist)")
     p.add_argument("--check", action="store_true",
                    help="after building, re-open each wheel and verify RECORD")
+    p.add_argument("--validate-version-only", action="store_true",
+                   help="normalize --version, print it, and exit without building")
     args = p.parse_args(argv)
 
     try:
         version = normalize_version(args.version)
     except ValueError as e:
         p.error(str(e))
+
+    if args.validate_version_only:
+        print(version)
+        return 0
 
     if len(args.binary) != len(args.platform):
         p.error("--binary and --platform must be given in equal numbers (as pairs)")
@@ -384,7 +522,11 @@ def main(argv=None) -> int:
         if not binary.is_file():
             print("error: binary not found: %s" % binary, file=sys.stderr)
             return 1
-        whl = build_one(version, binary, plat, out_dir)
+        try:
+            whl = build_one(version, binary, plat, out_dir)
+        except (OSError, ValueError) as e:
+            print("error: %s" % e, file=sys.stderr)
+            return 1
         print("built  %s   (%s -> %s)" % (whl, label, plat))
         built.append(whl)
 

@@ -12,8 +12,9 @@ import (
 type WaitOutcome int
 
 const (
-	OutcomeDone    WaitOutcome = iota // the awaited mark arrived
-	OutcomeTimeout                    // the deadline elapsed first
+	OutcomeDone          WaitOutcome = iota // the awaited mark arrived
+	OutcomeTimeout                          // the deadline elapsed first
+	OutcomeAwaitingInput                    // a quiet interactive prompt appeared
 )
 
 // RunResult reports the result of WaitCompletion. On OutcomeDone, MarkStart is
@@ -26,6 +27,7 @@ type RunResult struct {
 	ExitCode  int
 	MarkStart int64
 	EndOffset int64
+	Prompt    string
 }
 
 const defaultPoll = 100 * time.Millisecond
@@ -43,6 +45,18 @@ func completionKind(mode core.Mode) MarkKind {
 // across appends is still recognized. It returns on the first matching mark
 // with Start >= from, or on timeout.
 func WaitCompletion(j *journal.Journal, from int64, mode core.Mode, timeout, poll time.Duration) (RunResult, error) {
+	return waitCompletion(j, from, mode, timeout, poll, false)
+}
+
+// WaitCommand is WaitCompletion with prompt-aware early return. It is used by
+// `pairmux run`: after output has been quiet long enough for Refine to trust a
+// prompt-shaped last line, it returns OutcomeAwaitingInput instead of making
+// the caller wait for the overall command timeout.
+func WaitCommand(j *journal.Journal, from int64, mode core.Mode, timeout, poll time.Duration) (RunResult, error) {
+	return waitCompletion(j, from, mode, timeout, poll, true)
+}
+
+func waitCompletion(j *journal.Journal, from int64, mode core.Mode, timeout, poll time.Duration, stopOnPrompt bool) (RunResult, error) {
 	if poll <= 0 {
 		poll = defaultPoll
 	}
@@ -69,6 +83,14 @@ func WaitCompletion(j *journal.Journal, from int64, mode core.Mode, timeout, pol
 						}, nil
 					}
 				}
+			}
+		}
+		if stopOnPrompt {
+			if status, prompt := Refine(j, core.StatusRunning, mode); status == core.StatusAwaitingInput {
+				return RunResult{
+					Outcome: OutcomeAwaitingInput, ExitCode: -1, MarkStart: -1,
+					EndOffset: off, Prompt: prompt,
+				}, nil
 			}
 		}
 		if !time.Now().Before(deadline) {

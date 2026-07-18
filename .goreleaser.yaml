@@ -1,7 +1,8 @@
 # GoReleaser configuration for pairmux.
 # Schema: v2 (goreleaser >= 2). Validate with `make release-check`.
-# Distribution strategy: see PLAN.md §5 (GitHub Releases + install.sh, PyPI
-# wheels, Homebrew tap, .deb/.rpm).
+# Distribution strategy: GitHub Releases + install.sh, PyPI wheels, and native
+# .deb/.rpm packages. Homebrew is intentionally deferred until macOS binaries
+# can be signed and notarized.
 version: 2
 
 project_name: pairmux
@@ -71,7 +72,7 @@ nfpms:
     section: utils
     priority: optional
     bindir: /usr/bin
-    # Hard dependency on tmux >= 3.2 (PLAN.md §5). The Debian control syntax is
+    # Hard dependency on tmux >= 3.2. The Debian control syntax is
     # `tmux (>= 3.2)`; rpm's Requires syntax differs, so it is overridden below.
     dependencies:
       - tmux (>= 3.2)
@@ -89,40 +90,6 @@ nfpms:
         file_info:
           mode: 0644
 
-# Homebrew tap. NOTE: the older `brews` (formula) key was removed in
-# goreleaser v2.16, so this uses `homebrew_casks`. GoReleaser migrated formulae
-# to casks because casks now install pre-compiled binaries on both macOS and
-# Linuxbrew (PLAN.md §5 wants both). Casks have no `test do` stanza, so the
-# `pairmux version` smoke test that a formula would run lives in CI instead
-# (install.sh runs it post-install; see .github/workflows).
-homebrew_casks:
-  - name: pairmux
-    ids:
-      - pairmux
-    # Publishes the cask to the tap repo. Requires a token with write access to
-    # treeleaves30760/homebrew-tap (secret HOMEBREW_TAP_GITHUB_TOKEN; see
-    # .github/workflows/release.yml).
-    repository:
-      owner: treeleaves30760
-      name: homebrew-tap
-      branch: main
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Casks
-    homepage: https://github.com/treeleaves30760/pairmux
-    description: Reliable terminal primitives for AI agents on tmux
-    commit_author:
-      name: goreleaserbot
-      email: bot@goreleaser.com
-    commit_msg_template: "brew: pairmux {{ .Tag }}"
-    # Hard dependency on tmux (PLAN.md §5); casks express it as a formula dep.
-    dependencies:
-      - formula: tmux
-    # The CLI binary and man page shipped inside the release archive.
-    binaries:
-      - pairmux
-    manpages:
-      - man/pairmux.1
-
 release:
   github:
     owner: treeleaves30760
@@ -137,8 +104,7 @@ changelog:
   sort: asc
   filters:
     exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore:"
+      - "^doc/"
+      - "^chores/"
       - Merge pull request
       - Merge branch

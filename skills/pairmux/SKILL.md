@@ -5,18 +5,18 @@ description: >-
   Use pairmux whenever a command is slow (builds, tests, installs, migrations), interactive (a REPL,
   a TUI, a pager, a [y/N] confirmation, or a password prompt), or long-lived (a dev server, a watch
   task, tail -f logs) — or whenever a human may need to watch, attach, or take over the same live
-  terminal session. pairmux is a thin layer over tmux that gives a blocking CLI which returns exactly
-  when a command finishes (so you never sleep-and-guess timing), clean full output history with exit
-  codes, and human handoff for secrets. Keywords: tmux, terminal session, background process, dev
+  terminal session. pairmux is a thin layer over tmux with blocking calls that return on requested
+  outcomes instead of sleep-and-guess timing, clean full output history with exit codes, and human
+  handoff for secrets. Keywords: tmux, terminal session, background process, dev
   server, watch logs, REPL, interactive CLI, TUI, pager, password prompt, human takeover, long-running.
 ---
 
 # pairmux — reliable terminals for agents
 
-`pairmux` runs commands inside real tmux panes and gives you a **blocking** CLI: the call returns the
-moment the command finishes, goes quiet, or needs input. You never guess how long to wait, and a human
-can watch or step into the exact same terminal. Add `--json` to any command for a machine-readable
-`pairmux.v1` envelope (examples below are the real JSON).
+`pairmux` runs commands inside real tmux panes and gives you a **blocking** CLI: `run` returns on
+completion, input, or timeout; `wait` returns when the condition you requested is met, the pane dies,
+or its timeout expires. You never guess how long to wait, and a human can watch or step into the same
+terminal. Add `--json` to any command for a machine-readable `pairmux.v1` envelope.
 
 ## When to use pairmux (and when not to)
 
@@ -44,7 +44,7 @@ interactive, long-lived, or shared with a human.
      awaiting-input  → it wants input — pairmux send build --text y --enter
                        (secret prompt? do NOT guess — hand off, see rules)
 4. truncated?        → pairmux log build --cmd N | --grep RE   (read the journal, don't re-run)
-5. Always run whatever the envelope's `next` field tells you.
+5. Read `next` in order. Obey safety/information entries, then run the first applicable command.
 ```
 
 ## Iron rules
@@ -58,7 +58,9 @@ interactive, long-lived, or shared with a human.
    `do NOT guess or type secrets`. Hand off to a human: `pairmux wait <name> --human --notify`.
 5. **Prefer reading the log over re-running.** The journal already has the full output —
    `pairmux log` is free and instant; re-running wastes time and can change state.
-6. **`next` is always your next command. `notes` are messages from a human — read and obey them.**
+6. **Treat `next` as contextual hints, not a script.** Read entries in order and obey safety/prose.
+   Replace placeholders with real values; never execute prose or placeholder text literally. Run the
+   first applicable command. Final replies may omit `next`. Read and obey human `notes`.
 
 ## Reading the envelope
 
@@ -66,7 +68,7 @@ Two fields are always present: `schema` (`"pairmux.v1"`) and `ok`. Everything el
 relevant. The three you act on most:
 
 - **`status`** — what state things are in (table below).
-- **`next`** — an array of concrete commands; the top one is your next step.
+- **`next`** — optional ordered hints: safety/prose, placeholders, then applicable commands.
 - **`notes`** — unseen messages a human left via `pairmux note`. If present, **read them and follow them.**
 
 Terminal statuses (from `run`, `peek`, `wait`, `ls`):
@@ -79,7 +81,8 @@ Terminal statuses (from `run`, `peek`, `wait`, `ls`):
 | `idle` | shell at a prompt, nothing running | send the next command |
 | `dead` | the pane is gone; journal is kept | `new` a fresh terminal |
 
-`run` also reports `done`/`running`; `wait` reports `idle`/`pattern-found`/`human-done`/`timeout`.
+`run` also reports `done`/`running`. `wait` reports `idle`/`awaiting-input` for an idle wait,
+`pattern-found`, `human-done`, `dead`, or `timeout`, depending on the requested condition.
 Errors set `ok:false` with a stable `error.code`: `E_NO_TERMINAL`, `E_EXISTS`, `E_BUSY`, `E_DEAD`,
 `E_BAD_ARGS`, `E_TMUX`, `E_INTERNAL`. The error's `hint`/`next` tells you how to recover.
 
@@ -104,7 +107,7 @@ pairmux run build "make -j4" --timeout 5s
 {"schema":"pairmux.v1","ok":true,"status":"running","terminal":"build","mode":"hooks","output":"\ncompiling…","next":["pairmux peek build","pairmux log build --cmd 1"]}
 ```
 ```bash
-pairmux wait build --idle 800     # returns when output has been quiet for 800ms
+pairmux wait build --idle 800     # returns when the shell is truly idle, not merely quiet
 ```
 
 A `[y/N]` prompt surfaces as `awaiting-input`; answer it once:
@@ -146,10 +149,10 @@ A human left a note — it rides along in `notes`; obey it:
 |---------|---------|
 | `pairmux new [--name N] [--cwd D] [--cmd "..."]` | open a terminal (`--cmd` launches a program you drive with `send`) |
 | `pairmux run <name> "<cmd>" [--timeout 60s] [--head 50] [--tail 200]` | run a command, block until done/timeout |
-| `pairmux wait <name> [--idle MS \| --pattern RE \| --human] [--notify] [--timeout 300s]` | block until a condition |
+| `pairmux wait <name> [--idle MS] [--pattern RE] [--human] [--notify] [--timeout 300s]` | block until a requested condition |
 | `pairmux peek <name> [--screen \| --tail N]` | read recent output + status, no blocking, no lock |
 | `pairmux send <name> [--text S] [--key K ...] [--enter]` | send input to a running program |
-| `pairmux log <name> [--cmd N \| --grep RE \| --range A:B]` | read full/filtered history from the journal |
+| `pairmux log <name> [--cmd N \| --grep RE \| --range A:B\|A:end]` | read full/filtered history from the journal |
 | `pairmux ls` | list terminals + status | 
 | `pairmux kill <name> \| --all` | kill terminal(s); journals are kept |
 | `pairmux note <name> "<text>"` · `attach [name]` · `watch` | human side-channel / take-over |

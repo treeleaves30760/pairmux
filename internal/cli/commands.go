@@ -24,8 +24,6 @@ import (
 	"github.com/treeleaves30760/pairmux/internal/version"
 )
 
-const rawCapBytes = 512 * 1024 // log --cmd caps a command region at 512KB of raw bytes
-
 // cmdNew creates a terminal: prepare the shell shim, open a tmux window, wire
 // pipe-pane into the journal, and wait for the shell to become interactive.
 func (c *Ctx) cmdNew(args []string) int {
@@ -37,18 +35,41 @@ func (c *Ctx) cmdNew(args []string) int {
 	if len(pos) > 0 {
 		return c.usage(`pairmux new [--name N] [--cwd D] [--cmd "..."]`, "unexpected argument "+pos[0])
 	}
-
-	if name == "" {
-		name = state.NextAutoName(c.existingNames())
-	} else if !state.ValidName(name) {
-		return c.fail(output.CodeBadArgs, fmt.Sprintf("invalid name %q", name), `names match ^[a-z0-9][a-z0-9_-]{0,31}$`)
+	if rc, rejected := c.rejectInvalidSocket(); rejected {
+		return rc
 	}
+
+	var releaseName func()
+	if name == "" {
+		existing := c.existingNamesScoped()
+		for {
+			name = state.NextAutoName(existing)
+			releaseName, err = state.AcquireNameReservation(c.namespaceDir(), name)
+			if errors.Is(err, state.ErrNameReserved) {
+				existing = append(existing, name)
+				continue
+			}
+			break
+		}
+	} else {
+		if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
+			return rc
+		}
+		releaseName, err = state.AcquireNameReservation(c.namespaceDir(), name)
+	}
+	if err != nil {
+		if errors.Is(err, state.ErrNameReserved) {
+			return c.fail(output.CodeExists, fmt.Sprintf("terminal %q is being created", name), "pairmux ls")
+		}
+		return c.fail(output.CodeInternal, "reserve terminal name: "+err.Error(), "")
+	}
+	defer releaseName()
 
 	pane, hasPane, err := c.findPane(name)
 	if err != nil {
 		return c.tmuxErr(err)
 	}
-	dir := c.dir(name)
+	dir := c.terminalDir(name)
 	if hasPane && !pane.Dead {
 		return c.fail(output.CodeExists, fmt.Sprintf("terminal %q already exists", name), "pairmux ls")
 	}
@@ -56,6 +77,13 @@ func (c *Ctx) cmdNew(args []string) int {
 		_ = c.Tmux.KillWindowOf(pane.PaneID) // reclaim the dead window before reusing the name
 	}
 	if isDir(dir) {
+		// A canonical endpoint namespace should never contain foreign metadata.
+		// Preserve it for inspection rather than archiving possible corruption.
+		if meta, err := (&journal.Journal{Dir: dir}).ReadMeta(); err == nil && !state.MetaMatchesSocket(meta, c.Tmux.Socket) {
+			return c.fail(output.CodeExists,
+				fmt.Sprintf("terminal state %q belongs to socket %q", name, meta.Socket),
+				"inspect or move the foreign state directory: "+dir)
+		}
 		// Reuse of a dead terminal's name: archive its journal, replacing any
 		// older archive, then start fresh.
 		prev := dir + ".prev"
@@ -76,14 +104,21 @@ func (c *Ctx) cmdNew(args []string) int {
 	if err := c.Tmux.EnsureSession(); err != nil {
 		return c.tmuxErr(err)
 	}
-	argv, prepEnv, mode, err := shellhooks.Prepare(c.StateDir, shell, cmdVec)
+	argv, prepEnv, mode, err := shellhooks.Prepare(c.namespaceDir(), shell, cmdVec)
 	if err != nil {
 		return c.fail(output.CodeInternal, "prepare shell: "+err.Error(), "")
 	}
 
-	// Every terminal advertises PAIRMUX / PAIRMUX_NAME; Prepare's own env wins
-	// on conflict (ruling: its entries take precedence).
-	env := map[string]string{"PAIRMUX": "1", "PAIRMUX_NAME": name}
+	// Every terminal advertises its identity and canonical state paths. The
+	// latter give skills/checkers a stable locator without reimplementing the
+	// endpoint hash. Prepare's own env wins on conflict (ruling: its entries
+	// take precedence).
+	env := map[string]string{
+		"PAIRMUX":                 "1",
+		"PAIRMUX_NAME":            name,
+		"PAIRMUX_STATE_NAMESPACE": c.namespaceDir(),
+		"PAIRMUX_TERMINAL_DIR":    dir,
+	}
 	for k, v := range prepEnv {
 		env[k] = v
 	}
@@ -98,19 +133,21 @@ func (c *Ctx) cmdNew(args []string) int {
 	// pipe-pane can attach with minimal delay (reduces the window in which the
 	// shell's first prompt could be emitted before capture starts) and so the
 	// pipe-pane `cat >>` appends to a tight-permission file (security ruling).
-	j, err := journal.Open(dir)
+	j, err := prepareTerminalJournal(dir)
 	if err != nil {
 		return c.fail(output.CodeInternal, err.Error(), "")
-	}
-	_ = os.Chmod(dir, 0o700)
-	if f, err := os.OpenFile(j.RawPath(), os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
-		_ = f.Close()
 	}
 
 	paneID, err := c.Tmux.NewWindow(tmux.NewWindowReq{Name: name, Dir: cwd, Env: env, Argv: argv})
 	if err != nil {
 		return c.tmuxErr(err)
 	}
+	keepPane := false
+	defer func() {
+		if !keepPane {
+			_ = c.Tmux.KillWindowOf(paneID)
+		}
+	}()
 	if err := c.Tmux.PipePaneAppend(paneID, j.RawPath()); err != nil {
 		return c.tmuxErr(err)
 	}
@@ -147,12 +184,52 @@ func (c *Ctx) cmdNew(args []string) int {
 	}
 	next = append(next, fmt.Sprintf("pairmux run %s \"echo hello\"", name))
 
+	keepPane = true
 	return c.emit(output.Envelope{Status: "created", Terminal: name, Mode: string(effMode), Next: next})
 }
 
-// cmdRun sends a command, waits for its completion mark, and returns the shaped
-// output. On timeout it returns status "running" and leaves the command for
-// lazy settlement by a later run.
+type closeOnly interface {
+	Close() error
+}
+
+type terminalJournalOps struct {
+	chmod   func(string, os.FileMode) error
+	openRaw func(string, int, os.FileMode) (closeOnly, error)
+}
+
+func prepareTerminalJournal(dir string) (*journal.Journal, error) {
+	return prepareTerminalJournalWith(dir, terminalJournalOps{
+		chmod: os.Chmod,
+		openRaw: func(path string, flag int, perm os.FileMode) (closeOnly, error) {
+			return os.OpenFile(path, flag, perm)
+		},
+	})
+}
+
+// prepareTerminalJournalWith keeps all filesystem preparation ahead of
+// NewWindow. The injected operations make each failure path testable without
+// exposing or replacing tmux's private command runner.
+func prepareTerminalJournalWith(dir string, ops terminalJournalOps) (*journal.Journal, error) {
+	j, err := journal.Open(dir)
+	if err != nil {
+		return nil, err
+	}
+	if err := ops.chmod(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("prepare terminal directory permissions: %w", err)
+	}
+	f, err := ops.openRaw(j.RawPath(), os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("prepare raw journal: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return nil, fmt.Errorf("close raw journal: %w", err)
+	}
+	return j, nil
+}
+
+// cmdRun sends a command, waits for its completion mark or a quiet interactive
+// prompt, and returns the shaped output. On timeout it returns status "running"
+// and leaves the command for lazy settlement by a later run.
 func (c *Ctx) cmdRun(args []string) int {
 	const usageLine = `pairmux run <name> <cmd...> [--timeout 60s] [--head 50] [--tail 200]`
 	timeoutS, headS, tailS, pos, err := parseRun(args)
@@ -162,7 +239,13 @@ func (c *Ctx) cmdRun(args []string) int {
 	if len(pos) == 0 {
 		return c.usage(usageLine, "pairmux ls")
 	}
+	if rc, rejected := c.rejectInvalidSocket(); rejected {
+		return rc
+	}
 	name := pos[0]
+	if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
+		return rc
+	}
 	cmd := strings.Join(pos[1:], " ")
 	if strings.TrimSpace(cmd) == "" {
 		return c.fail(output.CodeBadArgs, "run needs a command", fmt.Sprintf("pairmux run %s \"echo hello\"", name))
@@ -195,7 +278,7 @@ func (c *Ctx) cmdRun(args []string) int {
 		}
 	}
 
-	term, err := state.Resolve(c.Tmux, name)
+	term, err := state.ResolveAt(c.Tmux, c.StateDir, name)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return c.noTerminal(name)
@@ -248,22 +331,29 @@ func (c *Ctx) cmdRun(args []string) int {
 		return c.fail(output.CodeInternal, err.Error(), "")
 	}
 	sendOffset := j.Size()
-	if err := j.AppendEvent(core.Event{Type: core.EvCmdStart, CmdID: cmdID, Offset: sendOffset, Text: cmd}); err != nil {
-		return c.fail(output.CodeInternal, err.Error(), "")
-	}
 
-	// In sentinel mode the shell substitutes $? into an OSC 7779 marker so
-	// completion is detectable without shell hooks. Drop the exact sent bytes
-	// (suffix included) when shaping so the echoed line disappears.
+	// In sentinel mode the shell substitutes its last-status variable into an
+	// OSC 7779 marker so completion is detectable without hooks. Drop the exact
+	// sent bytes (suffix included) when shaping so the echoed line disappears.
 	sent := cmd
 	if mode == core.ModeSentinel {
-		sent = cmd + core.SentinelSuffix
+		sent = cmd + shellhooks.SentinelSuffix(term.Meta.Shell)
 	}
-	if err := c.Tmux.SendLiteral(term.PaneID, sent); err != nil {
-		return c.tmuxErr(err)
-	}
-	if err := c.Tmux.SendKeys(term.PaneID, "Enter"); err != nil {
-		return c.tmuxErr(err)
+	if err := recordAndSendCommand(j, core.Event{
+		Type: core.EvCmdStart, CmdID: cmdID, Offset: sendOffset, Text: cmd,
+	}, func() error {
+		return c.Tmux.SendLiteral(term.PaneID, sent)
+	}, func() error {
+		return c.Tmux.SendKeys(term.PaneID, "Enter")
+	}); err != nil {
+		var sendErr *runSendError
+		if !errors.As(err, &sendErr) || sendErr.Stage == runSendRecord || sendErr.AbortErr != nil {
+			return c.fail(output.CodeInternal, err.Error(), "inspect the terminal journal before retrying")
+		}
+		if sendErr.Stage == runSendEnter {
+			return c.fail(output.CodeTmux, sendErr.Err.Error(), runSendEnterHint(name))
+		}
+		return c.tmuxErr(sendErr.Err)
 	}
 
 	start := time.Now()
@@ -273,7 +363,7 @@ func (c *Ctx) cmdRun(args []string) int {
 	}
 
 	fullHint := fmt.Sprintf("pairmux log %s --cmd %d", name, cmdID)
-	if res.Outcome == detect.OutcomeTimeout {
+	if res.Outcome != detect.OutcomeDone {
 		raw, _ := j.ReadRange(sendOffset, res.EndOffset)
 		body, omitted := lastLines(cleanNoTrunc(raw, sent), 20)
 		env := output.Envelope{
@@ -281,11 +371,9 @@ func (c *Ctx) cmdRun(args []string) int {
 			Notes: append(notes, notesArrivedSince(j, baseEvents)...),
 			Next:  []string{fmt.Sprintf("pairmux peek %s", name), fullHint},
 		}
-		// The command may not be working at all but blocked on a question;
-		// surface that as awaiting-input with the right answer hint.
-		if st, prompt := detect.Refine(j, detect.DeriveStatus(j, true, mode), mode); st == core.StatusAwaitingInput {
+		if res.Outcome == detect.OutcomeAwaitingInput {
 			env.Status = string(core.StatusAwaitingInput)
-			env.Next = awaitingNext(name, prompt)
+			env.Next = awaitingNext(name, res.Prompt)
 		}
 		if omitted > 0 {
 			env.Truncated = &output.TruncInfo{OmittedLines: omitted, GetFull: fullHint}
@@ -313,6 +401,57 @@ func (c *Ctx) cmdRun(args []string) int {
 	return c.emit(env)
 }
 
+type runSendStage string
+
+const (
+	runSendRecord  runSendStage = "record"
+	runSendLiteral runSendStage = "literal"
+	runSendEnter   runSendStage = "enter"
+)
+
+type runSendError struct {
+	Stage    runSendStage
+	Err      error
+	AbortErr error
+}
+
+func (e *runSendError) Error() string {
+	if e.AbortErr != nil {
+		return fmt.Sprintf("%v; record aborted command: %v", e.Err, e.AbortErr)
+	}
+	return e.Err.Error()
+}
+
+func (e *runSendError) Unwrap() error { return e.Err }
+
+func runSendEnterHint(name string) string {
+	return fmt.Sprintf("command text may be buffered; clear it with pairmux send %s --key C-c, then retry", name)
+}
+
+// recordAndSendCommand owns the cmd_start/send transition. A tmux failure is
+// closed with cmd_end(-1), so PendingCmd never mistakes a command that was not
+// entered for a still-running command on the next invocation.
+func recordAndSendCommand(j *journal.Journal, start core.Event, sendLiteral, sendEnter func() error) error {
+	if err := j.AppendEvent(start); err != nil {
+		return &runSendError{Stage: runSendRecord, Err: err}
+	}
+	abort := func(stage runSendStage, cause error) error {
+		exitCode := -1
+		abortErr := j.AppendEvent(core.Event{
+			Type: core.EvCmdEnd, CmdID: start.CmdID, Offset: j.Size(), ExitCode: &exitCode,
+			Text: "command dispatch aborted during " + string(stage),
+		})
+		return &runSendError{Stage: stage, Err: cause, AbortErr: abortErr}
+	}
+	if err := sendLiteral(); err != nil {
+		return abort(runSendLiteral, err)
+	}
+	if err := sendEnter(); err != nil {
+		return abort(runSendEnter, err)
+	}
+	return nil
+}
+
 // waitDone waits for a command's completion mark. Hooks mode uses the
 // C-correlated variant (review item R1): the completion D must follow our
 // command's own C mark, so a human running commands in the same pane cannot
@@ -321,9 +460,9 @@ func (c *Ctx) cmdRun(args []string) int {
 // timeout degenerates to a single read-only scan (used for lazy settlement).
 func waitDone(j *journal.Journal, from int64, mode core.Mode, timeout time.Duration) (detect.RunResult, error) {
 	if mode == core.ModeHooks {
-		return detect.WaitCompletionCorrelated(j, from, timeout, 0, true)
+		return detect.WaitCommandCorrelated(j, from, timeout, 0, true)
 	}
-	return detect.WaitCompletion(j, from, mode, timeout, 0)
+	return detect.WaitCommand(j, from, mode, timeout, 0)
 }
 
 // cmdPeek shows recent output and the derived status without taking the write
@@ -341,7 +480,13 @@ func (c *Ctx) cmdPeek(args []string) int {
 	if len(pos) == 0 {
 		return c.usage("pairmux peek <name>", "pairmux ls")
 	}
+	if rc, rejected := c.rejectInvalidSocket(); rejected {
+		return rc
+	}
 	name := pos[0]
+	if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
+		return rc
+	}
 	tailN := 60
 	if tailS != "" {
 		if v, err := strconv.Atoi(tailS); err == nil {
@@ -351,7 +496,7 @@ func (c *Ctx) cmdPeek(args []string) int {
 		}
 	}
 
-	term, err := state.Resolve(c.Tmux, name)
+	term, err := state.ResolveAt(c.Tmux, c.StateDir, name)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return c.noTerminal(name)
@@ -374,14 +519,18 @@ func (c *Ctx) cmdPeek(args []string) int {
 		}
 		body = trimTrailingBlank(out)
 	} else {
-		raw, _, err := j.TailBytes(64 * 1024)
+		raw, start, err := j.TailBytes(64 * 1024)
 		if err != nil {
 			return c.fail(output.CodeInternal, err.Error(), "")
 		}
 		var omitted int
 		body, omitted = lastLines(cleanNoTrunc(raw, ""), tailN)
-		if omitted > 0 {
-			trunc = &output.TruncInfo{OmittedLines: omitted, GetFull: fmt.Sprintf("pairmux log %s", name)}
+		if omitted > 0 || start > 0 {
+			trunc = &output.TruncInfo{
+				OmittedLines: omitted,
+				OmittedBytes: start,
+				GetFull:      fmt.Sprintf("pairmux log %s --range 1:end", name),
+			}
 		}
 	}
 
@@ -439,7 +588,13 @@ func (c *Ctx) cmdSend(args []string) int {
 	if len(pos) == 0 {
 		return c.usage("pairmux send <name> [--text S] [--key K ...] [--enter]", "pairmux ls")
 	}
+	if rc, rejected := c.rejectInvalidSocket(); rejected {
+		return rc
+	}
 	name := pos[0]
+	if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
+		return rc
+	}
 	if !seen["text"] && !seen["key"] && !seen["enter"] {
 		return c.fail(output.CodeBadArgs, "send needs at least one of --text/--key/--enter",
 			fmt.Sprintf("pairmux send %s --text hello --enter", name))
@@ -450,7 +605,7 @@ func (c *Ctx) cmdSend(args []string) int {
 		}
 	}
 
-	term, err := state.Resolve(c.Tmux, name)
+	term, err := state.ResolveAt(c.Tmux, c.StateDir, name)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return c.noTerminal(name)
@@ -490,9 +645,9 @@ func (c *Ctx) cmdSend(args []string) int {
 }
 
 // cmdLog returns a command's full output (--cmd N), grep matches (--grep RE),
-// a shaped-line range (--range A:B), or the journal tail (no flag).
+// a shaped-line range (--range A:B or A:end), or the journal tail (no flag).
 func (c *Ctx) cmdLog(args []string) int {
-	const usageLine = "pairmux log <name> [--cmd N | --grep RE | --range A:B]"
+	const usageLine = "pairmux log <name> [--cmd N | --grep RE | --range A:B|A:end]"
 	var cmdS, grepS, rangeS string
 	seen := map[string]bool{}
 	pos, err := parseFlags(args, flagSpec{
@@ -505,7 +660,13 @@ func (c *Ctx) cmdLog(args []string) int {
 	if len(pos) == 0 {
 		return c.usage(usageLine, "pairmux ls")
 	}
+	if rc, rejected := c.rejectInvalidSocket(); rejected {
+		return rc
+	}
 	name := pos[0]
+	if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
+		return rc
+	}
 	selected := 0
 	for _, f := range []string{"cmd", "grep", "range"} {
 		if seen[f] {
@@ -516,7 +677,7 @@ func (c *Ctx) cmdLog(args []string) int {
 		return c.usage(usageLine, "--cmd, --grep and --range are mutually exclusive")
 	}
 
-	term, err := state.Resolve(c.Tmux, name)
+	term, err := state.ResolveAt(c.Tmux, c.StateDir, name)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return c.noTerminal(name)
@@ -541,120 +702,108 @@ func (c *Ctx) cmdLog(args []string) int {
 		return c.logRange(name, j, term.Mode, rangeS)
 	}
 
-	raw, _, err := j.TailBytes(shapedViewCap)
+	raw, start, err := j.TailBytes(shapedViewCap)
 	if err != nil {
 		return c.fail(output.CodeInternal, err.Error(), "")
 	}
 	body, omitted := lastLines(cleanNoTrunc(raw, ""), 500)
 	env := output.Envelope{Status: "ok", Terminal: name, Mode: string(term.Mode), Output: body}
-	if omitted > 0 {
-		env.Truncated = &output.TruncInfo{OmittedLines: omitted, GetFull: "raw journal: " + j.RawPath()}
+	if omitted > 0 || start > 0 {
+		env.Truncated = &output.TruncInfo{
+			OmittedLines: omitted,
+			OmittedBytes: start,
+			GetFull:      fmt.Sprintf("pairmux log %s --range 1:end", name),
+		}
 	}
 	return c.emit(env)
 }
 
-// shapedViewCap bounds how much raw journal the whole-journal views (log tail,
-// --grep, --range) read: the last 4MB.
+// shapedViewCap bounds the implicit journal-tail view. Explicit --grep and
+// --range requests scan the whole journal so their results are never silently
+// scoped to a suffix.
 const shapedViewCap = 4 << 20
 
-// grepMatchCap bounds how many matching lines log --grep emits.
-const grepMatchCap = 200
-
-// shapedJournal returns the cleaned whole-journal view (last shapedViewCap
-// bytes of raw.log, CR-resolved, ANSI-stripped, no echo drop) and whether the
-// view was byte-capped. Line numbers derived from it are 1-based within this
-// view.
-func shapedJournal(j *journal.Journal) (text string, capped bool, err error) {
-	raw, _, err := j.TailBytes(shapedViewCap)
+// shapedJournal returns the cleaned complete journal. Explicit log selectors
+// opt into this potentially large read; bounded peek/default-log views use
+// TailBytes instead.
+func shapedJournal(j *journal.Journal) (string, error) {
+	raw, err := j.ReadRange(0, -1)
 	if err != nil {
-		return "", false, err
+		return "", err
 	}
-	return cleanNoTrunc(raw, ""), j.Size() > shapedViewCap, nil
+	return cleanNoTrunc(raw, ""), nil
 }
 
-// logGrep emits shaped-journal lines matching pattern, each prefixed with its
-// 1-based line number, capped at grepMatchCap matches.
+// logGrep emits every shaped-journal line matching pattern, each prefixed with
+// its 1-based line number.
 func (c *Ctx) logGrep(name string, j *journal.Journal, mode core.Mode, pattern string) int {
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return c.fail(output.CodeBadArgs, "bad --grep: "+err.Error(),
 			`RE2 syntax, e.g. pairmux log `+name+` --grep "error|panic"`)
 	}
-	text, capped, err := shapedJournal(j)
+	text, err := shapedJournal(j)
 	if err != nil {
 		return c.fail(output.CodeInternal, err.Error(), "")
 	}
 	var matches []string
-	total := 0
 	for i, ln := range strings.Split(text, "\n") {
 		if !re.MatchString(ln) {
 			continue
 		}
-		total++
-		if total <= grepMatchCap {
-			matches = append(matches, fmt.Sprintf("%d:%s", i+1, ln))
-		}
+		matches = append(matches, fmt.Sprintf("%d:%s", i+1, ln))
 	}
-	env := output.Envelope{Status: "ok", Terminal: name, Mode: string(mode), Output: strings.Join(matches, "\n")}
-	var truncParts []string
-	omittedMatches := 0
-	if total > grepMatchCap {
-		omittedMatches = total - grepMatchCap
-		truncParts = append(truncParts, fmt.Sprintf("narrow the pattern or pairmux log %s --range A:B", name))
-	}
-	if capped {
-		truncParts = append(truncParts, "view is the last 4MB of raw journal: "+j.RawPath())
-	}
-	if len(truncParts) > 0 {
-		env.Truncated = &output.TruncInfo{OmittedLines: omittedMatches, GetFull: strings.Join(truncParts, "; ")}
-	}
-	return c.emit(env)
+	return c.emit(output.Envelope{
+		Status: "ok", Terminal: name, Mode: string(mode), Output: strings.Join(matches, "\n"),
+	})
 }
 
-// logRange emits the 1-based inclusive shaped-line range A:B of the journal.
+// logRange emits the 1-based inclusive shaped-line range A:B (or A:end).
 func (c *Ctx) logRange(name string, j *journal.Journal, mode core.Mode, spec string) int {
 	a, b, err := parseRange(spec)
 	if err != nil {
 		return c.fail(output.CodeBadArgs, "bad --range: "+err.Error(), "pairmux log "+name+" --range 100:160")
 	}
-	text, capped, err := shapedJournal(j)
+	text, err := shapedJournal(j)
 	if err != nil {
 		return c.fail(output.CodeInternal, err.Error(), "")
 	}
 	lines := strings.Split(text, "\n")
-	if b > len(lines) {
+	if b < 0 || b > len(lines) {
 		b = len(lines)
 	}
 	var body string
 	if a <= b {
 		body = strings.Join(lines[a-1:b], "\n")
 	}
-	env := output.Envelope{Status: "ok", Terminal: name, Mode: string(mode), Output: body}
-	if capped {
-		env.Truncated = &output.TruncInfo{GetFull: "view is the last 4MB of raw journal: " + j.RawPath()}
-	}
-	return c.emit(env)
+	return c.emit(output.Envelope{Status: "ok", Terminal: name, Mode: string(mode), Output: body})
 }
 
-// parseRange parses --range's "A:B" as a 1-based inclusive line range.
+// parseRange parses --range's A:B or A:end as a 1-based inclusive line range.
 func parseRange(s string) (a, b int, err error) {
 	parts := strings.SplitN(s, ":", 2)
 	if len(parts) != 2 {
-		return 0, 0, fmt.Errorf("want A:B (1-based, inclusive)")
+		return 0, 0, fmt.Errorf("want A:B or A:end (1-based, inclusive)")
 	}
 	a, errA := strconv.Atoi(strings.TrimSpace(parts[0]))
-	b, errB := strconv.Atoi(strings.TrimSpace(parts[1]))
-	if errA != nil || errB != nil {
-		return 0, 0, fmt.Errorf("want integer line numbers A:B")
+	end := strings.TrimSpace(parts[1])
+	b = -1
+	var errB error
+	if end != "end" {
+		b, errB = strconv.Atoi(end)
 	}
-	if a < 1 || b < a {
+	if errA != nil || errB != nil {
+		return 0, 0, fmt.Errorf("want line range A:B or A:end")
+	}
+	if a < 1 || (b >= 0 && b < a) {
 		return 0, 0, fmt.Errorf("want 1 <= A <= B")
 	}
 	return a, b, nil
 }
 
-// logCmd renders the output region of one recorded command, capped at 512KB of
-// raw bytes.
+// logCmd renders the complete output region of one explicitly selected
+// command. Unlike bounded peek/default-log views, an explicit command lookup
+// never silently byte-caps its output.
 func (c *Ctx) logCmd(name string, j *journal.Journal, mode core.Mode, id int) int {
 	events, err := j.Events()
 	if err != nil {
@@ -682,26 +831,13 @@ func (c *Ctx) logCmd(name string, j *journal.Journal, mode core.Mode, id int) in
 		}
 	}
 
-	var raw []byte
-	capped := false
-	if to < 0 {
-		raw, _ = j.ReadRange(from, from+rawCapBytes+1)
-		if int64(len(raw)) > rawCapBytes {
-			raw = raw[:rawCapBytes]
-			capped = true
-		}
-	} else if to-from > rawCapBytes {
-		raw, _ = j.ReadRange(from, from+rawCapBytes)
-		capped = true
-	} else {
-		raw, _ = j.ReadRange(from, to)
+	raw, err := j.ReadRange(from, to)
+	if err != nil {
+		return c.fail(output.CodeInternal, err.Error(), "")
 	}
-
-	env := output.Envelope{Status: "ok", Terminal: name, Mode: string(mode), Output: cleanNoTrunc(raw, startEv.Text)}
-	if capped {
-		env.Truncated = &output.TruncInfo{OmittedLines: 0, GetFull: "raw journal: " + j.RawPath()}
-	}
-	return c.emit(env)
+	return c.emit(output.Envelope{
+		Status: "ok", Terminal: name, Mode: string(mode), Output: cleanNoTrunc(raw, startEv.Text),
+	})
 }
 
 // cmdLs lists every terminal with its derived status.
@@ -709,7 +845,10 @@ func (c *Ctx) cmdLs(args []string) int {
 	if _, err := parseFlags(args, flagSpec{}); err != nil {
 		return c.usage("pairmux ls", err.Error())
 	}
-	terms, err := state.List(c.Tmux)
+	if rc, rejected := c.rejectInvalidSocket(); rejected {
+		return rc
+	}
+	terms, err := state.ListAt(c.Tmux, c.StateDir)
 	if err != nil {
 		return c.tmuxErr(err)
 	}
@@ -766,6 +905,9 @@ func (c *Ctx) cmdKill(args []string) int {
 	if err != nil {
 		return c.usage("pairmux kill <name> | --all", err.Error())
 	}
+	if rc, rejected := c.rejectInvalidSocket(); rejected {
+		return rc
+	}
 	if all {
 		if len(pos) > 0 {
 			return c.usage("pairmux kill --all", "either --all or a name, not both")
@@ -776,7 +918,10 @@ func (c *Ctx) cmdKill(args []string) int {
 		return c.usage("pairmux kill <name> | --all", "pairmux ls")
 	}
 	name := pos[0]
-	term, err := state.Resolve(c.Tmux, name)
+	if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
+		return rc
+	}
+	term, err := state.ResolveAt(c.Tmux, c.StateDir, name)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return c.noTerminal(name)
@@ -807,15 +952,21 @@ func (c *Ctx) killAll() int {
 	var names []string
 	for _, p := range panes {
 		_ = c.Tmux.KillWindowOf(p.PaneID) // ignore: pane may already be gone
-		if j, err := journal.Open(c.dir(p.Name)); err == nil {
-			_ = j.AppendEvent(core.Event{Type: core.EvNote, Text: "killed"})
+		if state.ValidName(p.Name) {
+			dir := c.terminalDir(p.Name)
+			if term, err := state.ResolveAt(c.Tmux, c.StateDir, p.Name); err == nil {
+				dir = term.Dir
+			}
+			if j, err := journal.Open(dir); err == nil {
+				_ = j.AppendEvent(core.Event{Type: core.EvNote, Text: "killed"})
+			}
 		}
 		names = append(names, p.Name)
 	}
 	sort.Strings(names)
 	return c.emit(output.Envelope{
 		Status: "killed", Output: strings.Join(names, "\n"),
-		Next: []string{"journals retained under " + c.StateDir, "pairmux ls"},
+		Next: []string{"journals retained under " + c.namespaceDir(), "pairmux ls"},
 	})
 }
 
@@ -829,10 +980,16 @@ func (c *Ctx) cmdNote(args []string) int {
 	if len(pos) < 2 {
 		return c.usage("pairmux note <name> <text...>", `pairmux note build "use the staging token"`)
 	}
+	if rc, rejected := c.rejectInvalidSocket(); rejected {
+		return rc
+	}
 	name := pos[0]
+	if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
+		return rc
+	}
 	text := strings.Join(pos[1:], " ")
 
-	term, err := state.Resolve(c.Tmux, name)
+	term, err := state.ResolveAt(c.Tmux, c.StateDir, name)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return c.noTerminal(name)
@@ -939,6 +1096,20 @@ func (c *Ctx) cmdVersion() int {
 
 // --- small helpers ---
 
+// existingNamesScoped is the socket-aware variant used while allocating an
+// automatic name. The older Ctx helper remains for generic error hints.
+func (c *Ctx) existingNamesScoped() []string {
+	terms, err := state.ListAt(c.Tmux, c.StateDir)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(terms))
+	for _, term := range terms {
+		names = append(names, term.Name)
+	}
+	return names
+}
+
 // findPane returns the managed pane for name, tolerating tmux's no-server state.
 func (c *Ctx) findPane(name string) (tmux.PaneInfo, bool, error) {
 	panes, err := c.Tmux.ListManaged()
@@ -966,13 +1137,14 @@ func scanCompletion(j *journal.Journal, from int64, mode core.Mode) (start int64
 	return res.MarkStart, true
 }
 
-// shellName is the $SHELL basename, defaulting to bash when unset.
+// shellName is $SHELL, defaulting to bash when unset. Preserve the configured
+// path so shells with native integration (notably fish) launch the same binary.
 func shellName() string {
 	sh := os.Getenv("SHELL")
 	if sh == "" {
 		return "bash"
 	}
-	return filepath.Base(sh)
+	return sh
 }
 
 func isDir(path string) bool {

@@ -9,7 +9,7 @@ description: Every pairmux command with its flags, a real JSON example, and the 
 usage: pairmux [--json] [--socket S] <command> [args]
 ```
 
-Every command replies through the **`pairmux.v1` envelope**. Add `--json` for the machine-readable one-line form (shown throughout this page); without it, pairmux prints a friendly text block. All JSON examples below are captured verbatim from the real binary.
+Every non-interactive command replies through the **`pairmux.v1` envelope**. Add `--json` for the machine-readable one-line form (shown throughout this page); without it, pairmux prints a friendly text block. `attach` and `watch` are interactive human interfaces rather than envelope-producing commands.
 
 ## Global flags
 
@@ -19,7 +19,7 @@ Every command replies through the **`pairmux.v1` envelope**. Add `--json` for th
 | `--socket S` | Use tmux socket `S` (isolates a set of terminals). Overrides `$PAIRMUX_SOCKET`. |
 | `--` | Ends global-flag parsing, for a command that itself contains `--json`/`--socket`. |
 
-Environment: `PAIRMUX_SOCKET` sets the default socket; `PAIRMUX_STATE_DIR` sets the journal root (default `~/.local/state/pairmux`).
+Environment: `PAIRMUX_SOCKET` sets the default socket; `PAIRMUX_STATE_DIR` sets the journal root (default `~/.local/state/pairmux`). Socket labels are validated before tmux runs. Journals live in an isolated hash of the canonical `TMUX_TMPDIR`, uid, and socket under `<root>/.sockets/`. For the conventional default endpoint only, journals from the historical `<root>/<terminal>/` layout remain readable in place; pairmux never migrates them implicitly.
 
 ## The envelope schema
 
@@ -31,14 +31,14 @@ Two fields are always present — `schema` and `ok`. Everything else is omitted 
 | `ok` | bool | `true` on success, `false` on error. |
 | `status` | string | Result state (see [Statuses](#statuses)). |
 | `terminal` | string | The terminal the command acted on. |
-| `mode` | string | Completion-detection mode: `hooks` or `sentinel`. |
+| `mode` | string | Stored completion-detection mode: `hooks` or `sentinel`. `hooks-no-C` is a `doctor` diagnostic tier, not an envelope mode. |
 | `exit_code` | int | The command's exit code (`run`, on `done`). |
 | `duration_ms` | int | Wall-clock duration in milliseconds (`run`, on `done`). |
-| `output` | string | Shaped output: carriage-returns collapsed, ANSI stripped, echoed command dropped. |
+| `output` | string | Shaped output: carriage-returns collapsed and ANSI stripped. `run` and `log --cmd` also drop the echoed command. |
 | `truncated` | object | Present when `output` was elided; see below. |
 | `terminals` | array | The `ls` listing (one object per terminal). |
 | `notes` | array of string | Unseen human messages left via `pairmux note`. |
-| `next` | array of string | Concrete next-step commands. Always present for non-final states and errors. |
+| `next` | array of string | Ordered contextual hints. Obey prose safety entries, replace placeholders, then run the first applicable command. |
 | `error` | object | Present when `ok` is `false`; see [Errors](#errors). |
 
 **`truncated`** points at the rest of the output so it is never lost silently:
@@ -47,8 +47,15 @@ Two fields are always present — `schema` and `ok`. Everything else is omitted 
 "truncated":{"omitted_lines":50,"get_full":"pairmux log build --cmd 3"}
 ```
 
-- `omitted_lines` — how many lines were dropped from the middle.
-- `get_full` — the exact command that returns the complete output (or a raw-journal path).
+- `omitted_lines` — how many lines were dropped by output shaping within the bytes that were read.
+- `omitted_bytes` — how many raw bytes precede a bounded journal view. Omitted when zero.
+- `get_full` — an executable command that returns the complete selected output.
+
+For example, a byte-capped `peek` can report:
+
+```json
+"truncated":{"omitted_lines":0,"omitted_bytes":131072,"get_full":"pairmux log build --range 1:end"}
+```
 
 ### Statuses
 
@@ -61,7 +68,7 @@ Terminal statuses (reported by `ls`, `peek`, `wait`):
 | `awaiting-input` | Running but quiet, last line looks like an interactive prompt. |
 | `dead` | The pane is gone; the journal is retained. |
 
-Per-command action statuses: `created` (`new`), `done` / `running` (`run`), `sent` (`send`), `noted` (`note`), `killed` (`kill`), `ok` (`peek`/`log`/`ls`/`doctor`/`version`), and `wait`'s outcomes `idle` / `pattern-found` / `human-done` / `timeout`.
+Per-command action statuses: `created` (`new`), `done` / `running` / `awaiting-input` (`run`), `sent` (`send`), `noted` (`note`), `killed` (`kill`), `ok` (`peek`/`log`/`ls`/`doctor`/`version`), and `wait`'s outcomes `idle` / `awaiting-input` / `pattern-found` / `human-done` / `dead` / `timeout`.
 
 ### Errors
 
@@ -77,7 +84,7 @@ An error envelope has `ok:false`, `status:"error"`, and an `error` object with a
 | `E_EXISTS` | `new` was asked for a name already in use. |
 | `E_BUSY` | Another writer holds the terminal's lock, or a prior command is still running. |
 | `E_DEAD` | The terminal's pane is gone. |
-| `E_BAD_ARGS` | A usage or flag error (invalid key, bad regex, secret prompt, wrong terminal kind). |
+| `E_BAD_ARGS` | A usage or flag error (invalid name/socket/key, bad regex, wrong terminal kind). |
 | `E_TMUX` | An underlying tmux command failed. |
 | `E_INTERNAL` | An unexpected internal error. |
 
@@ -107,13 +114,13 @@ pairmux new --name build
 
 ### run
 
-Send a command and **block until it completes or `--timeout` elapses**. Returns the shaped output with exit code and duration. Takes the per-terminal writer lock.
+Send a command and **block until it completes, a quiet interactive prompt appears, or `--timeout` elapses**. Returns shaped output; a completed command also carries its exit code and duration. Takes the per-terminal writer lock.
 
 ```text
 pairmux run <name> <cmd...> [--timeout 60s] [--head 50] [--tail 200]
 ```
 
-- `--timeout` — Go duration (e.g. `90s`, `5m`). Default `60s`. On timeout the reply is `status: running`, not an error.
+- `--timeout` — Go duration (e.g. `90s`, `5m`). Default `60s`. If the deadline arrives without completion or a recognized prompt, the reply is `status: running`, not an error.
 - `--head N` / `--tail N` — how many leading/trailing lines to keep (defaults 50 / 200). Middle lines are elided with a `truncated` pointer.
 
 Completed:
@@ -152,11 +159,13 @@ Show recent output and the derived status **without blocking, without taking the
 pairmux peek <name> [--screen | --tail N]
 ```
 
-- (default) — the journal tail, shaped. `--tail N` sets how many lines (default 60).
+- (default) — read at most the final 64 KiB of the raw journal, shape it, and return its tail.
+  `--tail N` sets how many lines (default 60). A skipped byte prefix is reported as
+  `truncated.omitted_bytes`, with `pairmux log NAME --range 1:end` as the recovery command.
 - `--screen` — a live `capture-pane` render of the current viewport (useful for full-screen TUIs).
 
 ```json
-{"schema":"pairmux.v1","ok":true,"status":"idle","terminal":"build","mode":"hooks","output":"...\n300\n\nuser@host pairmux % ","truncated":{"omitted_lines":253,"get_full":"pairmux log build"},"next":["pairmux run build \"echo hello\""]}
+{"schema":"pairmux.v1","ok":true,"status":"idle","terminal":"build","mode":"hooks","output":"...\n300\n\nuser@host pairmux % ","truncated":{"omitted_lines":253,"omitted_bytes":65536,"get_full":"pairmux log build --range 1:end"},"next":["pairmux run build \"echo hello\""]}
 ```
 
 ### wait
@@ -167,7 +176,9 @@ Block until the terminal satisfies a condition. Read-only: records no events and
 pairmux wait <name> [--idle MS] [--pattern RE] [--human] [--notify] [--timeout 300s]
 ```
 
-- `--idle MS` — resolve when the journal has been quiet for `MS` milliseconds (default condition, 800ms).
+- `--idle MS` — after `MS` milliseconds of output silence (default 800ms), refresh state and resolve
+  only when the shell is truly `idle`; quiet running commands keep waiting, while prompts and dead
+  panes return their real status.
 - `--pattern RE` — resolve when new output matches the RE2 regex `RE`.
 - `--human` — resolve when a human leaves a `note` (or one is already waiting).
 - `--notify` — fire a desktop notification to summon a human (best-effort).
@@ -215,16 +226,20 @@ pairmux send deploy --text y --enter
 
 ### log
 
-Read full or filtered history from the journal (resolves truncation and scrolled-off output). The four modes are mutually exclusive.
+Read a recent view or explicitly select complete history from the journal. The four modes are mutually exclusive.
 
 ```text
-pairmux log <name> [--cmd N | --grep RE | --range A:B]
+pairmux log <name> [--cmd N | --grep RE | --range A:B|A:end]
 ```
 
-- (default) — the shaped journal tail (last 500 lines).
-- `--cmd N` — the complete output of recorded command number `N`.
-- `--grep RE` — lines matching the RE2 regex, each prefixed with its line number (capped at 200 matches).
-- `--range A:B` — the 1-based inclusive line range `A:B`.
+- (default) — a bounded recent view: read at most the final 4 MiB of raw journal, then return the
+  last 500 shaped lines. A skipped byte prefix is reported with `omitted_bytes` and an executable
+  `pairmux log NAME --range 1:end` recovery.
+- `--cmd N` — the complete, unbounded output region of recorded command number `N`.
+- `--grep RE` — every matching line from the complete shaped journal, prefixed with its 1-based line number.
+- `--range A:B` / `--range A:end` — a complete 1-based inclusive shaped-line range; `end` means the final line.
+
+The explicit selectors can return large replies because they intentionally do not apply the default byte or match caps.
 
 ```bash
 pairmux log build --cmd 1
@@ -276,7 +291,7 @@ pairmux kill deploy
 ```
 
 ```json
-{"schema":"pairmux.v1","ok":true,"status":"killed","terminal":"deploy","next":["journal retained at ~/.local/state/pairmux/deploy","pairmux ls"]}
+{"schema":"pairmux.v1","ok":true,"status":"killed","terminal":"deploy","next":["journal retained under the pairmux state namespace","pairmux ls"]}
 ```
 
 ---
@@ -285,7 +300,7 @@ pairmux kill deploy
 
 ### attach
 
-Hand the human a live tmux client on the pairmux session, focusing the named window first. Replaces the pairmux process with tmux. Refuses when already inside tmux or when stdout is not a terminal.
+Hand the human a live tmux client on the pairmux session, focusing the named window first. Replaces the pairmux process with tmux. Refuses when already inside tmux or when stdout is not a terminal. Attaching records no journal event; the human leaves a `note` when handing control back.
 
 ```text
 pairmux attach [name]
@@ -334,9 +349,13 @@ pairmux doctor
 
 ✓  tmux        3.7b at /opt/homebrew/bin/tmux (>= 3.2)
 ✓  state dir   writable: ~/.local/state/pairmux
-✓  live probe  zsh: hooks;  bash: hooks-no-C;  dash: sentinel
+✓  live probe  zsh: hooks;  bash: hooks-no-C;  fish: hooks;  dash: sentinel
 ✓  notifier    osascript at /usr/bin/osascript (macOS notifications available)
 ```
+
+`hooks-no-C` is a diagnostic tier for shells (notably bash 3.2) that emit OSC 133 A/D marks but no
+C mark; those terminals still store `mode:"hooks"`. Fish 4+ supplies OSC 133 natively. If fish emits
+no ready mark, `new` degrades it to `mode:"sentinel"` and uses fish's `$status` in the marker.
 
 ### version
 
@@ -349,3 +368,44 @@ pairmux version
 ```json
 {"schema":"pairmux.v1","ok":true,"status":"ok","output":"0.1.0-dev"}
 ```
+
+### skill install
+
+Install the embedded canonical Agent Skill. A named target creates its skill directory; `all` only
+installs into agent configuration directories that already exist and reports the rest as skipped.
+
+```text
+pairmux skill install [--target T|all] [--dry-run]
+```
+
+Targets: `claude-code`, `codex`, `gemini`, `cursor`, `opencode`, `copilot`, `windsurf`, `kiro`,
+`amp`, and the cross-agent `agents` directory. See [Agent Skills](./skills.md) for paths and evals.
+
+### mcp serve
+
+Serve typed pairmux tools over the newline-delimited MCP stdio transport. The server implements MCP
+protocol revision `2025-11-25`; stdout is reserved for JSON-RPC messages and diagnostics go to stderr.
+
+```text
+pairmux mcp serve
+```
+
+Configure an MCP client to launch `pairmux` directly with arguments `["mcp", "serve"]`. `tools/list`
+advertises `pairmux_new`, `pairmux_run`, `pairmux_peek`, `pairmux_wait`, `pairmux_send`, `pairmux_log`,
+`pairmux_ls`, `pairmux_kill`, `pairmux_note`, and `pairmux_doctor`, each with a closed JSON Schema.
+`skill install` is intentionally not exposed because it writes agent configuration.
+
+Every tool invokes this same executable with an argv array and `--json`; no wrapper shell is involved.
+The resulting `pairmux.v1` envelope is returned in `structuredContent` and duplicated as JSON text for
+compatibility. An envelope with `ok:false` becomes a tool result with `isError:true`; malformed MCP
+requests and unknown tools use JSON-RPC errors. Tool annotations conservatively flag command execution,
+input, and terminal kills as potentially destructive so clients can request user approval.
+
+The server caps each tool subprocess's stdout at 1 MiB and stderr at 64 KiB. If stdout exceeds the
+limit, the call returns an actionable tool error instead of forwarding a partial envelope. Narrow a
+large `pairmux_log` call with `command_id`, `grep`, or a smaller `range`; the underlying journal remains
+complete.
+
+See the official [MCP lifecycle](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle),
+[stdio transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports), and
+[tool result semantics](https://modelcontextprotocol.io/specification/2025-11-25/server/tools).

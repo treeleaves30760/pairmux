@@ -17,7 +17,7 @@ Driving a raw terminal is hard for agents for three separate reasons:
 - **Information quality.** `capture-pane` shows only the current viewport, mangled with ANSI escapes, spinners, and progress bars, with no exit code and no "is it finished?" signal.
 - **Human access.** Headless PTY tools lock humans out entirely, so no one can step in when the agent is stuck.
 
-pairmux is an **ACI (Agent-Computer Interface) layer** on top of tmux that closes all three: a blocking CLI that returns exactly when a command finishes, a journal that keeps clean full history with exit codes, and native `tmux attach` so a human can take over and hand back.
+pairmux is an **ACI (Agent-Computer Interface) layer** on top of tmux that closes all three: blocking calls that return on completion, input, requested conditions, or timeout; a journal that keeps clean full history with exit codes; and native `tmux attach` so a human can take over and hand back.
 
 ## Requirements
 
@@ -27,10 +27,24 @@ pairmux is an **ACI (Agent-Computer Interface) layer** on top of tmux that close
 
 ## Install
 
-<Tabs groupId="install">
-<TabItem value="uv" label="uv / pipx" default>
+:::caution Pre-release status
+The packaging and release workflows are implemented and tested, but the GitHub repositories and PyPI
+project are not public yet. Use the source install below until the first public tagged release.
+:::
 
-pairmux publishes platform wheels that bundle the binary, so `uv` (or `pipx`) installs it like any tool:
+<Tabs groupId="install">
+<TabItem value="source" label="Source checkout" default>
+
+```bash
+make build
+install -m 0755 bin/pairmux ~/.local/bin/pairmux
+pairmux version
+```
+
+</TabItem>
+<TabItem value="uv" label="uv / pipx (after release)">
+
+After the first release, platform wheels bundle the binary, so `uv` (or `pipx`) installs it like any tool:
 
 ```bash
 uv tool install pairmux
@@ -38,7 +52,7 @@ uv tool install pairmux
 ```
 
 </TabItem>
-<TabItem value="curl" label="curl | bash">
+<TabItem value="curl" label="curl | bash (after release)">
 
 The installer detects your OS and architecture, downloads the matching release, and checks for tmux:
 
@@ -47,14 +61,10 @@ curl -fsSL https://raw.githubusercontent.com/treeleaves30760/pairmux/main/instal
 ```
 
 </TabItem>
-<TabItem value="brew" label="Homebrew">
-
-```bash
-brew install treeleaves30760/tap/pairmux
-```
-
-</TabItem>
 </Tabs>
+
+Homebrew distribution is deferred until release binaries are signed, notarized, and verified through
+Gatekeeper. Use the source, wheel, or checksummed archive channel in the meantime.
 
 ## Verify your environment
 
@@ -69,15 +79,17 @@ pairmux doctor
 
 ✓  tmux        3.7b at /opt/homebrew/bin/tmux (>= 3.2)
 ✓  state dir   writable: ~/.local/state/pairmux
-✓  live probe  zsh: hooks;  bash: hooks-no-C;  dash: sentinel
+✓  live probe  zsh: hooks;  bash: hooks-no-C;  fish: hooks;  dash: sentinel
 ✓  notifier    osascript at /usr/bin/osascript (macOS notifications available)
 ```
 
-The **live probe** line reports which completion-detection tier each shell reaches — see [Concepts](./concepts.md#three-tier-completion-detection).
+The **live probe** line reports which completion-detection tier each shell reaches. Fish 4+ emits
+compatible OSC 133 marks natively; fish without a ready mark degrades to a `$status` sentinel. See
+[Concepts](./concepts.md#completion-detection-and-the-idle-backstop).
 
 ## Quick start
 
-Every command accepts `--json` for a machine-readable [`pairmux.v1` envelope](./cli-reference.md#the-envelope-schema); without it you get a friendly text block. The examples below show the JSON an agent sees.
+Every non-interactive command accepts `--json` for a machine-readable [`pairmux.v1` envelope](./cli-reference.md#the-envelope-schema); without it you get a friendly text block. `attach` and `watch` are interactive human interfaces. The examples below show the JSON an agent sees.
 
 ### 1. Open a terminal
 
@@ -91,9 +103,9 @@ pairmux new --name build
 
 This opens a tmux window, starts capturing its output into a journal, and injects shell integration so completions are detected precisely (`mode: hooks`).
 
-### 2. Run a command and block until it finishes
+### 2. Run a command and block for an actionable outcome
 
-No `sleep`, no guessing — `run` returns when the command actually completes, with the exit code and duration:
+No `sleep`, no guessing — `run` returns when the command completes, needs input, or reaches its timeout. A completed command includes the exit code and duration:
 
 ```bash
 pairmux run build "echo hello world"
@@ -109,7 +121,7 @@ If a command outlives `--timeout` (default 60s), `run` returns `status: running`
 
 ```bash
 pairmux run build "make -j4" --timeout 30s   # -> status: running, with a tail + next steps
-pairmux wait build --idle 800                 # block until output goes quiet for 800ms
+pairmux wait build --idle 800                 # block until the shell is truly idle
 pairmux peek build                            # read-only snapshot, any time
 ```
 
@@ -136,5 +148,6 @@ pairmux watch          # live dashboard of every terminal
 ## Next steps
 
 - [CLI Reference](./cli-reference.md) — every command, every flag, one real JSON example each, and the full envelope schema.
-- [Concepts](./concepts.md) — why pairmux is built the way it is: tmux as a state engine, the journal, three-tier completion detection.
+- [Concepts](./concepts.md) — why pairmux is built the way it is: tmux as a state engine, endpoint-isolated journals, completion modes, and the idle backstop.
 - [Guides](./guides/long-running-commands.md) — task-oriented playbooks.
+- [Agent Skills](./skills.md) — install targets and the repeatable cross-agent benchmark runner.

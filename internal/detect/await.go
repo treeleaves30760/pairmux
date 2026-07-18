@@ -106,8 +106,18 @@ func lastNonBlankLine(s string) string {
 // emit no C at all). A held D is also accepted when the overall deadline
 // expires — a completion was observed, which beats reporting a timeout.
 func WaitCompletionCorrelated(j *journal.Journal, from int64, timeout, poll time.Duration, requireC bool) (RunResult, error) {
+	return waitCompletionCorrelated(j, from, timeout, poll, requireC, false)
+}
+
+// WaitCommandCorrelated is the prompt-aware form used by hooks-mode `run`.
+// Completion correlation retains priority over the heuristic prompt outcome.
+func WaitCommandCorrelated(j *journal.Journal, from int64, timeout, poll time.Duration, requireC bool) (RunResult, error) {
+	return waitCompletionCorrelated(j, from, timeout, poll, requireC, true)
+}
+
+func waitCompletionCorrelated(j *journal.Journal, from int64, timeout, poll time.Duration, requireC, stopOnPrompt bool) (RunResult, error) {
 	if !requireC {
-		return WaitCompletion(j, from, core.ModeHooks, timeout, poll)
+		return waitCompletion(j, from, core.ModeHooks, timeout, poll, stopOnPrompt)
 	}
 	if poll <= 0 {
 		poll = defaultPoll
@@ -159,6 +169,14 @@ func WaitCompletionCorrelated(j *journal.Journal, from int64, timeout, poll time
 		now := time.Now()
 		if heldD != nil && !now.Before(graceUntil) {
 			return done(*heldD), nil
+		}
+		if stopOnPrompt {
+			if status, prompt := Refine(j, core.StatusRunning, core.ModeHooks); status == core.StatusAwaitingInput {
+				return RunResult{
+					Outcome: OutcomeAwaitingInput, ExitCode: -1, MarkStart: -1,
+					EndOffset: off, Prompt: prompt,
+				}, nil
+			}
 		}
 		if !now.Before(deadline) {
 			if heldD != nil {

@@ -70,15 +70,34 @@ Fixes:
 - Use `--pattern` only for a line you expect to appear in the **future** (a slow boot, a later log
   event). Start the `wait` before the event, then trigger it.
 
-## `wait --idle` returned too early
+## A quiet command did not satisfy `wait --idle`
 
-`--idle MS` resolves on *any* silence of `MS` ms — including a command that is merely paused (a
-`sleep`, waiting on I/O, blocked on a prompt). It is a backstop for "the program is still running but
-I want to look now", not a reliable "the command finished" signal.
+This is intentional. `--idle MS` first observes `MS` ms of output silence, then refreshes terminal
+liveness and status. A command that is sleeping, blocked on I/O, or otherwise still running remains
+`running`; pairmux keeps waiting until the shell is actually idle or the overall timeout expires.
+A prompt returns `awaiting-input`, and a vanished pane returns `dead`.
 
-For "did it finish?", rely on `run` itself (hooks give a precise `done` + `exit_code`), or `wait
---pattern` on a known completion line. If `--idle` returns and `peek` still shows `running`, the
-command isn't done — keep waiting or read on.
+For a long-lived process where silence is expected, use `peek` to inspect it or `wait --pattern` for a
+future readiness line. Use `run` for finite commands because hooks return precise `done` +
+`exit_code`.
+
+This idle/prompt behavior is armed only when idle is the default condition or `--idle` is explicit.
+`wait --pattern ...` and `wait --human` keep blocking at a prompt until their requested condition,
+pane death, or timeout. Add `--idle MS` when either condition should race idle/prompt detection.
+
+## E_TMUX — tmux socket creation failed
+
+If tmux reports `Permission denied`, `No such file or directory`, or `File name too long` under
+`/tmp/tmux-*`, point its socket root at a short writable directory and retry:
+
+```bash
+export TMUX_TMPDIR="$TMPDIR"
+pairmux doctor
+```
+
+pairmux honors `TMUX_TMPDIR`. This also avoids macOS sandbox restrictions and the Unix socket path
+length limit. Keep the same `TMUX_TMPDIR`, `PAIRMUX_SOCKET`, and `PAIRMUX_STATE_DIR` in every process
+that needs to share a terminal.
 
 ## Output was truncated
 
@@ -88,15 +107,19 @@ pointer, or query the journal directly:
 pairmux log build --cmd 3          # the whole command's output
 pairmux log build --grep "error|FAIL"   # just matching lines, with line numbers
 pairmux log build --range 400:460  # a specific line range
+pairmux log build --range 1:end    # every shaped line (can be large)
 ```
-`--grep` is capped at 200 matches; narrow the regex or use `--range` for very dense logs.
+`peek` and default `log` intentionally read bounded journal tails and report both line shaping and any
+skipped raw-byte prefix. Explicit `--cmd`, `--grep`, and `--range` selectors read the complete selected
+history and can return large results, so prefer a narrow regex or bounded range for dense logs.
 
 ## Sentinel mode / `--cmd` terminals
 
-A terminal created with `--cmd`, or one whose shell couldn't take OSC 133 hooks, reports
-`mode:"sentinel"`. Completion detection still works (via an injected marker), but such terminals are
-**programs you drive with `send`/`peek`, not `run`**. `run` targets an interactive shell; for a
-`--cmd` program, interact with `send` and observe with `peek`/`wait`/`log`.
+A terminal created with `--cmd`, an unknown interactive shell, or a supported shell whose OSC 133
+probe failed reports `mode:"sentinel"`. Completion detection still works via an injected marker.
+POSIX-like shells carry the prior exit code in `$?`; Fish fallback uses `$status`, so Fish commands
+remain valid. A `--cmd` terminal is a **program you drive with `send`/`peek`, not `run`**; interact
+with it using `send` and observe with `peek`/`wait`/`log`.
 
 ## Environment check
 
@@ -105,6 +128,7 @@ If terminals behave oddly (no completion detected, notifications missing), run t
 pairmux doctor
 ```
 It reports tmux version (needs **≥ 3.2**), state-dir writability, the per-shell completion tier
-(`hooks` / `hooks-no-C` / `sentinel`), and whether a desktop notifier is available. `hooks-no-C` means
-completion works but human-interleave correlation is slightly weaker (e.g. bash 3.2). pairmux is
-macOS/Linux only; on Windows use WSL.
+(`hooks`, `hooks-no-C`, `hooks-degraded->sentinel`, or `sentinel`), and notifier availability.
+`hooks-no-C` means completion works but human-interleave correlation is slightly weaker (e.g. bash
+3.2). Fish 4+ supplies native OSC 133 marks; older/degraded Fish uses its sentinel fallback. pairmux
+is macOS/Linux only; on Windows use WSL.

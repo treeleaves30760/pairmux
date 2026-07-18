@@ -26,6 +26,9 @@ func (c *Ctx) cmdWatch(args []string) int {
 	if _, err := parseFlags(args, flagSpec{vals: map[string]*string{"interval": &intervalS}}); err != nil {
 		return c.usage("pairmux watch [--interval 2s]", err.Error())
 	}
+	if rc, rejected := c.rejectInvalidSocket(); rejected {
+		return rc
+	}
 	interval, err := parseInterval(intervalS)
 	if err != nil {
 		return c.usage("pairmux watch [--interval 2s]", "bad --interval: "+err.Error())
@@ -113,7 +116,7 @@ func (c *Ctx) renderWatchFrame() {
 	fmt.Fprintf(&b, "pairmux watch — %s — socket %s  (Ctrl-C to quit)\n\n",
 		time.Now().Format("15:04:05"), c.Tmux.Socket)
 
-	terms, err := state.List(c.Tmux)
+	terms, err := state.ListAt(c.Tmux, c.StateDir)
 	if err != nil {
 		fmt.Fprintf(&b, "  error listing terminals: %v\n", err)
 		fmt.Fprint(c.Stdout, b.String())

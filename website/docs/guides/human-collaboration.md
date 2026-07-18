@@ -85,4 +85,6 @@ The agent sees it on its next command, in the `notes` field:
 
 ## When the agent should wait for the human
 
-While a human is typing in a pane, the agent should not fight them for it. The discipline: if a human has attached, `wait` (don't `run`) until they leave a note. Attach and note events are recorded in the journal, so the agent's next reply reflects that a human was involved.
+While a human is typing in a pane, the agent should not fight them for it. The discipline: if a human
+has attached, `wait` (don't `run`) until they leave a note. The note is recorded and surfaces in the
+next reply; attaching alone is deliberately just a live tmux operation and creates no journal event.

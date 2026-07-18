@@ -35,6 +35,9 @@ func pmxAsync(t *testing.T, e tenv, args ...string) func() (output.Envelope, int
 	if e.shell != "" {
 		cmd.Env = append(cmd.Env, "SHELL="+e.shell)
 	}
+	if e.tmuxTmp != "" {
+		cmd.Env = append(cmd.Env, "TMUX_TMPDIR="+e.tmuxTmp)
+	}
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Start(); err != nil {
@@ -154,14 +157,20 @@ func TestAwaitingInputPrompt(t *testing.T) {
 	e := newEnv(t, bashShell)
 	pmx(t, e, "new", "--name", "t1")
 
-	env, code := pmx(t, e, "run", "t1", "printf 'Continue [y/N]? '; read ans", "--timeout", "1s")
+	started := time.Now()
+	env, code := pmx(t, e, "run", "t1", "printf 'Continue [y/N]? '; read ans", "--timeout", "5s")
 	if code != 0 {
 		t.Fatalf("run: code=%d env=%+v", code, env)
 	}
+	if env.Status != "awaiting-input" {
+		t.Fatalf("run status = %q, want awaiting-input", env.Status)
+	}
+	if elapsed := time.Since(started); elapsed >= 4*time.Second {
+		t.Fatalf("run returned prompt after %v, want before timeout", elapsed)
+	}
 
-	env = pollPeekStatus(t, e, "t1", "awaiting-input", 10*time.Second)
 	if !strings.Contains(env.Output, "Continue [y/N]?") {
-		t.Fatalf("peek output should end with the prompt: %q", env.Output)
+		t.Fatalf("run output should contain the prompt: %q", env.Output)
 	}
 	if !nextContains(env.Next, "pairmux send t1 --text") {
 		t.Fatalf("peek next = %v, want a send hint", env.Next)

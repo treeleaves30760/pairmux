@@ -1,7 +1,9 @@
 # pairmux command reference
 
-Every command speaks the `pairmux.v1` envelope. Add `--json` (before or after the command) for the
-one-line machine form shown here; without it you get a friendly text block. Global flags:
+Every non-interactive command speaks the `pairmux.v1` envelope. Add `--json` (before or after the
+command) for the one-line machine form shown here; without it you get a friendly text block.
+`attach` and `watch` are interactive human interfaces, not envelope-producing agent commands.
+Global flags:
 
 | flag | meaning |
 |------|---------|
@@ -9,8 +11,9 @@ one-line machine form shown here; without it you get a friendly text block. Glob
 | `--socket S` | use tmux socket `S` (isolates a set of terminals); overrides `$PAIRMUX_SOCKET` |
 | `--` | end global-flag parsing, for a command that itself contains `--json`/`--socket` |
 
-Environment: `PAIRMUX_SOCKET` sets the default socket; `PAIRMUX_STATE_DIR` sets the journal root
-(default `~/.local/state/pairmux`).
+Environment: `PAIRMUX_SOCKET` sets the default tmux socket; `PAIRMUX_STATE_DIR` sets the journal root
+(default `~/.local/state/pairmux`). Each tmux endpoint gets an isolated hashed directory beneath
+`<root>/.sockets/`, so equal terminal names on different sockets cannot share metadata.
 
 ## The envelope schema
 
@@ -26,16 +29,17 @@ Environment: `PAIRMUX_SOCKET` sets the default socket; `PAIRMUX_STATE_DIR` sets 
 | `exit_code` | int | the command's exit code (`run`, on `done`) — this is the **command's** code, not pairmux's |
 | `duration_ms` | int | wall-clock duration (`run`, on `done`) |
 | `output` | string | shaped output: CR collapsed, ANSI stripped, echoed command dropped |
-| `truncated` | object | present when `output` was elided: `{omitted_lines, get_full}` |
+| `truncated` | object | present when `output` was elided: `{omitted_lines, omitted_bytes?, get_full}` |
 | `terminals` | array | the `ls` listing (one object per terminal) |
 | `notes` | array of string | unseen human messages left via `pairmux note` — read and obey them |
-| `next` | array of string | concrete next-step commands; the first is your next move |
+| `next` | array of string | optional ordered hints: prose/safety, placeholders, and applicable commands |
 | `error` | object | present when `ok:false`: `{code, message, hint}` |
 
 **Statuses.** Terminal states: `idle`, `running`, `awaiting-input`, `dead`. Per-command action
 statuses: `created` (`new`), `done`/`running` (`run`), `sent` (`send`), `noted` (`note`),
 `killed` (`kill`), `ok` (`peek`/`log`/`ls`/`doctor`/`version`), and `wait`'s outcomes
-`idle` / `pattern-found` / `human-done` / `timeout`.
+`idle` / `awaiting-input` / `pattern-found` / `human-done` / `dead` / `timeout` (which ones can
+resolve the call depends on the requested wait conditions).
 
 **Error codes** (envelope has `ok:false`, `status:"error"`, and an `error` object):
 
@@ -45,7 +49,7 @@ statuses: `created` (`new`), `done`/`running` (`run`), `sent` (`send`), `noted` 
 | `E_EXISTS` | `new` asked for a name already in use |
 | `E_BUSY` | another writer holds the lock, or a prior command is still running |
 | `E_DEAD` | the terminal's pane is gone |
-| `E_BAD_ARGS` | usage/flag error (invalid key, bad regex, secret prompt, wrong terminal kind) |
+| `E_BAD_ARGS` | usage/flag error (invalid name/key, bad regex, wrong terminal kind) |
 | `E_TMUX` | an underlying tmux command failed |
 | `E_INTERNAL` | an unexpected internal error |
 
@@ -92,13 +96,20 @@ Truncated (a 300-line command, default head/tail):
 ```text
 pairmux wait <name> [--idle MS] [--pattern RE] [--human] [--notify] [--timeout 300s]
 ```
-- `--idle MS` — resolve when the journal has been quiet for `MS` ms (default condition, 800ms).
-  Note: fires on *any* silence, so it can resolve while a command is merely paused (e.g. sleeping).
+- `--idle MS` — after `MS` ms of output silence, refresh terminal state and resolve only when it is
+  `idle`, `awaiting-input`, or `dead` (default condition, 800ms). A quiet running command keeps waiting.
 - `--pattern RE` — resolve when **new** output (produced after the wait starts) matches the RE2 regex.
   It does **not** scan output already printed before the wait — see troubleshooting.
 - `--human` — resolve when a human leaves a `note` (or one is already waiting).
 - `--notify` — best-effort desktop notification to summon a human.
-- `--timeout` — overall deadline (default `300s`); first condition satisfied wins.
+- `--timeout` — overall deadline (default `300s`).
+
+With no condition flag, idle is armed by default. `--pattern` alone waits for a future pattern;
+`--human` alone waits for a note. A prompt does **not** end either of those condition-only waits.
+Combine `--pattern`, `--human`, and an explicit `--idle` to race requested conditions; the first one
+satisfied wins. A pane that dies while any wait is in flight ends it as `dead`. Timeout `next` entries
+are contextual inspection/retry hints; preserve the original condition flags when retrying the same
+wait.
 
 Read-only: records nothing, takes no lock, so a human and an agent can both wait on one terminal.
 ```json
@@ -115,12 +126,14 @@ Read-only: records nothing, takes no lock, so a human and an agent can both wait
 ```text
 pairmux peek <name> [--screen | --tail N]
 ```
-- default: the shaped journal tail (`--tail N` sets line count, default 60).
+- default: reads at most the final 64 KiB of raw journal, then returns the shaped tail (`--tail N`
+  sets the line count, default 60). If an earlier byte prefix was skipped, `omitted_bytes` reports
+  its size and `get_full` is the executable `pairmux log NAME --range 1:end` recovery command.
 - `--screen`: a live `capture-pane` render of the current viewport (useful for full-screen TUIs).
 
 Safe to call any number of times from any number of agents. Surfaces `notes`.
 ```json
-{"schema":"pairmux.v1","ok":true,"status":"idle","terminal":"build","mode":"hooks","output":"…\n300\n\nuser@host % ","truncated":{"omitted_lines":253,"get_full":"pairmux log build"},"next":["pairmux run build \"echo hello\""]}
+{"schema":"pairmux.v1","ok":true,"status":"idle","terminal":"build","mode":"hooks","output":"…\n300\n\nuser@host % ","truncated":{"omitted_lines":253,"omitted_bytes":65536,"get_full":"pairmux log build --range 1:end"},"next":["pairmux run build \"echo hello\""]}
 ```
 
 ### send — deliver raw input to a running program
@@ -140,13 +153,18 @@ answer a program a prior `run` is still blocked on.
 
 ### log — full or filtered history from the journal
 ```text
-pairmux log <name> [--cmd N | --grep RE | --range A:B]
+pairmux log <name> [--cmd N | --grep RE | --range A:B|A:end]
 ```
 The four modes are mutually exclusive. Resolves truncation and scrolled-off output without re-running.
-- default: shaped journal tail (last 500 lines).
+- default: reads at most the final 4 MiB of raw journal, then returns its last 500 shaped lines.
+  A skipped prefix is reported with `omitted_bytes` and an executable `get_full` command.
 - `--cmd N` — the complete output of recorded command number `N`.
-- `--grep RE` — RE2-matching lines, each prefixed with its line number (capped at 200 matches).
-- `--range A:B` — the 1-based inclusive line range.
+- `--grep RE` — every RE2-matching line in the complete journal, prefixed with its line number.
+- `--range A:B` / `--range A:end` — a complete 1-based inclusive shaped-line range; `end` selects
+  through the final line.
+
+Explicit selectors can return large results. Prefer a narrow regex or bounded line range when the
+journal is large.
 ```json
 {"schema":"pairmux.v1","ok":true,"status":"ok","terminal":"build","mode":"hooks","output":"6:hello world"}
 ```
@@ -162,7 +180,7 @@ Text form is a table; a lock holder pid, pending command, and a `[notes:N]` badg
 pairmux kill <name> | --all
 ```
 ```json
-{"schema":"pairmux.v1","ok":true,"status":"killed","terminal":"deploy","next":["journal retained at ~/.local/state/pairmux/deploy","pairmux ls"]}
+{"schema":"pairmux.v1","ok":true,"status":"killed","terminal":"deploy","next":["journal retained under the pairmux state root","pairmux ls"]}
 ```
 
 ---
@@ -177,13 +195,18 @@ pairmux kill <name> | --all
   `run`/`peek`/`wait` `notes`, and resolves `wait --human`.
 - `pairmux doctor` — probe tmux version, state-dir writability, per-shell completion tier, notifier.
 - `pairmux version` — print the build version.
+- `pairmux skill install [--target T|all] [--dry-run]` — install the embedded canonical skill into a
+  supported agent; `all` only touches agent configuration directories that already exist.
 
 ## Completion-detection modes
 
 | mode | how completion is detected |
 |------|----------------------------|
-| `hooks` | OSC 133 shell integration (bash/zsh) — precise start/end + exit code |
-| `sentinel` | an injected `printf` marker carrying `$?` — fallback for other shells and `--cmd` programs |
+| `hooks` | OSC 133 integration from pairmux's bash/zsh shims or native Fish 4+ marks |
+| `sentinel` | injected `printf` marker carrying `$?` (POSIX-like shells) or `$status` (Fish fallback) |
 
-`hooks` is chosen automatically for interactive shells; `--cmd` programs and unknown shells fall back
-to `sentinel`. Both surface the same statuses; you don't choose the mode.
+`hooks` is chosen automatically for supported interactive shells. Fish versions/configurations that
+emit no native marks degrade to a Fish-safe sentinel; unknown shells and `--cmd` programs also use
+`sentinel`. Both modes surface the same statuses; you don't choose the mode. `pairmux doctor` reports
+the finer probe tiers `hooks`, `hooks-no-C` (notably bash 3.2), `hooks-degraded->sentinel`, and
+`sentinel`; these are diagnostics, not additional envelope `mode` values.

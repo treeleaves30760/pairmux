@@ -9,6 +9,49 @@ permissions:
   contents: read
 
 jobs:
+  commit-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - name: Self-test commit subject validator
+        run: ./scripts/validate-commit-subjects.sh --self-test
+      - name: Validate new commit subjects
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            ./scripts/validate-commit-subjects.sh --range "$BASE_SHA" "$PR_HEAD_SHA"
+          elif [ -n "$BEFORE_SHA" ] &&
+               [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            ./scripts/validate-commit-subjects.sh --range "$BEFORE_SHA" "$HEAD_SHA"
+          else
+            ./scripts/validate-commit-subjects.sh --commit "$HEAD_SHA"
+          fi
+
+  release-tooling:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+      - name: Lint workflows and release scripts
+        run: |
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          shellcheck install.sh scripts/*.sh
+          ./scripts/test-install.sh
+
   # Fast feedback: static analysis + unit tests, no tmux required.
   unit:
     strategy:
@@ -17,12 +60,14 @@ jobs:
         os: [macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
       - run: go vet ./...
-      - run: go test ./...
+      - run: go test -race -count=1 ./...
+      - name: Test release packaging
+        run: python3 -m unittest discover -s packaging/pypi -p 'test_*.py'
 
   # tmux-backed suite behind the `integration` build tag.
   integration:
@@ -32,8 +77,8 @@ jobs:
         os: [macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
       - name: Install tmux
@@ -45,4 +90,4 @@ jobs:
             sudo apt-get install -y tmux
           fi
       - run: tmux -V
-      - run: go test -tags integration -count=1 ./test/...
+      - run: go test -race -tags integration -count=1 ./test/...

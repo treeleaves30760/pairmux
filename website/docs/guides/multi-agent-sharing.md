@@ -22,15 +22,17 @@ pairmux log dev --grep "error|warn"
 pairmux peek dev
 ```
 
-## Writes take a per-terminal lock
+## Command writes take a per-terminal lock
 
-`run` and `send` take a per-terminal writer `flock`. Only one writer acts at a time. If a second writer arrives while the terminal is held, pairmux returns an `E_BUSY` envelope **immediately** — it does not queue — naming the holder's pid:
+`run` takes a per-terminal writer `flock`. If a second command writer arrives while the terminal is
+held, pairmux returns an `E_BUSY` envelope **immediately** — it does not queue — naming the holder's
+pid:
 
 ```json
 {"schema":"pairmux.v1","ok":false,"status":"error","next":["pairmux peek build"],"error":{"code":"E_BUSY","message":"another writer holds the lock: journal: write.lock held by pid 22018: journal: write lock held by another process","hint":"pairmux peek build"}}
 ```
 
-A related `E_BUSY` appears if you send a command while a prior one on that terminal is still running:
+A related `E_BUSY` appears if you try to `run` a second command while a prior one is still running:
 
 ```text
 error  E_BUSY
@@ -40,6 +42,9 @@ next:
 ```
 
 Because it returns instead of blocking, **the caller decides**: wait a moment and retry, fall back to read-only (`peek`/`log`), or use a different terminal. `ls` shows the current holder inline:
+
+`send` deliberately does not take the writer lock: its purpose is to answer the interactive program
+that a blocked `run` is waiting on. Send each answer once, then `peek` rather than repeating input.
 
 ```text
    NAME   STATUS   MODE   LOCK   AGE  CMD
@@ -64,4 +69,5 @@ pairmux run tests "go test ./..."
 - **Separate writers into separate terminals.** Contention only happens when two agents write to the *same* terminal.
 - **Treat `E_BUSY` as routine.** It is a normal envelope, not a crash — read the holder and choose to wait or read-only.
 - **Reads never disturb anyone.** Favor `peek`/`log`/`wait` for observation; they are free and invisible to the writer.
-- **Humans bypass the lock** (they type through native tmux), but their `attach`/`note` events are journaled so writers stay informed. See [human collaboration](./human-collaboration.md).
+- **Humans bypass the lock** (they type through native tmux). They leave a journaled `note` when
+  handing control back; attach itself is not an event. See [human collaboration](./human-collaboration.md).

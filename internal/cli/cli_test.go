@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"reflect"
 	"strings"
@@ -239,7 +240,7 @@ func TestHelpText(t *testing.T) {
 	c.printHelp()
 	s := buf.String()
 	for _, cmd := range []string{"new", "run", "peek", "wait", "send", "log", "ls", "kill",
-		"attach", "watch", "note", "doctor", "skill install"} {
+		"attach", "watch", "note", "doctor", "skill install", "mcp serve"} {
 		if !strings.Contains(s, cmd) {
 			t.Errorf("help missing %q", cmd)
 		}
@@ -327,8 +328,12 @@ func TestParseRangeSpec(t *testing.T) {
 		{"1:5", 1, 5, true},
 		{"7:7", 7, 7, true},
 		{" 2 : 4 ", 2, 4, true},
+		{"3:end", 3, -1, true},
+		{" 9 : end ", 9, -1, true},
 		{"5:2", 0, 0, false},
 		{"0:3", 0, 0, false},
+		{"end:3", 0, 0, false},
+		{"1:END", 0, 0, false},
 		{"3", 0, 0, false},
 		{"a:b", 0, 0, false},
 		{"", 0, 0, false},
@@ -342,6 +347,53 @@ func TestParseRangeSpec(t *testing.T) {
 		if tt.valid && (a != tt.a || b != tt.b) {
 			t.Errorf("parseRange(%q) = %d,%d, want %d,%d", tt.in, a, b, tt.a, tt.b)
 		}
+	}
+}
+
+func TestShapedJournalReadsCompleteExplicitView(t *testing.T) {
+	j, err := journal.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := append([]byte("early-match\n"), bytes.Repeat([]byte("x"), shapedViewCap+1024)...)
+	if err := os.WriteFile(j.RawPath(), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := shapedJournal(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(got, "early-match\n") {
+		t.Fatal("explicit journal view omitted content before the implicit tail cap")
+	}
+}
+
+func TestLogCmdReadsCompleteSelectedCommand(t *testing.T) {
+	j, err := journal.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := append([]byte("first-marker\n"), bytes.Repeat([]byte("x"), 600<<10)...)
+	raw = append(raw, []byte("\nlast-marker\n")...)
+	if err := os.WriteFile(j.RawPath(), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.AppendEvent(core.Event{Type: core.EvCmdStart, CmdID: 1, Offset: 0, Text: "not-echoed"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.AppendEvent(core.Event{Type: core.EvCmdEnd, CmdID: 1, Offset: int64(len(raw))}); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	c := newTestCtx(&buf, true)
+	if rc := c.logCmd("t1", j, core.ModeHooks, 1); rc != 0 {
+		t.Fatalf("logCmd rc = %d: %s", rc, buf.String())
+	}
+	env := decode(t, &buf)
+	if !strings.Contains(env.Output, "first-marker") || !strings.Contains(env.Output, "last-marker") {
+		t.Fatal("selected command output was byte-capped")
 	}
 }
 
@@ -464,6 +516,68 @@ func TestNotesSurviveLazySettlement(t *testing.T) {
 	envNotes = append(notes[:len(notes):len(notes)], notesArrivedSince(j, base)...)
 	if len(envNotes) != 2 || envNotes[1] != "also check the logs" {
 		t.Fatalf("envelope notes with mid-run addition = %v", envNotes)
+	}
+}
+
+// TestTmuxErrSocketHint covers the sandbox-recovery teaching: socket-path
+// failures (blocked /tmp/tmux-*, sun_path overflow) must hint at TMUX_TMPDIR
+// while keeping the raw tmux stderr in the message; unrelated tmux failures
+// keep the plain hint.
+func TestTmuxErrSocketHint(t *testing.T) {
+	tests := []struct {
+		name    string
+		errText string
+		wantFix bool
+	}{
+		{
+			name:    "socket dir blocked by sandbox",
+			errText: "tmux -L pairmux new-session: exit status 1: error connecting to /private/tmp/tmux-501/pairmux (No such file or directory)",
+			wantFix: true,
+		},
+		{
+			name:    "sun_path overflow",
+			errText: "tmux -L pairmux new-session: exit status 1: error connecting to /very/deep/nested/tmpdir/chain/tmux-501/pairmux (File name too long)",
+			wantFix: true,
+		},
+		{
+			name:    "socket dir unwritable",
+			errText: "tmux -L pairmux list-panes: exit status 1: couldn't create directory /tmp/tmux-501 (Permission denied)",
+			wantFix: true,
+		},
+		{
+			name:    "unrelated tmux failure",
+			errText: "tmux -L pairmux kill-window: exit status 1: can't find window: 9",
+			wantFix: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			c := newTestCtx(&buf, true)
+			if rc := c.tmuxErr(errors.New(tt.errText)); rc != 1 {
+				t.Fatalf("rc = %d, want 1", rc)
+			}
+			e := decode(t, &buf)
+			if e.Error == nil || e.Error.Code != output.CodeTmux {
+				t.Fatalf("envelope = %+v", e)
+			}
+			if e.Error.Message != tt.errText {
+				t.Errorf("raw tmux stderr must stay in message: %q", e.Error.Message)
+			}
+			gotFix := strings.Contains(e.Error.Hint, "TMUX_TMPDIR")
+			if gotFix != tt.wantFix {
+				t.Errorf("hint = %q, want TMUX_TMPDIR fix = %v", e.Error.Hint, tt.wantFix)
+			}
+			if tt.wantFix {
+				for _, phrase := range []string{"/tmp/tmux-", `export TMUX_TMPDIR="$TMPDIR"`, "pairmux honors"} {
+					if !strings.Contains(e.Error.Hint, phrase) {
+						t.Errorf("hint missing %q: %q", phrase, e.Error.Hint)
+					}
+				}
+			} else if e.Error.Hint != "pairmux ls" {
+				t.Errorf("unrelated failure hint = %q, want plain", e.Error.Hint)
+			}
+		})
 	}
 }
 

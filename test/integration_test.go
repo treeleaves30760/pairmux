@@ -57,10 +57,11 @@ func TestMain(m *testing.M) {
 
 // tenv is one isolated terminal-manager environment.
 type tenv struct {
-	state  string
-	socket string
-	home   string
-	shell  string
+	state   string
+	socket  string
+	home    string
+	shell   string
+	tmuxTmp string
 }
 
 func newEnv(t *testing.T, shell string) tenv {
@@ -78,7 +79,13 @@ func newEnv(t *testing.T, shell string) tenv {
 		home:   t.TempDir(),
 		shell:  shell,
 	}
-	t.Cleanup(func() { _ = exec.Command("tmux", "-L", e.socket, "kill-server").Run() })
+	t.Cleanup(func() {
+		cmd := exec.Command("tmux", "-L", e.socket, "kill-server")
+		if e.tmuxTmp != "" {
+			cmd.Env = append(os.Environ(), "TMUX_TMPDIR="+e.tmuxTmp)
+		}
+		_ = cmd.Run()
+	})
 	return e
 }
 
@@ -94,6 +101,9 @@ func pmx(t *testing.T, e tenv, args ...string) (output.Envelope, int) {
 	)
 	if e.shell != "" {
 		cmd.Env = append(cmd.Env, "SHELL="+e.shell)
+	}
+	if e.tmuxTmp != "" {
+		cmd.Env = append(cmd.Env, "TMUX_TMPDIR="+e.tmuxTmp)
 	}
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
@@ -130,7 +140,7 @@ func waitStatus(t *testing.T, e tenv, name, want string, timeout time.Duration) 
 
 func readEvents(t *testing.T, e tenv, name string) []core.Event {
 	t.Helper()
-	f, err := os.Open(filepath.Join(e.state, name, "index.jsonl"))
+	f, err := os.Open(filepath.Join(terminalStatePath(e, name), "index.jsonl"))
 	if err != nil {
 		t.Fatalf("open index for %s: %v", name, err)
 	}

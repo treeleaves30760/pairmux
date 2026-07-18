@@ -7,6 +7,7 @@ const sidebars: SidebarsConfig = {
     'getting-started',
     'cli-reference',
     'concepts',
+    'skills',
     {
       type: 'category',
       label: 'Guides',

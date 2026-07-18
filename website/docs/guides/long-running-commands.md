@@ -5,7 +5,7 @@ description: The run → wait → peek loop for builds, test suites, and anythin
 
 # Long-running commands & timeouts
 
-The golden rule: **never `sleep` to guess how long a command takes.** `pairmux run` returns exactly when the command finishes. When a command outlives its timeout, `run` hands you a structured way to keep waiting.
+The golden rule: **never `sleep` to guess how long a command takes.** `pairmux run` returns when the command finishes, needs input, or reaches its timeout. When a command outlives that timeout, `run` hands you a structured way to keep waiting.
 
 ## The pattern: run → wait → peek
 
@@ -20,14 +20,14 @@ If it finished in time, you get the result directly:
 {"schema":"pairmux.v1","ok":true,"status":"done","terminal":"build","mode":"hooks","exit_code":0,"duration_ms":101,"output":"hello world"}
 ```
 
-If it did not, `run` returns `status: running` (an outcome, not an error) with the current tail and the next steps to take:
+If its deadline arrives without completion or a recognized prompt, `run` returns `status: running` (an outcome, not an error) with the current tail and the next steps to take:
 
 ```json
 {"schema":"pairmux.v1","ok":true,"status":"running","terminal":"build","mode":"hooks","next":["pairmux peek build","pairmux log build --cmd 1"]}
 ```
 
 ```bash
-# 2. Keep waiting until output goes quiet (no new bytes for 800ms).
+# 2. Keep waiting until the shell is truly idle.
 pairmux wait build --idle 800
 ```
 
@@ -46,7 +46,9 @@ pairmux peek build
 
 ## Waiting for a specific signal
 
-For a command whose *completion* isn't the interesting event — a dev server that never exits, say — wait for a pattern instead of idleness:
+Output silence alone does not count as idle: a sleeping or I/O-blocked command remains `running`, and
+the wait continues to its timeout. For a command whose *completion* is not the interesting event — a
+dev server that never exits, say — wait for a future pattern instead of idleness:
 
 ```bash
 pairmux run web "npm run dev" --timeout 3s     # returns running almost immediately
@@ -67,13 +69,20 @@ When output is truncated, the reply tells you how to get the rest — you never 
 "truncated":{"omitted_lines":1187,"get_full":"pairmux log build --cmd 17"}
 ```
 
-Then query the full journal instead of re-running:
+Then query the complete selected history instead of re-running:
 
 ```bash
 pairmux log build --cmd 17            # the whole command's output
-pairmux log build --grep "error|FAIL" # just the matching lines, with line numbers
+pairmux log build --grep "error|FAIL" # every match, with journal line numbers
 pairmux log build --range 400:460     # a specific line range
+pairmux log build --range 1:end       # every shaped journal line
 ```
+
+Routine observation remains bounded so a huge journal cannot flood an agent: `peek` reads at most the
+final 64 KiB, and default `log` reads at most the final 4 MiB before keeping 500 lines. Those responses
+report a skipped raw prefix as `truncated.omitted_bytes` and point to the executable
+`pairmux log NAME --range 1:end` recovery. Explicit `--cmd`, `--grep`, and `--range` selections read
+the complete requested history and may therefore return large replies.
 
 ## Tips
 

@@ -7,15 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Tag releases now build the complete GoReleaser archive/package/checksum set once, verify and preserve
+  those exact bytes with the four wheels, then promote them without recompilation. GitHub remains a
+  draft until PyPI succeeds, tag commits and workflow syntax are checked, and concurrent runs serialize.
+- The wheel builder recognizes GoReleaser's dotted arm64 variant directories such as `v8.0`, validates
+  both Mach-O architecture/deployment targets and ELF64 architecture, and rejects a binary whose
+  native header does not match its wheel platform tag. Only canonical three-part SemVer tags are
+  accepted; supported prerelease tags are normalized to PEP 440 wheel metadata.
+- `install.sh` now stages the verified binary beside its destination and atomically renames it, replacing
+  a pre-existing symlink instead of following it; it also requires the installed version to match the tag.
+- Unsigned and unnotarized Homebrew casks are no longer advertised or published. That channel remains
+  deferred until macOS signing and a real Gatekeeper installation test are available.
+- Terminal names and tmux socket labels are validated before any filesystem or tmux operation. State
+  now lives in an endpoint-specific hash of canonical `TMUX_TMPDIR`, uid, and socket label, preventing
+  traversal and cross-server metadata collisions while retaining an in-place, non-migrating fallback
+  for the historical conventional default-socket layout.
+- Concurrent terminal creation uses a per-name reservation; journal preparation and command dispatch
+  now close their failure paths so a partial tmux operation cannot leak a pane or leave a permanent
+  `E_BUSY` command record.
+- Fish 4+ uses its native OSC 133 integration. Fish installations that emit no ready mark degrade to
+  the sentinel path using fish's `$status`, rather than the POSIX-only `$?` expansion.
+- `wait --idle` now treats output silence as a prompt to refresh terminal state, not as proof that a
+  command completed. Quiet running commands continue waiting; prompts and dead panes surface their
+  actual status.
+- Bounded `peek` and default-`log` responses now report skipped raw prefixes as
+  `truncated.omitted_bytes` and provide the executable `pairmux log NAME --range 1:end` recovery.
+  Explicit `log --grep`, `--range`, and `--cmd` selections read the complete requested history;
+  `--range A:end` selects through the final shaped line.
+- Documentation builds override vulnerable transitive `serialize-javascript` and `uuid` releases
+  with patched versions; `npm audit` now reports zero known vulnerabilities.
+
 ### Added
 
-- Terminal lifecycle and core loop: `pairmux new` (optional `--name`, `--cwd`, `--cmd`) opens a tmux-backed terminal; `pairmux run <name> <cmd> [--timeout 60s] [--head 50] [--tail 200]` sends a command and blocks until it completes, returning shaped `head`+`tail` output with `exit_code` and `duration_ms`; `pairmux peek <name> [--screen | --tail N]` returns recent output and status without blocking; `pairmux send <name> [--text S] [--key K] [--enter]` delivers raw input to a program; `pairmux log <name> [--cmd N | --grep RE | --range A:B]` reads full or filtered history; `pairmux ls` lists terminals with status, mode, current command, lock holder and last activity; `pairmux kill <name> | --all` ends terminals while retaining their journals.
-- `wait` family: `pairmux wait <name>` blocks until a condition is met — output quiescence (`--idle MS`, the default), a regex match (`--pattern RE`), or a human note (`--human`) — with `--timeout` and a `--notify` desktop ping.
+- `pairmux mcp serve` exposes the existing terminal commands as typed MCP `2025-11-25` stdio tools,
+  preserving each `pairmux.v1` envelope as structured and text content without invoking a wrapper shell.
+- `pairmux skill install` embeds the canonical Agent Skill and installs it atomically for Claude Code,
+  Codex, Gemini CLI, Cursor, OpenCode, GitHub Copilot, Windsurf, Kiro, Amp, or the cross-agent
+  `agents` location; `--target all` updates only agent configuration directories that already exist.
+- Terminal lifecycle and core loop: `pairmux new` (optional `--name`, `--cwd`, `--cmd`) opens a
+  tmux-backed terminal; `run` blocks for command completion; `peek` returns a bounded recent view;
+  `send` delivers interactive input; `log` returns a bounded recent view or complete explicitly
+  selected history with `--cmd`, `--grep`, and `--range A:B`/`A:end`; `ls` lists status and activity;
+  and `kill` ends terminals while retaining their journals.
+- `wait` family: `pairmux wait <name>` blocks until the shell is truly idle (`--idle MS`, the default),
+  a regex matches new output (`--pattern RE`), or a human note arrives (`--human`), with `--timeout`
+  and a `--notify` desktop ping.
 - Notes and human handoff: `pairmux note <name> <text>` records a message that surfaces in the driving agent's next `run`/`peek`/`wait` envelope; `wait --human` returns `human-done` when a human leaves a note.
-- Awaiting-input detection: a quiet command whose last screen line matches an interactive prompt (`[y/N]`, `password:`, pager `--More--`/`(END)`, "press any key") is reported as `awaiting-input`; password/passphrase/passcode prompts are classified as secrets and answered with a human-handoff hint rather than a guess.
+- Awaiting-input detection: a quiet command whose last screen line matches an interactive prompt
+  (`[y/N]`, `password:`, pager `--More--`/`(END)`, "press any key") makes `run` return
+  `awaiting-input` before its overall timeout. Password/passphrase/passcode prompts are classified as
+  secrets and answered with a human-handoff hint rather than a guess.
 - Human-facing commands: `pairmux attach [name]` takes over the live tmux session; `pairmux watch [--interval 2s]` renders a self-refreshing dashboard; `pairmux doctor` probes tmux version, per-shell completion tier, state-dir writability and the notification backend.
-- Three-tier completion detection: OSC 133 shell integration (bash/zsh hooks) is the primary signal, an injected sentinel marker is the fallback for other shells, and output quiescence is the backstop; `new` and `doctor` report the tier reached (`hooks`, `hooks-no-C`, `sentinel`).
-- Journal and locking: each terminal streams raw output through `tmux pipe-pane` into a per-terminal journal (`raw.log` + `index.jsonl`, mode 0600); reads are lock-free, writes take a per-terminal writer `flock` and return an `E_BUSY` envelope naming the holder when contended.
-- Output shaping and `pairmux.v1` JSON envelopes: every command replies through a self-describing envelope (`--json`) carrying `status`, ANSI-stripped and carriage-return-collapsed `output`, a `truncated.get_full` pointer when output is elided, `notes`, `next` step hints, and stable `error.code` values (`E_NO_TERMINAL`, `E_EXISTS`, `E_BUSY`, `E_DEAD`, `E_BAD_ARGS`, `E_TMUX`, `E_INTERNAL`).
+- Completion detection: injected OSC 133 integration for bash/zsh and native fish 4 marks are the
+  primary signal; a shell-specific sentinel marker is the fallback. `doctor` distinguishes the
+  diagnostic `hooks-no-C` tier from the stored terminal modes (`hooks` or `sentinel`).
+- Journal and locking: each terminal streams raw output through `tmux pipe-pane` into a per-terminal
+  journal (`raw.log` + `index.jsonl`, mode 0600); reads are lock-free, writes take a per-terminal
+  writer `flock` and return an `E_BUSY` envelope naming the holder when contended. Attaching is a
+  native tmux operation and records no event; humans leave an explicit `note` when handing back.
+- Output shaping and `pairmux.v1` JSON envelopes: every non-interactive command replies through a
+  self-describing envelope (`--json`) carrying `status`, ANSI-stripped and carriage-return-collapsed
+  `output`, `truncated` recovery metadata when output is elided, `notes`, ordered `next` hints, and
+  stable `error.code` values (`E_NO_TERMINAL`, `E_EXISTS`, `E_BUSY`, `E_DEAD`, `E_BAD_ARGS`,
+  `E_TMUX`, `E_INTERNAL`).
 
 [Unreleased]: https://github.com/treeleaves30760/pairmux/commits/main

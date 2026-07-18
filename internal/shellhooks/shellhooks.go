@@ -1,8 +1,8 @@
 // Package shellhooks prepares the shell invocation for a new terminal. For zsh
-// and bash it writes shim files (embedded below) that emit OSC 133 marks and
-// returns ModeHooks; for unknown shells or an explicit --cmd override it returns
-// ModeSentinel and no shim. Shim bodies expand $HOME at runtime, so nothing
-// host-specific is baked into them.
+// and bash it writes shim files (embedded below) that emit OSC 133 marks. Fish
+// 4+ emits those marks natively. Unknown shells and explicit --cmd overrides use
+// sentinel mode. Shim bodies expand $HOME at runtime, so nothing host-specific
+// is baked into them.
 package shellhooks
 
 import (
@@ -31,6 +31,9 @@ var bashrcShim string
 //     env, ModeHooks.
 //   - bash/sh: write the bash shim and return ["bash","--rcfile",<path>,"-i"],
 //     ModeHooks.
+//   - fish: run [shell], preserving an absolute/custom path, ModeHooks. Fish 4+
+//     emits OSC 133 natively; callers degrade to its shell-specific sentinel
+//     when the ready probe sees no marks.
 //   - anything else: run [shell], ModeSentinel.
 func Prepare(stateDir, shell string, cmdOverride []string) (argv []string, env map[string]string, mode core.Mode, err error) {
 	if len(cmdOverride) > 0 {
@@ -59,9 +62,22 @@ func Prepare(stateDir, shell string, cmdOverride []string) (argv []string, env m
 			return nil, nil, "", err
 		}
 		return []string{"bash", "--rcfile", rc, "-i"}, nil, core.ModeHooks, nil
+	case "fish":
+		return []string{shell}, nil, core.ModeHooks, nil
 	default:
 		return []string{shell}, nil, core.ModeSentinel, nil
 	}
+}
+
+const fishSentinelSuffix = `; printf '\033]7779;p;%d\007' $status`
+
+// SentinelSuffix returns the completion marker command for shell. POSIX-like
+// shells expose the prior command's status as $?, while fish exposes $status.
+func SentinelSuffix(shell string) string {
+	if filepath.Base(shell) == "fish" {
+		return fishSentinelSuffix
+	}
+	return core.SentinelSuffix
 }
 
 // ensureDir creates dir (and parents) and forces 0700 despite umask.

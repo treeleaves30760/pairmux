@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/treeleaves30760/pairmux/internal/core"
+	"github.com/treeleaves30760/pairmux/internal/detect"
 	"github.com/treeleaves30760/pairmux/internal/journal"
 	"github.com/treeleaves30760/pairmux/internal/notify"
 	"github.com/treeleaves30760/pairmux/internal/output"
@@ -42,7 +43,13 @@ func (c *Ctx) cmdWait(args []string) int {
 	if len(pos) > 1 {
 		return c.usage(usageLine, "unexpected argument "+pos[1])
 	}
+	if rc, rejected := c.rejectInvalidSocket(); rejected {
+		return rc
+	}
 	name := pos[0]
+	if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
+		return rc
+	}
 
 	idleMS := 800
 	if idleS != "" {
@@ -73,7 +80,7 @@ func (c *Ctx) cmdWait(args []string) int {
 	// --pattern/--human. First condition satisfied wins.
 	waitIdle := (!seen["pattern"] && !seen["human"]) || seen["idle"]
 
-	term, err := state.Resolve(c.Tmux, name)
+	term, err := state.ResolveAt(c.Tmux, c.StateDir, name)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return c.noTerminal(name)
@@ -125,6 +132,7 @@ func (c *Ctx) cmdWait(args []string) int {
 		}
 	}
 	deadline := time.Now().Add(timeout)
+	var lastStateCheck time.Time
 	for {
 		if patternRE != nil {
 			if data, err := j.ReadRange(baseSize, -1); err == nil && len(data) > 0 {
@@ -140,10 +148,37 @@ func (c *Ctx) cmdWait(args []string) int {
 				}
 			}
 		}
-		if waitIdle && journalQuiet(j, time.Duration(idleMS)*time.Millisecond) {
-			return finish(output.Envelope{Status: "idle", Next: []string{
-				peekHint, fmt.Sprintf("pairmux run %s \"...\"", name),
-			}})
+		idleFor := time.Duration(idleMS) * time.Millisecond
+		stateCheckDue := waitIdle || time.Since(lastStateCheck) >= time.Second
+		if stateCheckDue && journalQuiet(j, idleFor) {
+			lastStateCheck = time.Now()
+			// Liveness can change while wait blocks. Refresh it only once output
+			// is quiet, then distinguish true idle from a quiet running command,
+			// an input prompt, or a pane that died during the wait.
+			current, err := state.ResolveAt(c.Tmux, c.StateDir, name)
+			if err != nil {
+				if errors.Is(err, state.ErrNotFound) {
+					return finish(output.Envelope{Status: string(core.StatusDead), Output: waitCurrentTail(j), Next: []string{
+						fmt.Sprintf("pairmux log %s", name), "pairmux new",
+					}})
+				}
+				return c.tmuxErr(err)
+			}
+			if status, prompt, terminal := terminalStatusAfterQuiet(j, current.Alive, term.Mode, idleFor); terminal &&
+				(waitIdle || status == core.StatusDead) {
+				next := peekNext(name, status)
+				if status == core.StatusAwaitingInput {
+					next = awaitingNext(name, prompt)
+				}
+				body := ""
+				switch status {
+				case core.StatusAwaitingInput:
+					body = prompt
+				case core.StatusDead:
+					body = waitCurrentTail(j)
+				}
+				return finish(output.Envelope{Status: string(status), Output: body, Next: next})
+			}
 		}
 		if !time.Now().Before(deadline) {
 			return finish(output.Envelope{Status: "timeout", Next: []string{
@@ -218,4 +253,30 @@ func journalQuiet(j *journal.Journal, idle time.Duration) bool {
 		return true
 	}
 	return time.Since(mt) >= idle
+}
+
+// terminalStatusAfterQuiet prevents output quiescence from masquerading as
+// terminal idleness. It completes the wait only for actionable terminal
+// states: true idle, awaiting input, or dead. A quiet running/unknown command
+// keeps waiting and can time out without suggesting another run.
+func terminalStatusAfterQuiet(j *journal.Journal, alive bool, mode core.Mode, idle time.Duration) (core.Status, string, bool) {
+	if !journalQuiet(j, idle) {
+		return core.StatusUnknown, "", false
+	}
+	status, prompt := detect.Refine(j, detect.DeriveStatus(j, alive, mode), mode)
+	switch status {
+	case core.StatusIdle, core.StatusAwaitingInput, core.StatusDead:
+		return status, prompt, true
+	default:
+		return status, prompt, false
+	}
+}
+
+func waitCurrentTail(j *journal.Journal) string {
+	raw, _, err := j.TailBytes(64 * 1024)
+	if err != nil {
+		return ""
+	}
+	body, _ := lastLines(cleanNoTrunc(raw, ""), 20)
+	return body
 }

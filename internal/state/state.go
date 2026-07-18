@@ -5,7 +5,9 @@
 package state
 
 import (
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,6 +23,10 @@ import (
 // ErrNotFound is returned by Resolve when neither a managed pane nor a state
 // directory exists for the requested name.
 var ErrNotFound = errors.New("state: terminal not found")
+
+// ErrInvalidName is returned before a tmux or filesystem lookup when a caller
+// asks Resolve for a name outside pairmux's terminal-name grammar.
+var ErrInvalidName = errors.New("state: invalid terminal name")
 
 // Terminal is the composed view of one pairmux terminal.
 type Terminal struct {
@@ -41,7 +47,8 @@ var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 var autoNameRe = regexp.MustCompile(`^t([0-9]+)$`)
 
 // BaseDir resolves the state root: $PAIRMUX_STATE_DIR, else
-// $XDG_STATE_HOME/pairmux, else ~/.local/state/pairmux.
+// $XDG_STATE_HOME/pairmux, else ~/.local/state/pairmux. SocketDir derives the
+// effective per-socket namespace below this root.
 func BaseDir() string {
 	if d := os.Getenv("PAIRMUX_STATE_DIR"); d != "" {
 		return d
@@ -55,7 +62,42 @@ func BaseDir() string {
 	return filepath.Join(".local", "state", "pairmux")
 }
 
-// Dir is the state directory for a single terminal.
+// SocketDir returns the effective state namespace for socket below root.
+//
+// A tmux endpoint is not just its -L name: TMUX_TMPDIR and uid select the
+// socket directory too. Hashing SocketIdentity under an invalid-terminal-name
+// directory prevents traversal/length problems and isolates equal -L names in
+// different tmux roots. ListAt and ResolveAt retain a conservative,
+// non-migrating lookup fallback for the historical conventional default
+// endpoint only; existing live terminals keep reading and writing their legacy
+// journals, but files are never moved implicitly.
+func SocketDir(root, socket string) string {
+	return EndpointDir(root, os.Getenv("TMUX_TMPDIR"), os.Getuid(), socket)
+}
+
+// EndpointDir is SocketDir with every endpoint input explicit. It is the
+// stable helper for code that locates another process's namespace rather than
+// the current environment's namespace.
+func EndpointDir(root, tmuxTmpDir string, uid int, socket string) string {
+	sum := sha256.Sum256([]byte(EndpointIdentity(tmuxTmpDir, uid, socket)))
+	return filepath.Join(root, ".sockets", fmt.Sprintf("%x", sum[:]))
+}
+
+// SocketIdentity returns the stable identity of the tmux endpoint targeted by
+// -L socket in the current environment. TMUX_TMPDIR's real/absolute path is
+// used when possible so /tmp and /private/tmp aliases do not split state.
+func SocketIdentity(socket string) string {
+	return EndpointIdentity(os.Getenv("TMUX_TMPDIR"), os.Getuid(), socket)
+}
+
+// EndpointIdentity is SocketIdentity with every endpoint input explicit.
+func EndpointIdentity(tmuxTmpDir string, uid int, socket string) string {
+	return filepath.Join(canonicalTmuxRoot(tmuxTmpDir), "tmux-"+strconv.Itoa(uid), normalizedSocket(socket))
+}
+
+// Dir is the state directory for a single default-socket terminal. New code
+// that already has a tmux client should use ResolveAt/ListAt with BaseDir. It
+// intentionally denotes the historical default layout for compatibility.
 func Dir(name string) string { return filepath.Join(BaseDir(), name) }
 
 // ValidName reports whether name is a legal terminal name.
@@ -82,8 +124,15 @@ func IsNoServer(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := err.Error()
-	return strings.Contains(s, "no server running") || strings.Contains(s, "error connecting")
+	s := strings.ToLower(err.Error())
+	if strings.Contains(s, "no server running") {
+		return true
+	}
+	// tmux reports a missing or stale socket as "error connecting". Do not
+	// collapse every connection error into an empty server: permission and
+	// path-length failures need to reach the CLI with their recovery hint.
+	return strings.Contains(s, "error connecting") &&
+		(strings.Contains(s, "no such file or directory") || strings.Contains(s, "connection refused"))
 }
 
 // paneLister is the slice of tmux.Client that state needs; declaring it locally
@@ -105,11 +154,27 @@ func managedPanes(c paneLister) ([]tmux.PaneInfo, error) {
 	return panes, nil
 }
 
-// Resolve returns the composed view of one terminal. It errors with ErrNotFound
-// when neither a managed pane nor a state directory exists for name.
-func Resolve(c *tmux.Client, name string) (*Terminal, error) { return resolve(c, name) }
+// Resolve returns the composed view of one terminal in c's socket namespace.
+// It errors with ErrNotFound when neither a managed pane nor compatible state
+// directory exists for name.
+func Resolve(c *tmux.Client, name string) (*Terminal, error) {
+	return ResolveAt(c, BaseDir(), name)
+}
+
+// ResolveAt is Resolve rooted at root. root is the un-namespaced state root;
+// the client's socket selects the effective namespace.
+func ResolveAt(c *tmux.Client, root, name string) (*Terminal, error) {
+	return resolveAt(c, root, c.Socket, name)
+}
 
 func resolve(c paneLister, name string) (*Terminal, error) {
+	return resolveAt(c, BaseDir(), core.DefaultSocket, name)
+}
+
+func resolveAt(c paneLister, root, socket, name string) (*Terminal, error) {
+	if !ValidName(name) {
+		return nil, fmt.Errorf("%w: %q", ErrInvalidName, name)
+	}
 	panes, err := managedPanes(c)
 	if err != nil {
 		return nil, err
@@ -122,8 +187,7 @@ func resolve(c paneLister, name string) (*Terminal, error) {
 		}
 	}
 
-	dir := Dir(name)
-	dirExists := isDir(dir)
+	dir, dirExists := stateDirForName(root, socket, name)
 	if pane == nil && !dirExists {
 		return nil, ErrNotFound
 	}
@@ -143,11 +207,21 @@ func resolve(c paneLister, name string) (*Terminal, error) {
 	return t, nil
 }
 
-// List returns the union of managed panes and state directories. A directory
-// with no live pane appears with Alive=false.
-func List(c *tmux.Client) ([]Terminal, error) { return list(c) }
+// List returns the union of managed panes and compatible state directories in
+// c's socket namespace. A directory with no live pane appears with Alive=false.
+func List(c *tmux.Client) ([]Terminal, error) { return ListAt(c, BaseDir()) }
+
+// ListAt is List rooted at root. root is the un-namespaced state root; the
+// client's socket selects the effective namespace.
+func ListAt(c *tmux.Client, root string) ([]Terminal, error) {
+	return listAt(c, root, c.Socket)
+}
 
 func list(c paneLister) ([]Terminal, error) {
+	return listAt(c, BaseDir(), core.DefaultSocket)
+}
+
+func listAt(c paneLister, root, socket string) ([]Terminal, error) {
 	panes, err := managedPanes(c)
 	if err != nil {
 		return nil, err
@@ -159,7 +233,8 @@ func list(c paneLister) ([]Terminal, error) {
 		if t, ok := byName[name]; ok {
 			return t
 		}
-		t := &Terminal{Name: name, Dir: Dir(name)}
+		dir, _ := stateDirForName(root, socket, name)
+		t := &Terminal{Name: name, Dir: dir}
 		if meta, err := readMeta(t.Dir); err == nil {
 			t.Meta = meta
 			t.Mode = meta.Mode
@@ -171,6 +246,9 @@ func list(c paneLister) ([]Terminal, error) {
 	}
 
 	for i := range panes {
+		if !ValidName(panes[i].Name) {
+			continue
+		}
 		t := add(panes[i].Name)
 		t.PaneID = panes[i].PaneID
 		t.Alive = !panes[i].Dead
@@ -178,8 +256,17 @@ func list(c paneLister) ([]Terminal, error) {
 
 	// Directories that carry a meta.json but have no live pane are dead
 	// terminals whose journals are retained; include them (Alive stays false).
-	for _, name := range stateDirs() {
+	for _, name := range stateDirsAt(SocketDir(root, socket), socket) {
 		add(name)
+	}
+	// Existing releases stored the conventional default endpoint directly in
+	// root. Keep that state readable, but never move it automatically. Legacy
+	// custom-socket metadata lacks TMUX_TMPDIR/uid and therefore cannot be
+	// attributed to an endpoint safely; it is deliberately not claimed.
+	if usesLegacyDefaultFallback(socket) {
+		for _, name := range stateDirsAt(root, socket) {
+			add(name)
+		}
 	}
 
 	sort.Strings(order)
@@ -194,7 +281,11 @@ func list(c paneLister) ([]Terminal, error) {
 // that are directories, pass ValidName, and contain a meta.json (which excludes
 // the shim dirs and archived "<name>.prev" directories).
 func stateDirs() []string {
-	entries, err := os.ReadDir(BaseDir())
+	return stateDirsAt(BaseDir(), core.DefaultSocket)
+}
+
+func stateDirsAt(base, socket string) []string {
+	entries, err := os.ReadDir(base)
 	if err != nil {
 		return nil
 	}
@@ -207,12 +298,82 @@ func stateDirs() []string {
 		if !ValidName(name) {
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(BaseDir(), name, "meta.json")); err != nil {
+		meta, err := readMeta(filepath.Join(base, name))
+		if err != nil || !MetaMatchesSocket(meta, socket) {
 			continue
 		}
 		names = append(names, name)
 	}
 	return names
+}
+
+// MetaMatchesSocket reports whether metadata belongs to socket. Empty socket
+// metadata is accepted only for the default socket for compatibility with the
+// earliest state files, before Meta.Socket was populated.
+func MetaMatchesSocket(meta core.Meta, socket string) bool {
+	want := normalizedSocket(socket)
+	if meta.Socket == "" {
+		return want == core.DefaultSocket
+	}
+	return normalizedSocket(meta.Socket) == want
+}
+
+func normalizedSocket(socket string) string {
+	if socket == "" {
+		return core.DefaultSocket
+	}
+	return socket
+}
+
+func canonicalTmuxRoot(root string) string {
+	if root == "" {
+		root = "/tmp"
+	}
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
+	root = filepath.Clean(root)
+	if real, err := filepath.EvalSymlinks(root); err == nil {
+		root = real
+	}
+	return root
+}
+
+func effectiveTmuxRoot() string { return canonicalTmuxRoot(os.Getenv("TMUX_TMPDIR")) }
+
+func usesLegacyDefaultFallback(socket string) bool {
+	if normalizedSocket(socket) != core.DefaultSocket {
+		return false
+	}
+	legacyRoot := "/tmp"
+	if real, err := filepath.EvalSymlinks(legacyRoot); err == nil {
+		legacyRoot = real
+	}
+	return effectiveTmuxRoot() == filepath.Clean(legacyRoot)
+}
+
+// stateDirForName returns the canonical directory, or the conventional
+// default endpoint's legacy directory. A canonical directory with an explicit
+// foreign-socket meta.json is not claimed.
+func stateDirForName(root, socket, name string) (string, bool) {
+	canonical := filepath.Join(SocketDir(root, socket), name)
+	if meta, err := readMeta(canonical); err == nil {
+		if MetaMatchesSocket(meta, socket) {
+			return canonical, true
+		}
+		return canonical, false
+	}
+	if isDir(canonical) {
+		return canonical, true // creation may be between mkdir and meta.json
+	}
+
+	if usesLegacyDefaultFallback(socket) {
+		legacy := filepath.Join(root, name)
+		if meta, err := readMeta(legacy); err == nil && MetaMatchesSocket(meta, socket) {
+			return legacy, true
+		}
+	}
+	return canonical, false
 }
 
 // readMeta reads meta.json without creating the directory (unlike journal.Open).
