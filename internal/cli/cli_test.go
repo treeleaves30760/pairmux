@@ -239,7 +239,7 @@ func TestHelpText(t *testing.T) {
 	c.printHelp()
 	s := buf.String()
 	for _, cmd := range []string{"new", "run", "peek", "wait", "send", "log", "ls", "kill",
-		"attach", "watch", "note", "doctor"} {
+		"attach", "watch", "note", "doctor", "skill install"} {
 		if !strings.Contains(s, cmd) {
 			t.Errorf("help missing %q", cmd)
 		}
