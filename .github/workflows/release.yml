@@ -139,33 +139,93 @@ jobs:
           test "$(find dist/wheels -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')" -eq 4
           gh auth status
           uv publish --dry-run dist/wheels/*.whl
-          if release=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" 2>/dev/null); then
+          release=$(
+            gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+              jq -c --arg tag "$GITHUB_REF_NAME" '
+                [.[][] | select(.tag_name == $tag)] |
+                if length > 1 then
+                  error("multiple releases exist for tag " + $tag)
+                else
+                  first // empty
+                end
+              '
+          )
+          if [[ -n "$release" ]]; then
             test "$(jq -r .draft <<<"$release")" = true || {
               echo "release $GITHUB_REF_NAME is already published" >&2
               exit 1
             }
           fi
       - name: Stage exact assets in a draft GitHub release
+        id: draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          if ! gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            prerelease=()
+          release=$(
+            gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+              jq -c --arg tag "$GITHUB_REF_NAME" '
+                [.[][] | select(.tag_name == $tag)] |
+                if length > 1 then
+                  error("multiple releases exist for tag " + $tag)
+                else
+                  first // empty
+                end
+              '
+          )
+          if [[ -z "$release" ]]; then
+            gh api \
+              "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" \
+              --silent
+            prerelease=false
             case "$GITHUB_REF_NAME" in
-              *-*) prerelease=(--prerelease) ;;
+              *-*) prerelease=true ;;
             esac
-            gh release create "$GITHUB_REF_NAME" \
-              --draft \
-              --verify-tag \
-              --generate-notes \
-              --title "$GITHUB_REF_NAME" \
-              "${prerelease[@]}"
+            release=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$GITHUB_REF_NAME" \
+              -f name="$GITHUB_REF_NAME" \
+              -F draft=true \
+              -F prerelease="$prerelease" \
+              -F generate_release_notes=true)
           fi
-          gh release upload "$GITHUB_REF_NAME" dist/release-assets/* --clobber
+
+          test "$(jq -r .draft <<<"$release")" = true || {
+            echo "release $GITHUB_REF_NAME is already published" >&2
+            exit 1
+          }
+          release_id=$(jq -r .id <<<"$release")
+          upload_url=$(jq -r '.upload_url | split("{")[0]' <<<"$release")
+          test "$release_id" != null
+          test -n "$upload_url"
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+
+          old_ids=$(
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+              --jq '.[].id'
+          )
+          if [[ -n "$old_ids" ]]; then
+            while IFS= read -r old_id; do
+              gh api --method DELETE \
+                "repos/$GITHUB_REPOSITORY/releases/assets/$old_id"
+            done <<<"$old_ids"
+          fi
+
+          for asset in dist/release-assets/*; do
+            name=$(basename "$asset")
+            gh api --method POST "$upload_url" \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              -H "Content-Type: application/octet-stream" \
+              -f "name=$name" \
+              --input "$asset" \
+              --silent
+          done
           find dist/release-assets -maxdepth 1 -type f -exec basename {} \; | sort > expected-assets.txt
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" \
-            --jq '.assets[].name' | sort > remote-assets.txt
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+            --jq '.[].name' | sort > remote-assets.txt
           diff -u expected-assets.txt remote-assets.txt
       - name: Publish the exact verified wheels to PyPI
         env:
@@ -177,8 +237,14 @@ jobs:
       - name: Publish the completed GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
         run: |
+          prerelease=false
           case "$GITHUB_REF_NAME" in
-            *-*) gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease ;;
-            *) gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease=false ;;
+            *-*) prerelease=true ;;
           esac
+          gh api --method PATCH \
+            "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false \
+            -F prerelease="$prerelease" \
+            --silent
