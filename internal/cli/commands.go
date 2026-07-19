@@ -182,6 +182,16 @@ func (c *Ctx) cmdNew(args []string) int {
 		_ = j.WriteMeta(meta)
 		next = append(next, "hooks unavailable in this shell config — completion detection degraded to sentinel mode")
 	}
+	if cmdOverride != "" {
+		current, err := state.ResolveAt(c.Tmux, c.StateDir, name)
+		if err != nil {
+			return c.tmuxErr(err)
+		}
+		status := deriveTerminalStatus(j, current.Alive, current.Mode, true)
+		next = append(next, peekNext(name, status)...)
+		keepPane = true
+		return c.emit(output.Envelope{Status: string(status), Terminal: name, Mode: string(effMode), Next: next})
+	}
 	next = append(next, fmt.Sprintf("pairmux run %s \"echo hello\"", name))
 
 	keepPane = true
@@ -465,6 +475,16 @@ func waitDone(j *journal.Journal, from int64, mode core.Mode, timeout time.Durat
 	return detect.WaitCommand(j, from, mode, timeout, 0)
 }
 
+// deriveTerminalStatus adds terminal-kind context to the journal-derived
+// shell status. A --cmd terminal has no pairmux command events or shell prompt
+// to make it idle: while its pane exists, the launched program is running.
+func deriveTerminalStatus(j *journal.Journal, alive bool, mode core.Mode, program bool) core.Status {
+	if alive && program {
+		return core.StatusRunning
+	}
+	return detect.DeriveStatus(j, alive, mode)
+}
+
 // cmdPeek shows recent output and the derived status without taking the write
 // lock or recording any event (read-only).
 func (c *Ctx) cmdPeek(args []string) int {
@@ -507,7 +527,7 @@ func (c *Ctx) cmdPeek(args []string) int {
 	if err != nil {
 		return c.fail(output.CodeInternal, err.Error(), "")
 	}
-	status := detect.DeriveStatus(j, term.Alive, term.Mode)
+	status := deriveTerminalStatus(j, term.Alive, term.Mode, term.Meta.Shell == "")
 	status, prompt := detect.Refine(j, status, term.Mode)
 
 	var body string
@@ -619,7 +639,7 @@ func (c *Ctx) cmdSend(args []string) int {
 	if err != nil {
 		return c.fail(output.CodeInternal, err.Error(), "")
 	}
-	running := detect.DeriveStatus(j, term.Alive, term.Mode) == core.StatusRunning
+	running := deriveTerminalStatus(j, term.Alive, term.Mode, term.Meta.Shell == "") == core.StatusRunning
 
 	if seen["text"] {
 		if err := c.Tmux.SendLiteral(term.PaneID, text); err != nil {
@@ -858,7 +878,7 @@ func (c *Ctx) cmdLs(args []string) int {
 	rows := make([]output.TerminalRow, 0, len(terms))
 	for _, t := range terms {
 		j := &journal.Journal{Dir: t.Dir}
-		status := detect.DeriveStatus(j, t.Alive, t.Mode)
+		status := deriveTerminalStatus(j, t.Alive, t.Mode, t.Meta.Shell == "")
 		status, _ = detect.Refine(j, status, t.Mode)
 		row := output.TerminalRow{Name: t.Name, Status: string(status), Mode: string(t.Mode)}
 		if status == core.StatusRunning || status == core.StatusAwaitingInput {

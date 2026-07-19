@@ -359,12 +359,43 @@ func TestSentinelMode(t *testing.T) {
 	}
 }
 
-func TestProgramTerminalRefusesRun(t *testing.T) {
+func TestProgramTerminalLifecycleAndRefusesRun(t *testing.T) {
 	e := newEnv(t, bashShell)
-	pmx(t, e, "new", "--name", "prog", "--cmd", "cat")
-	env, code := pmx(t, e, "run", "prog", "echo", "x")
+	env, code := pmx(t, e, "new", "--name", "prog", "--cmd", "cat")
+	if code != 0 || !env.OK || env.Status != "running" || env.Mode != string(core.ModeSentinel) {
+		t.Fatalf("new program terminal: code=%d env=%+v", code, env)
+	}
+	if !nextContains(env.Next, "pairmux peek prog") || !nextContains(env.Next, "pairmux send prog") || nextContains(env.Next, "pairmux run prog") {
+		t.Fatalf("new program next = %v, want observation/input without run", env.Next)
+	}
+
+	env, code = pmx(t, e, "peek", "prog")
+	if code != 0 || env.Status != "running" {
+		t.Fatalf("peek live program: code=%d env=%+v", code, env)
+	}
+	if !nextContains(env.Next, "pairmux peek prog") || !nextContains(env.Next, "pairmux send prog") || nextContains(env.Next, "pairmux run prog") {
+		t.Fatalf("peek live program next = %v, want observation/input without run", env.Next)
+	}
+	if got := statusOf(pmx1(t, e, "ls"), "prog"); got != "running" {
+		t.Fatalf("ls live program status = %q, want running", got)
+	}
+
+	env, code = pmx(t, e, "run", "prog", "echo", "x")
 	if code != 1 || env.OK || env.Error == nil || env.Error.Code != output.CodeBadArgs {
 		t.Fatalf("run on program terminal: code=%d env=%+v", code, env)
+	}
+
+	env, code = pmx(t, e, "send", "prog", "--key", "C-d")
+	if code != 0 || env.Status != "sent" {
+		t.Fatalf("send EOF to program: code=%d env=%+v", code, env)
+	}
+	waitStatus(t, e, "prog", "dead", 5*time.Second)
+	env, code = pmx(t, e, "peek", "prog")
+	if code != 0 || env.Status != "dead" {
+		t.Fatalf("peek exited program: code=%d env=%+v", code, env)
+	}
+	if !nextContains(env.Next, "pairmux log prog") || nextContains(env.Next, "pairmux run prog") {
+		t.Fatalf("peek exited program next = %v, want recovery without run", env.Next)
 	}
 }
 

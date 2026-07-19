@@ -33,8 +33,7 @@ pairmux skill install --target all
 
 `codex` and `agents` intentionally resolve to the same open Agent Skills directory; `all` writes that
 destination once. The companion `pairmux-skills` checkout is the source of truth and includes the full install map. It
-becomes a public repository alongside pairmux at the first release; until then, the binary's embedded
-copy is the supported installer source.
+is published separately on GitHub; the binary contains a release-synchronized embedded copy.
 
 ## Cross-agent evals
 

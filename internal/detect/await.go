@@ -43,7 +43,8 @@ var (
 // isInteractivePrompt reports whether a shaped, trimmed line looks like a
 // program waiting for a human answer.
 func isInteractivePrompt(line string) bool {
-	return reSecretPrompt.MatchString(line) ||
+	return strings.TrimSpace(line) == ">>>" ||
+		reSecretPrompt.MatchString(line) ||
 		reConfirmYN.MatchString(line) ||
 		reConfirmWord.MatchString(line) ||
 		rePager.MatchString(line) ||

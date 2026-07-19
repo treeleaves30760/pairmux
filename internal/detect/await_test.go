@@ -37,6 +37,10 @@ func TestIsInteractivePrompt(t *testing.T) {
 		{"Press any key to continue . . .", true},
 		{"press ENTER to continue", true},
 		{"Press RETURN to acknowledge", true},
+		// Python's primary REPL prompt. The continuation prompt (`...`) is
+		// intentionally excluded because it is common ordinary output.
+		{">>>", true},
+		{">>> ", true},
 
 		// negatives
 		{"", false},
@@ -57,6 +61,9 @@ func TestIsInteractivePrompt(t *testing.T) {
 		{"Express delivery: enter address", false},
 		{"compiling main.go", false},
 		{"Loading... 50%", false},
+		{"...", false},
+		{"result >>>", false},
+		{">>> result", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.line, func(t *testing.T) {
@@ -143,6 +150,9 @@ func TestRefine(t *testing.T) {
 		{name: "less mid-file colon prompt", st: core.StatusRunning, mode: core.ModeSentinel,
 			raw: "chunk of file\n:", mtimeDelta: -2 * time.Second,
 			wantStatus: core.StatusAwaitingInput, wantLine: ":"},
+		{name: "quiet Python REPL prompt", st: core.StatusRunning, mode: core.ModeHooks,
+			raw: "$ python3\nPython 3.x\n>>> ", mtimeDelta: -2 * time.Second,
+			wantStatus: core.StatusAwaitingInput, wantLine: ">>>"},
 		{name: "quiet non-prompt stays running", st: core.StatusRunning, mode: core.ModeHooks,
 			raw: "$ make\ncompiling main.go", mtimeDelta: -2 * time.Second, wantStatus: core.StatusRunning},
 		{name: "trailing blanks skipped", st: core.StatusRunning, mode: core.ModeHooks,

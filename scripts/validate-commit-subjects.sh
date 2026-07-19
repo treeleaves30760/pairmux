@@ -9,11 +9,13 @@ usage() {
 Usage:
   scripts/validate-commit-subjects.sh --self-test
   scripts/validate-commit-subjects.sh --subject SUBJECT
+  scripts/validate-commit-subjects.sh --branch BRANCH
   scripts/validate-commit-subjects.sh --commit REVISION
   scripts/validate-commit-subjects.sh --range BASE_REVISION HEAD_REVISION
 
 With no arguments, the validator checks HEAD. A valid subject is at most 72
-characters and has the form feat|doc|chores|fix/nonempty description.
+characters and has the form feat|doc|fix|chore: kebab-case. Branch names use
+the form feat|doc|fix|chore/kebab-case.
 EOF
 }
 
@@ -21,22 +23,18 @@ subject_error() {
   subject=$1
 
   case "$subject" in
-    feat/*|doc/*|chores/*|fix/*)
-      description=${subject#*/}
+    feat:\ *|doc:\ *|fix:\ *|chore:\ *)
+      description=${subject#*: }
       ;;
     *)
-      printf '%s' "expected feat|doc|chores|fix followed by '/'"
+      printf '%s' "expected feat|doc|fix|chore followed by ': '"
       return 0
       ;;
   esac
 
   case "$description" in
-    '')
-      printf '%s' 'description must not be empty'
-      return 0
-      ;;
-    [[:space:]]*|*[[:space:]])
-      printf '%s' 'description must not start or end with whitespace'
+    ''|-*|*-|*--*|*[!a-z0-9-]*)
+      printf '%s' 'description must be lowercase kebab-case'
       return 0
       ;;
   esac
@@ -46,6 +44,24 @@ subject_error() {
     return 0
   fi
 
+  return 1
+}
+
+branch_error() {
+  branch=$1
+  case "$branch" in
+    feat/*|doc/*|fix/*|chore/*) description=${branch#*/} ;;
+    *)
+      printf '%s' "expected feat|doc|fix|chore followed by '/'"
+      return 0
+      ;;
+  esac
+  case "$description" in
+    ''|-*|*-|*--*|*[!a-z0-9-]*)
+      printf '%s' 'branch description must be lowercase kebab-case'
+      return 0
+      ;;
+  esac
   return 1
 }
 
@@ -59,15 +75,23 @@ validate_subject() {
   fi
 }
 
+validate_branch() {
+  branch=$1
+  if reason=$(branch_error "$branch"); then
+    printf 'invalid branch name: %s\n  %s\n' "$reason" "$branch" >&2
+    return 1
+  fi
+}
+
 run_self_test() {
   failures=0
 
   for subject in \
-    'feat/add socket isolation' \
-    'doc/explain the release flow' \
-    'chores/pin CI actions' \
-    'fix/reject unsafe names' \
-    'feat/x'
+    'feat: add-socket-isolation' \
+    'doc: explain-release-flow' \
+    'chore: pin-ci-actions' \
+    'fix: reject-unsafe-names' \
+    'feat: x'
   do
     if subject_error "$subject" >/dev/null; then
       printf 'self-test: expected valid: %s\n' "$subject" >&2
@@ -76,15 +100,18 @@ run_self_test() {
   done
 
   for subject in \
-    'feature/add socket isolation' \
-    'docs/explain the release flow' \
-    'feat/' \
-    'feat/   ' \
-    'feat/ leading whitespace' \
-    'fix/trailing whitespace ' \
+    'feature: add-socket-isolation' \
+    'docs: explain-release-flow' \
+    'chores: pin-ci-actions' \
+    'feat:' \
+    'feat:add-socket-isolation' \
+    'feat: add socket isolation' \
+    'feat: Add-socket-isolation' \
+    'fix: trailing-hyphen-' \
+    'fix: double--hyphen' \
+    'feat/add-socket-isolation' \
     'fix' \
-    ' fix/reject unsafe names' \
-    'feat:wrong separator'
+    ' fix: reject-unsafe-names'
   do
     if ! subject_error "$subject" >/dev/null; then
       printf 'self-test: expected invalid: %s\n' "$subject" >&2
@@ -92,9 +119,9 @@ run_self_test() {
     fi
   done
 
-  long_subject='feat/'
+  long_subject='feat: '
   index=0
-  while [ "$index" -lt 68 ]; do
+  while [ "$index" -lt 67 ]; do
     long_subject="${long_subject}x"
     index=$((index + 1))
   done
@@ -102,6 +129,24 @@ run_self_test() {
     printf 'self-test: expected overlong subject to be invalid\n' >&2
     failures=$((failures + 1))
   fi
+
+  for branch in \
+    'feat/socket-isolation' \
+    'doc/release-flow' \
+    'chore/pin-actions' \
+    'fix/unsafe-names'
+  do
+    if branch_error "$branch" >/dev/null; then
+      printf 'self-test: expected valid branch: %s\n' "$branch" >&2
+      failures=$((failures + 1))
+    fi
+  done
+  for branch in 'feat:socket-isolation' 'feature/socket-isolation' 'feat/' 'feat/Bad-name' 'fix/two--parts'; do
+    if ! branch_error "$branch" >/dev/null; then
+      printf 'self-test: expected invalid branch: %s\n' "$branch" >&2
+      failures=$((failures + 1))
+    fi
+  done
 
   if [ "$failures" -ne 0 ]; then
     printf 'commit subject validator self-test failed (%s case(s))\n' "$failures" >&2
@@ -168,6 +213,11 @@ case "$1" in
     [ "$#" -eq 2 ] || { usage >&2; exit 2; }
     validate_subject "$2" literal
     printf 'commit subject is valid\n'
+    ;;
+  --branch)
+    [ "$#" -eq 2 ] || { usage >&2; exit 2; }
+    validate_branch "$2"
+    printf 'branch name is valid\n'
     ;;
   --commit)
     [ "$#" -eq 2 ] || { usage >&2; exit 2; }

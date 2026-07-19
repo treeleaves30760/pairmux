@@ -74,11 +74,12 @@ To avoid pagers entirely, disable them at the source (`git --no-pager log`, `PAG
 ## Python REPL round-trip
 
 ```bash
-pairmux new --name repl
-pairmux run repl "python3"          # returns running; the REPL is now live
+pairmux new --name repl --cmd "python3" # reports running; the REPL is live
 pairmux send repl --text "2 + 2" --enter
 pairmux peek repl                    # see "4"
 pairmux send repl --text "exit()" --enter
 ```
 
-Because the REPL doesn't exit, drive it with `send` + `peek`, not `run`.
+Known REPL, TUI, and persistent-server entrypoints should use `new --cmd`, then `send` + `peek`. If
+the REPL needs shell setup first, use a shell terminal and `run`; a recognized quiet prompt such as
+Python's `>>>` returns `awaiting-input` so you can continue with `send`.

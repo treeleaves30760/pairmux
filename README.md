@@ -8,8 +8,8 @@ Agents are bad at raw terminals for three separate reasons: they **guess `sleep 
 
 pairmux is a single static Go binary. It needs **tmux >= 3.2** and runs on **macOS and Linux**.
 
-The project is currently pre-release: the GitHub repositories and PyPI project are not public yet.
-From this checkout, build and install the binary locally:
+The project is currently pre-release: the source repository is public, but no release has been
+published to GitHub or PyPI yet. From this checkout, build and install the binary locally:
 
 ```bash
 make build
@@ -170,7 +170,7 @@ pairmux skill install --target all
 
 Supported targets are Claude Code, Codex, Gemini CLI, Cursor, OpenCode, GitHub Copilot, Windsurf,
 Kiro, Amp, and the shared `~/.agents/skills` location (`codex` and `agents` are aliases). The companion `pairmux-skills` repository
-is also pre-release and becomes the public source of truth when the repositories are published.
+is the public source of truth; release changes are synced into the embedded copy in this repository.
 
 The envelopes are also self-teaching: actionable replies carry an ordered `next` array. An agent obeys
 any leading safety/information entries, then runs the first executable command.
@@ -202,8 +202,9 @@ should require confirmation for commands, input, and terminal kills that can hav
 - Documentation source: [`website/docs`](./website/docs)
 - CLI reference and the full `pairmux.v1` envelope schema: [`website/docs/cli-reference.md`](./website/docs/cli-reference.md)
 - [ChangeLog.md](./ChangeLog.md)
+- Release channels and remaining work: [RELEASING.md](./RELEASING.md)
 
-A hosted GitHub Pages site becomes available when the pre-release repository is published.
+A hosted GitHub Pages site becomes available after Pages is enabled with GitHub Actions as its source.
 
 ## License
 

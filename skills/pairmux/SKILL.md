@@ -41,6 +41,8 @@ interactive, long-lived, or shared with a human.
 3. read `status` and act:
      done            → read output + exit_code, move on
      running         → not finished — pairmux wait build --idle 800   (NEVER sleep)
+     known hung      → pairmux send build --key C-c; pairmux wait build --idle 800
+                       then `run` the recovery command in that same terminal
      awaiting-input  → it wants input — pairmux send build --text y --enter
                        (secret prompt? do NOT guess — hand off, see rules)
 4. truncated?        → pairmux log build --cmd N | --grep RE   (read the journal, don't re-run)
@@ -56,11 +58,23 @@ interactive, long-lived, or shared with a human.
 3. **Answer a prompt once.** Send the answer a single time; do not spam Enter.
 4. **Never type or guess a secret.** On a password/passphrase/passcode prompt, pairmux says
    `do NOT guess or type secrets`. Hand off to a human: `pairmux wait <name> --human --notify`.
+   If the shell/tool client interrupts before pairmux returns, immediately reissue that same wait;
+   never shorten pairmux's 300s default (one valid explicit timeout of at least 300s is equivalent).
 5. **Prefer reading the log over re-running.** The journal already has the full output —
    `pairmux log` is free and instant; re-running wastes time and can change state.
 6. **Treat `next` as contextual hints, not a script.** Read entries in order and obey safety/prose.
    Replace placeholders with real values; never execute prose or placeholder text literally. Run the
    first applicable command. Final replies may omit `next`. Read and obey human `notes`.
+7. **Prefer program terminals for known interactive entrypoints.** Start a REPL, TUI, or persistent
+   server with `pairmux new --name <name> --cmd "<program>"`; then drive that live program with
+   `send`/`peek`. Use `run` when the command needs an existing shell.
+8. **Recover hung commands in place.** When a task requires the same terminal/session, use
+   `pairmux send <name> --key C-c`, then `pairmux wait <name> --idle 800`, then `run` the recovery
+   command on that name. `kill` destroys the terminal; use it only as a last resort when a fresh
+   terminal is explicitly acceptable.
+9. **Pattern waits observe future output only.** If readiness text may have appeared during `run` or
+   `new --cmd`, read that returned output or use `peek`/`log --grep`; never wait for a past line.
+   Use `wait --pattern` only before an event you still expect to happen.
 
 ## Reading the envelope
 
@@ -147,7 +161,7 @@ A human left a note — it rides along in `notes`; obey it:
 
 | command | purpose |
 |---------|---------|
-| `pairmux new [--name N] [--cwd D] [--cmd "..."]` | open a terminal (`--cmd` launches a program you drive with `send`) |
+| `pairmux new [--name N] [--cwd D] [--cmd "..."]` | open a terminal (`--cmd` is preferred for a known REPL/TUI/server) |
 | `pairmux run <name> "<cmd>" [--timeout 60s] [--head 50] [--tail 200]` | run a command, block until done/timeout |
 | `pairmux wait <name> [--idle MS] [--pattern RE] [--human] [--notify] [--timeout 300s]` | block until a requested condition |
 | `pairmux peek <name> [--screen \| --tail N]` | read recent output + status, no blocking, no lock |
