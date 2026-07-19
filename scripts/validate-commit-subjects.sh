@@ -14,8 +14,8 @@ Usage:
   scripts/validate-commit-subjects.sh --range BASE_REVISION HEAD_REVISION
 
 With no arguments, the validator checks HEAD. A valid subject is at most 72
-characters and has the form feat|doc|chores|fix:kebab-case. Branch names use
-the form feat|doc|chores|fix/kebab-case.
+characters and has the form feat|doc|fix|chore: kebab-case. Branch names use
+the form feat|doc|fix|chore/kebab-case.
 EOF
 }
 
@@ -23,11 +23,11 @@ subject_error() {
   subject=$1
 
   case "$subject" in
-    feat:*|doc:*|chores:*|fix:*)
-      description=${subject#*:}
+    feat:\ *|doc:\ *|fix:\ *|chore:\ *)
+      description=${subject#*: }
       ;;
     *)
-      printf '%s' "expected feat|doc|chores|fix followed by ':'"
+      printf '%s' "expected feat|doc|fix|chore followed by ': '"
       return 0
       ;;
   esac
@@ -50,9 +50,9 @@ subject_error() {
 branch_error() {
   branch=$1
   case "$branch" in
-    feat/*|doc/*|chores/*|fix/*) description=${branch#*/} ;;
+    feat/*|doc/*|fix/*|chore/*) description=${branch#*/} ;;
     *)
-      printf '%s' "expected feat|doc|chores|fix followed by '/'"
+      printf '%s' "expected feat|doc|fix|chore followed by '/'"
       return 0
       ;;
   esac
@@ -87,11 +87,11 @@ run_self_test() {
   failures=0
 
   for subject in \
-    'feat:add-socket-isolation' \
-    'doc:explain-release-flow' \
-    'chores:pin-ci-actions' \
-    'fix:reject-unsafe-names' \
-    'feat:x'
+    'feat: add-socket-isolation' \
+    'doc: explain-release-flow' \
+    'chore: pin-ci-actions' \
+    'fix: reject-unsafe-names' \
+    'feat: x'
   do
     if subject_error "$subject" >/dev/null; then
       printf 'self-test: expected valid: %s\n' "$subject" >&2
@@ -100,16 +100,18 @@ run_self_test() {
   done
 
   for subject in \
-    'feature:add-socket-isolation' \
-    'docs:explain-release-flow' \
+    'feature: add-socket-isolation' \
+    'docs: explain-release-flow' \
+    'chores: pin-ci-actions' \
     'feat:' \
-    'feat:add socket isolation' \
-    'feat:Add-socket-isolation' \
-    'fix:trailing-hyphen-' \
-    'fix:double--hyphen' \
+    'feat:add-socket-isolation' \
+    'feat: add socket isolation' \
+    'feat: Add-socket-isolation' \
+    'fix: trailing-hyphen-' \
+    'fix: double--hyphen' \
     'feat/add-socket-isolation' \
     'fix' \
-    ' fix:reject-unsafe-names'
+    ' fix: reject-unsafe-names'
   do
     if ! subject_error "$subject" >/dev/null; then
       printf 'self-test: expected invalid: %s\n' "$subject" >&2
@@ -117,9 +119,9 @@ run_self_test() {
     fi
   done
 
-  long_subject='feat:'
+  long_subject='feat: '
   index=0
-  while [ "$index" -lt 68 ]; do
+  while [ "$index" -lt 67 ]; do
     long_subject="${long_subject}x"
     index=$((index + 1))
   done
@@ -131,7 +133,7 @@ run_self_test() {
   for branch in \
     'feat/socket-isolation' \
     'doc/release-flow' \
-    'chores/pin-actions' \
+    'chore/pin-actions' \
     'fix/unsafe-names'
   do
     if branch_error "$branch" >/dev/null; then

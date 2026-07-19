@@ -104,7 +104,7 @@ changelog:
   sort: asc
   filters:
     exclude:
-      - "^doc/"
-      - "^chores/"
+      - "^doc: "
+      - "^chore: "
       - Merge pull request
       - Merge branch
