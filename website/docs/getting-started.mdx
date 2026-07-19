@@ -27,13 +27,18 @@ pairmux is an **ACI (Agent-Computer Interface) layer** on top of tmux that close
 
 ## Install
 
-:::caution Pre-release status
-The packaging and release workflows are implemented and tested, but no GitHub or PyPI release is
-published yet. Use the source install below until the first public tagged release.
-:::
-
 <Tabs groupId="install">
-<TabItem value="source" label="Source checkout" default>
+<TabItem value="uv" label="uv / pipx" default>
+
+Platform wheels bundle the binary, so `uv` or `pipx` installs pairmux like any other tool:
+
+```bash
+uv tool install pairmux
+# or: pipx install pairmux
+```
+
+</TabItem>
+<TabItem value="source" label="Source checkout">
 
 ```bash
 make build
@@ -42,17 +47,7 @@ pairmux version
 ```
 
 </TabItem>
-<TabItem value="uv" label="uv / pipx (after release)">
-
-After the first release, platform wheels bundle the binary, so `uv` (or `pipx`) installs it like any tool:
-
-```bash
-uv tool install pairmux
-# or: pipx install pairmux
-```
-
-</TabItem>
-<TabItem value="curl" label="curl | bash (after release)">
+<TabItem value="curl" label="curl | bash">
 
 The installer detects your OS and architecture, downloads the matching release, and checks for tmux:
 

@@ -6,10 +6,6 @@ one **platform wheel per OS/arch**, each carrying the prebuilt native binary in
 the wheel's *scripts* section. No build backend, no compilation on the user's
 machine, and **no sdist**.
 
-> **Pre-release:** this documents the implemented artifact format and release
-> workflow. The `pairmux` PyPI project is not published as of 2026-07-19, so
-> `uv tool install pairmux` is not yet an available installation channel.
-
 ## The model
 
 * **Binary-in-wheel.** Each wheel contains the executable at
@@ -150,11 +146,11 @@ via OIDC needs no stored token — `uv publish` with `--trusted-publishing
 automatic` — but that requires configuring a publisher on PyPI and is out of
 scope here.)
 
-The PyPI name `pairmux` must be claimed before the first release; as of
-2026-07-19 the project endpoint still returns 404. Configure the repository's
-`PYPI_TOKEN` only after that ownership step. Publishing uses PyPI's simple index
-as a duplicate check, so a workflow retry can skip exact wheel files already
-accepted while the matching GitHub release is still a draft.
+The PyPI distribution name is `pairmux`. Confirm project ownership and configure
+the repository's `PYPI_TOKEN` before pushing a release tag. Publishing uses
+PyPI's simple index as a duplicate check, so a workflow retry can skip exact
+wheel files already accepted while the matching GitHub release is still a
+draft.
 
 ## Linting
 

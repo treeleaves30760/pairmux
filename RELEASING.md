@@ -4,19 +4,16 @@ This repository owns the pairmux CLI, native binaries, Python wheel wrappers,
 Linux packages, install script, and documentation site. The companion
 `pairmux-skills` repository owns the canonical Agent Skill.
 
-## Channel status
+## Release channels
 
-| Channel | Current implementation | Work before first public release |
+| Channel | Implementation | Release operation |
 | --- | --- | --- |
-| GitHub Releases | GoReleaser builds four macOS/Linux archives, four `.deb`/`.rpm` packages, and checksums. The tag workflow verifies and stages the exact artifacts. | Enable Actions, protect `main`, enable Pages from GitHub Actions, and publish a `v0.1.0` tag. |
-| PyPI | Four platform wheels wrap the same verified Go binaries. Linux wheel installation is smoke-tested. | Claim the `pairmux` project and configure the `PYPI_TOKEN` secret expected by `.github/workflows/release.yml`, or migrate that workflow to PyPI Trusted Publishing. |
-| Direct installer | `install.sh` selects a GitHub archive and installs atomically. | Publish the first GitHub release, then smoke-test the public URL on macOS and Linux. |
+| GitHub Releases | GoReleaser builds four macOS/Linux archives, four `.deb`/`.rpm` packages, and checksums. | Push a canonical SemVer tag. The workflow verifies and stages the exact artifacts before publishing the release. |
+| PyPI | Four platform wheels wrap the same verified Go binaries. Linux wheel installation is smoke-tested. | Configure the `PYPI_TOKEN` repository secret or migrate to Trusted Publishing. The tag workflow uploads only the four verified wheels. |
+| Direct installer | `install.sh` selects a GitHub archive and installs atomically. | Smoke-test the public URL on macOS and Linux after every release. |
 | Debian/RPM files | GoReleaser emits installable `.deb` and `.rpm` release assets. | No extra work for direct package downloads. These files do not constitute an APT or Yum repository. |
 | APT repository | Not implemented. | Choose hosting and supported distributions, sign repository metadata, publish indexes, document key enrollment, and test `apt update` plus `apt install pairmux`. |
 | Homebrew | Deferred. | Sign and notarize macOS binaries, verify them through Gatekeeper, then add a tap/formula workflow. |
-
-The PyPI JSON endpoint for `pairmux` returned `404` on 2026-07-19. Recheck the
-name immediately before configuring the first publisher.
 
 ## Release checklist
 
@@ -63,4 +60,4 @@ these as a separate milestone:
   and verify `pairmux version` matches the tag.
 
 Artifact signing, an SBOM, and build provenance are recommended before a wider
-stable release even though they do not block the initial prerelease.
+stable release even though they do not block the first public release.
