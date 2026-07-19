@@ -70,6 +70,9 @@ interactive, long-lived, or shared with a human.
    `pairmux send <name> --key C-c`, then `pairmux wait <name> --idle 800`, then `run` the recovery
    command on that name. `kill` destroys the terminal; use it only as a last resort when a fresh
    terminal is explicitly acceptable.
+9. **Pattern waits observe future output only.** If readiness text may have appeared during `run` or
+   `new --cmd`, read that returned output or use `peek`/`log --grep`; never wait for a past line.
+   Use `wait --pattern` only before an event you still expect to happen.
 
 ## Reading the envelope
 
