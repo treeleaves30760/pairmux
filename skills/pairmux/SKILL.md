@@ -41,6 +41,8 @@ interactive, long-lived, or shared with a human.
 3. read `status` and act:
      done            → read output + exit_code, move on
      running         → not finished — pairmux wait build --idle 800   (NEVER sleep)
+     known hung      → pairmux send build --key C-c; pairmux wait build --idle 800
+                       then `run` the recovery command in that same terminal
      awaiting-input  → it wants input — pairmux send build --text y --enter
                        (secret prompt? do NOT guess — hand off, see rules)
 4. truncated?        → pairmux log build --cmd N | --grep RE   (read the journal, don't re-run)
@@ -64,6 +66,10 @@ interactive, long-lived, or shared with a human.
 7. **Prefer program terminals for known interactive entrypoints.** Start a REPL, TUI, or persistent
    server with `pairmux new --name <name> --cmd "<program>"`; then drive that live program with
    `send`/`peek`. Use `run` when the command needs an existing shell.
+8. **Recover hung commands in place.** When a task requires the same terminal/session, use
+   `pairmux send <name> --key C-c`, then `pairmux wait <name> --idle 800`, then `run` the recovery
+   command on that name. `kill` destroys the terminal; use it only as a last resort when a fresh
+   terminal is explicitly acceptable.
 
 ## Reading the envelope
 
