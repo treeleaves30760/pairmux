@@ -8,21 +8,25 @@ Agents are bad at raw terminals for three separate reasons: they **guess `sleep 
 
 pairmux is a single static Go binary. It needs **tmux >= 3.2** and runs on **macOS and Linux**.
 
-The project is currently pre-release: the source repository is public, but no release has been
-published to GitHub or PyPI yet. From this checkout, build and install the binary locally:
+Install the platform wheel with `uv` or `pipx`:
+
+```bash
+uv tool install pairmux
+# or: pipx install pairmux
+```
+
+Or install the checksummed binary from the latest GitHub release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.sh | bash
+```
+
+To build from this checkout instead:
 
 ```bash
 make build
 install -m 0755 bin/pairmux ~/.local/bin/pairmux
 pairmux version
-```
-
-The following channels are implemented and release-tested, but become usable only after the first
-public tagged release:
-
-```bash
-uv tool install pairmux
-curl -fsSL https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.sh | bash
 ```
 
 Homebrew distribution is deferred until the macOS binaries can be signed, notarized, and exercised
