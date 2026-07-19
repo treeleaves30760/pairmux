@@ -83,24 +83,22 @@ To avoid pagers entirely, disable them at the source when you run the command:
 
 ## REPLs (Python, node, psql, …)
 
-A REPL never "finishes", so `run` will report `running`/`awaiting-input`, not `done`. Drive it with
-`send` + `peek`:
+A REPL never "finishes" until you exit it. When you know the entrypoint up front, use a program
+terminal and drive it with `send` + `peek`:
 
 ```bash
-pairmux new --name repl
-pairmux run repl "python3"            # returns running; the REPL is now live
+pairmux new --name repl --cmd "python3" # reports running; the REPL is live
 pairmux send repl --text "2 + 2" --enter
 pairmux peek repl                      # see "4"
 pairmux send repl --text "exit()" --enter
 ```
 
-Tip: for a program you know is a REPL up front, create the terminal with `--cmd` so pairmux starts in
-`sentinel` mode and you drive it purely with `send`/`peek`:
+If the REPL needs setup performed by an existing shell, start a shell terminal first and use `run`.
+A recognized quiet prompt returns `awaiting-input`, while an unrecognized REPL remains `running`:
 
 ```bash
-pairmux new --name repl --cmd "python3"
-pairmux send repl --text "print(6*7)" --enter
-pairmux peek repl
+pairmux new --name repl
+pairmux run repl "source .venv/bin/activate && python3"
 ```
 
 ## Full-screen TUIs

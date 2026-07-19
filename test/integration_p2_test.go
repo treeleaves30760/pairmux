@@ -187,6 +187,45 @@ func TestAwaitingInputPrompt(t *testing.T) {
 	waitStatus(t, e, "t1", "idle", 8*time.Second)
 }
 
+func TestPythonREPLPromptThroughRun(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available")
+	}
+	e := newEnv(t, bashShell)
+	pmx(t, e, "new", "--name", "python-repl")
+
+	started := time.Now()
+	env, code := pmx(t, e, "run", "python-repl", "python3", "--timeout", "5s")
+	if code != 0 || env.Status != "awaiting-input" {
+		t.Fatalf("start Python REPL: code=%d env=%+v", code, env)
+	}
+	if elapsed := time.Since(started); elapsed >= 4*time.Second {
+		t.Fatalf("Python prompt returned after %v, want before caller timeout", elapsed)
+	}
+	if !strings.Contains(env.Output, ">>>") || !nextContains(env.Next, "pairmux send python-repl --text") {
+		t.Fatalf("Python prompt envelope = %+v", env)
+	}
+
+	env, code = pmx(t, e, "send", "python-repl", "--text", "314159 * 2", "--enter")
+	if code != 0 || env.Status != "sent" {
+		t.Fatalf("send Python expression: code=%d env=%+v", code, env)
+	}
+	env = pollPeekStatus(t, e, "python-repl", "awaiting-input", 5*time.Second)
+	if !strings.Contains(env.Output, "628318") {
+		t.Fatalf("Python expression output = %q, want 628318", env.Output)
+	}
+
+	env, code = pmx(t, e, "send", "python-repl", "--text", "exit()", "--enter")
+	if code != 0 || env.Status != "sent" {
+		t.Fatalf("exit Python REPL: code=%d env=%+v", code, env)
+	}
+	waitStatus(t, e, "python-repl", "idle", 8*time.Second)
+	env, code = pmx(t, e, "run", "python-repl", "printf repl-exited")
+	if code != 0 || env.Status != "done" || env.ExitCode == nil || *env.ExitCode != 0 || !strings.Contains(env.Output, "repl-exited") {
+		t.Fatalf("shell after Python exit: code=%d env=%+v", code, env)
+	}
+}
+
 func TestSecretPromptHandoff(t *testing.T) {
 	e := newEnv(t, bashShell)
 	pmx(t, e, "new", "--name", "t1")

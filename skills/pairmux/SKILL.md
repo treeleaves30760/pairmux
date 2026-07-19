@@ -61,6 +61,9 @@ interactive, long-lived, or shared with a human.
 6. **Treat `next` as contextual hints, not a script.** Read entries in order and obey safety/prose.
    Replace placeholders with real values; never execute prose or placeholder text literally. Run the
    first applicable command. Final replies may omit `next`. Read and obey human `notes`.
+7. **Prefer program terminals for known interactive entrypoints.** Start a REPL, TUI, or persistent
+   server with `pairmux new --name <name> --cmd "<program>"`; then drive that live program with
+   `send`/`peek`. Use `run` when the command needs an existing shell.
 
 ## Reading the envelope
 
@@ -147,7 +150,7 @@ A human left a note — it rides along in `notes`; obey it:
 
 | command | purpose |
 |---------|---------|
-| `pairmux new [--name N] [--cwd D] [--cmd "..."]` | open a terminal (`--cmd` launches a program you drive with `send`) |
+| `pairmux new [--name N] [--cwd D] [--cmd "..."]` | open a terminal (`--cmd` is preferred for a known REPL/TUI/server) |
 | `pairmux run <name> "<cmd>" [--timeout 60s] [--head 50] [--tail 200]` | run a command, block until done/timeout |
 | `pairmux wait <name> [--idle MS] [--pattern RE] [--human] [--notify] [--timeout 300s]` | block until a requested condition |
 | `pairmux peek <name> [--screen \| --tail N]` | read recent output + status, no blocking, no lock |
