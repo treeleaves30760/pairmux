@@ -131,7 +131,7 @@ func (c *Ctx) renderWatchFrame() {
 	rows := make([]watchRow, 0, len(terms))
 	for _, t := range terms {
 		j := &journal.Journal{Dir: t.Dir}
-		st := detect.DeriveStatus(j, t.Alive, t.Mode)
+		st := deriveTerminalStatus(j, t.Alive, t.Mode, t.Meta.Shell == "")
 		// Refine upgrades a quiet running command to awaiting-input when its last
 		// line looks like an interactive prompt; the "!! " highlight keys off it.
 		st, _ = detect.Refine(j, st, t.Mode)

@@ -164,7 +164,7 @@ func (c *Ctx) cmdWait(args []string) int {
 				}
 				return c.tmuxErr(err)
 			}
-			if status, prompt, terminal := terminalStatusAfterQuiet(j, current.Alive, term.Mode, idleFor); terminal &&
+			if status, prompt, terminal := terminalStatusAfterQuiet(j, current.Alive, term.Mode, current.Meta.Shell == "", idleFor); terminal &&
 				(waitIdle || status == core.StatusDead) {
 				next := peekNext(name, status)
 				if status == core.StatusAwaitingInput {
@@ -259,11 +259,11 @@ func journalQuiet(j *journal.Journal, idle time.Duration) bool {
 // terminal idleness. It completes the wait only for actionable terminal
 // states: true idle, awaiting input, or dead. A quiet running/unknown command
 // keeps waiting and can time out without suggesting another run.
-func terminalStatusAfterQuiet(j *journal.Journal, alive bool, mode core.Mode, idle time.Duration) (core.Status, string, bool) {
+func terminalStatusAfterQuiet(j *journal.Journal, alive bool, mode core.Mode, program bool, idle time.Duration) (core.Status, string, bool) {
 	if !journalQuiet(j, idle) {
 		return core.StatusUnknown, "", false
 	}
-	status, prompt := detect.Refine(j, detect.DeriveStatus(j, alive, mode), mode)
+	status, prompt := detect.Refine(j, deriveTerminalStatus(j, alive, mode, program), mode)
 	switch status {
 	case core.StatusIdle, core.StatusAwaitingInput, core.StatusDead:
 		return status, prompt, true
