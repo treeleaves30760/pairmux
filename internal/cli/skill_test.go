@@ -18,7 +18,7 @@ func TestSkillTargetDirs(t *testing.T) {
 		projRel bool
 	}{
 		{"claude-code", "/fakehome/.claude/skills/pairmux", false},
-		{"codex", "/fakehome/.codex/skills/pairmux", false},
+		{"codex", "/fakehome/.agents/skills/pairmux", false},
 		{"gemini", "/fakehome/.gemini/skills/pairmux", false},
 		{"opencode", "/fakehome/.config/opencode/skills/pairmux", false},
 		{"copilot", "/fakehome/.copilot/skills/pairmux", false},
@@ -153,8 +153,8 @@ func TestSkillInstallReplacesSymlinkWithoutFollowingIt(t *testing.T) {
 func TestSkillInstallAllSkipsMissingAgents(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	// Only codex is "installed" on this machine.
-	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+	// Only the shared Codex/agents skill root is "installed" on this machine.
+	if err := os.MkdirAll(filepath.Join(home, ".agents"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -164,13 +164,17 @@ func TestSkillInstallAllSkipsMissingAgents(t *testing.T) {
 		t.Fatalf("rc = %d, want 0", rc)
 	}
 	e := decode(t, &buf)
-	if !strings.Contains(e.Output, filepath.Join(home, ".codex", "skills", "pairmux", "SKILL.md")) {
-		t.Fatalf("all should install into present ~/.codex:\n%s", e.Output)
+	want := filepath.Join(home, ".agents", "skills", "pairmux", "SKILL.md")
+	if !strings.Contains(e.Output, want) {
+		t.Fatalf("all should install into present ~/.agents:\n%s", e.Output)
+	}
+	if strings.Count(e.Output, want) != 1 || !strings.Contains(e.Output, "skipped agents: same destination as codex") {
+		t.Fatalf("all should write the Codex/agents alias destination once:\n%s", e.Output)
 	}
 	if !strings.Contains(e.Output, "skipped claude-code") {
 		t.Fatalf("all should report skipping absent agents:\n%s", e.Output)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".codex", "skills", "pairmux", "SKILL.md")); err != nil {
+	if _, err := os.Stat(want); err != nil {
 		t.Fatalf("codex skill not written: %v", err)
 	}
 	// Absent agents' directories are never conjured.

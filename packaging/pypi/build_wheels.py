@@ -451,6 +451,7 @@ def check_wheel(path: Path) -> bool:
 
 def scan_dist_dir(dist_dir: Path) -> List[Tuple[Path, Tuple[str, str]]]:
     jobs: List[Tuple[Path, Tuple[str, str]]] = []
+    seen: dict[Tuple[str, str], Path] = {}
     if not dist_dir.is_dir():
         raise ValueError("--dist-dir %s is not a directory" % dist_dir)
     for child in sorted(dist_dir.iterdir()):
@@ -464,6 +465,12 @@ def scan_dist_dir(dist_dir: Path) -> List[Tuple[Path, Tuple[str, str]]]:
             continue
         binary = child / SCRIPT_NAME
         if binary.is_file():
+            if previous := seen.get(key):
+                raise ValueError(
+                    "duplicate %s/%s binaries in %s and %s"
+                    % (key[0], key[1], previous, binary)
+                )
+            seen[key] = binary
             jobs.append((binary, key))
     return jobs
 
@@ -515,6 +522,12 @@ def main(argv=None) -> int:
     if not jobs:
         p.error("nothing to build: pass --binary/--platform pairs or a --dist-dir "
                 "that contains goreleaser build subdirectories")
+
+    seen_labels: set[str] = set()
+    for _binary, _platform, label in jobs:
+        if label in seen_labels:
+            p.error("duplicate binary target: %s" % label)
+        seen_labels.add(label)
 
     out_dir = Path(args.out_dir)
     built: List[Path] = []

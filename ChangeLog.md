@@ -47,7 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preserving each `pairmux.v1` envelope as structured and text content without invoking a wrapper shell.
 - `pairmux skill install` embeds the canonical Agent Skill and installs it atomically for Claude Code,
   Codex, Gemini CLI, Cursor, OpenCode, GitHub Copilot, Windsurf, Kiro, Amp, or the cross-agent
-  `agents` location; `--target all` updates only agent configuration directories that already exist.
+  `agents` location. Codex and `agents` share the standard `~/.agents/skills` destination, and
+  `--target all` updates each existing agent directory only once.
 - Terminal lifecycle and core loop: `pairmux new` (optional `--name`, `--cwd`, `--cmd`) opens a
   tmux-backed terminal; `run` blocks for command completion; `peek` returns a bounded recent view;
   `send` delivers interactive input; `log` returns a bounded recent view or complete explicitly

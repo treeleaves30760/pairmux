@@ -21,7 +21,7 @@ pairmux skill install --target all
 | target | global skill directory |
 |---|---|
 | `claude-code` | `~/.claude/skills/pairmux/` |
-| `codex` | `~/.codex/skills/pairmux/` |
+| `codex` | `~/.agents/skills/pairmux/` |
 | `gemini` | `~/.gemini/skills/pairmux/` |
 | `cursor` | project-relative `.cursor/skills/pairmux/` |
 | `opencode` | `~/.config/opencode/skills/pairmux/` |
@@ -29,9 +29,10 @@ pairmux skill install --target all
 | `windsurf` | `~/.codeium/windsurf/skills/pairmux/` |
 | `kiro` | `~/.kiro/skills/pairmux/` |
 | `amp` | `~/.config/amp/skills/pairmux/` |
-| `agents` | `~/.agents/skills/pairmux/` (cross-agent alias) |
+| `agents` | `~/.agents/skills/pairmux/` (compatibility alias for the shared standard) |
 
-The companion `pairmux-skills` checkout is the source of truth and includes the full install map. It
+`codex` and `agents` intentionally resolve to the same open Agent Skills directory; `all` writes that
+destination once. The companion `pairmux-skills` checkout is the source of truth and includes the full install map. It
 becomes a public repository alongside pairmux at the first release; until then, the binary's embedded
 copy is the supported installer source.
 

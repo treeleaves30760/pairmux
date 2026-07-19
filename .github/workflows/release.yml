@@ -109,6 +109,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      # The publish job intentionally has no checkout; tell gh which remote
+      # repository to target instead of asking it to infer one from .git.
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
@@ -159,6 +163,10 @@ jobs:
               "${prerelease[@]}"
           fi
           gh release upload "$GITHUB_REF_NAME" dist/release-assets/* --clobber
+          find dist/release-assets -maxdepth 1 -type f -exec basename {} \; | sort > expected-assets.txt
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" \
+            --jq '.assets[].name' | sort > remote-assets.txt
+          diff -u expected-assets.txt remote-assets.txt
       - name: Publish the exact verified wheels to PyPI
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}

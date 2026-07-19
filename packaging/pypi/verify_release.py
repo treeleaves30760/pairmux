@@ -41,6 +41,9 @@ def artifact_path(dist_dir: Path, entry: dict) -> Path:
     if not isinstance(raw, str) or not raw:
         fail("artifact has no path: %r" % entry)
     path = Path(raw)
+    name = entry.get("name")
+    if not isinstance(name, str) or path.name != name:
+        fail("artifact name %r does not match path basename %r" % (name, path.name))
     if not path.is_absolute():
         if path.parts and path.parts[0] == dist_dir.name:
             path = dist_dir.parent / path
@@ -97,7 +100,19 @@ def sha256(path: Path) -> str:
 def archive_binary(path: Path) -> Tuple[bytes, int]:
     required = {"pairmux", "LICENSE", "README.md", "man/pairmux.1"}
     with tarfile.open(path, "r:gz") as archive:
-        members = {member.name.removeprefix("./"): member for member in archive.getmembers()}
+        members = {}
+        for member in archive.getmembers():
+            name = member.name.removeprefix("./")
+            member_path = Path(name)
+            if member_path.is_absolute() or ".." in member_path.parts:
+                fail("%s contains an unsafe archive member: %s" % (path, member.name))
+            if name in members:
+                fail("%s contains a duplicate archive member: %s" % (path, name))
+            members[name] = member
+        extra = set(members) - required
+        if extra:
+            fail("%s contains unexpected archive members: %s" %
+                 (path, ", ".join(sorted(extra))))
         missing = required - set(members)
         if missing:
             fail("%s is missing archive members: %s" % (path, ", ".join(sorted(missing))))

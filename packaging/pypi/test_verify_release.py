@@ -106,6 +106,31 @@ class VerifyReleaseTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unexpected artifact types"):
                 verify_release.verify_release(dist, "v1.2.3", "abc123", root / "staged")
 
+    def test_rejects_unexpected_archive_member(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            dist = self.make_fixture(root)
+            archive = dist / "pairmux_1.2.3_darwin_amd64.tar.gz"
+            with tarfile.open(archive, "w:gz") as tf:
+                info = tarfile.TarInfo("../escape")
+                info.size = 1
+                tf.addfile(info, io.BytesIO(b"x"))
+            with self.assertRaisesRegex(ValueError, "unsafe archive member"):
+                verify_release.verify_release(dist, "v1.2.3", "abc123", root / "staged")
+
+    def test_rejects_manifest_name_path_mismatch(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            dist = self.make_fixture(root)
+            alias = dist / "not-checksums.txt"
+            alias.write_bytes((dist / "checksums.txt").read_bytes())
+            entries = json.loads((dist / "artifacts.json").read_text(encoding="utf-8"))
+            checksum = next(entry for entry in entries if entry["type"] == "Checksum")
+            checksum["path"] = str(alias)
+            (dist / "artifacts.json").write_text(json.dumps(entries), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "does not match path basename"):
+                verify_release.verify_release(dist, "v1.2.3", "abc123", root / "staged")
+
 
 if __name__ == "__main__":
     unittest.main()

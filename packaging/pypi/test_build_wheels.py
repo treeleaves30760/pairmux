@@ -62,6 +62,14 @@ class BuildWheelsTest(unittest.TestCase):
             }
             self.assertEqual(found, expected)
 
+    def test_scan_dist_rejects_duplicate_platform(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            dist = Path(td)
+            self.make_binary(dist / "pairmux_linux_amd64_v1" / "pairmux")
+            self.make_binary(dist / "another_linux_amd64_v2" / "pairmux")
+            with self.assertRaisesRegex(ValueError, "duplicate linux/amd64 binaries"):
+                build_wheels.scan_dist_dir(dist)
+
     def test_build_one_writes_verified_executable_wheel(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

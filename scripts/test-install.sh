@@ -33,6 +33,14 @@ printf '%s\n' 'tmux 3.2'
 EOF
 chmod +x "$FAKE_BIN/uname" "$FAKE_BIN/curl" "$FAKE_BIN/tmux"
 
+file_sha256() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$1" | awk '{print $1}'
+	else
+		shasum -a 256 "$1" | awk '{print $1}'
+	fi
+}
+
 build_fixture() {
 	version=$1
 	work="$TEST_ROOT/build-$version"
@@ -44,11 +52,7 @@ printf '%s\\n' '$version'
 EOF
 	chmod +x "$work/pairmux"
 	tar -czf "$FIXTURES/pairmux_1.2.3_linux_amd64.tar.gz" -C "$work" pairmux
-	if command -v sha256sum >/dev/null 2>&1; then
-		digest=$(sha256sum "$FIXTURES/pairmux_1.2.3_linux_amd64.tar.gz" | awk '{print $1}')
-	else
-		digest=$(shasum -a 256 "$FIXTURES/pairmux_1.2.3_linux_amd64.tar.gz" | awk '{print $1}')
-	fi
+	digest=$(file_sha256 "$FIXTURES/pairmux_1.2.3_linux_amd64.tar.gz")
 	printf '%s  %s\n' "$digest" pairmux_1.2.3_linux_amd64.tar.gz >"$FIXTURES/checksums.txt"
 }
 
@@ -72,15 +76,13 @@ test "$(cat "$victim")" = untouched
 
 printf '%s\n' previous >"$INSTALL_DIR/pairmux"
 chmod +x "$INSTALL_DIR/pairmux"
-before=$(sha256sum "$INSTALL_DIR/pairmux" 2>/dev/null | awk '{print $1}' ||
-	shasum -a 256 "$INSTALL_DIR/pairmux" | awk '{print $1}')
+before=$(file_sha256 "$INSTALL_DIR/pairmux")
 build_fixture 9.9.9
 if run_installer 2>/dev/null; then
 	printf '%s\n' 'expected installer to reject the mismatched binary version' >&2
 	exit 1
 fi
-after=$(sha256sum "$INSTALL_DIR/pairmux" 2>/dev/null | awk '{print $1}' ||
-	shasum -a 256 "$INSTALL_DIR/pairmux" | awk '{print $1}')
+after=$(file_sha256 "$INSTALL_DIR/pairmux")
 test "$before" = "$after"
 
 printf '%s\n' 'install.sh atomic replacement tests passed'

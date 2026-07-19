@@ -45,7 +45,7 @@ func skillTargetDir(target string) (dir string, projectRelative bool, err error)
 	case "claude-code":
 		return filepath.Join(home, ".claude", "skills", "pairmux"), false, nil
 	case "codex":
-		return filepath.Join(home, ".codex", "skills", "pairmux"), false, nil
+		return filepath.Join(home, ".agents", "skills", "pairmux"), false, nil
 	case "gemini":
 		return filepath.Join(home, ".gemini", "skills", "pairmux"), false, nil
 	case "opencode":
@@ -117,13 +117,14 @@ func (c *Ctx) cmdSkillInstall(args []string) int {
 	skipMissing := false
 	if target == "all" {
 		// all = every agent actually present: the agent's own directory (the
-		// parent of its skills dir, e.g. ~/.codex) must already exist — never
+		// parent of its skills dir, e.g. ~/.agents) must already exist — never
 		// conjure an agent's config dir the user does not have.
 		targets = skillTargetNames
 		skipMissing = true
 	}
 
 	var lines []string
+	installedDirs := make(map[string]string)
 	for _, tgt := range targets {
 		dir, projRel, err := skillTargetDir(tgt)
 		if err != nil {
@@ -136,6 +137,12 @@ func (c *Ctx) cmdSkillInstall(args []string) int {
 				continue
 			}
 		}
+		cleanDir := filepath.Clean(dir)
+		if previous, duplicate := installedDirs[cleanDir]; duplicate {
+			lines = append(lines, fmt.Sprintf("skipped %s: same destination as %s", tgt, previous))
+			continue
+		}
+		installedDirs[cleanDir] = tgt
 		for _, f := range files {
 			dst := filepath.Join(dir, f.rel)
 			line := tgt + ": " + dst

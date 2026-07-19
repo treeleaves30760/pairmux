@@ -169,7 +169,7 @@ pairmux skill install --target all
 ```
 
 Supported targets are Claude Code, Codex, Gemini CLI, Cursor, OpenCode, GitHub Copilot, Windsurf,
-Kiro, Amp, and the cross-agent `~/.agents/skills` location. The companion `pairmux-skills` repository
+Kiro, Amp, and the shared `~/.agents/skills` location (`codex` and `agents` are aliases). The companion `pairmux-skills` repository
 is also pre-release and becomes the public source of truth when the repositories are published.
 
 The envelopes are also self-teaching: actionable replies carry an ordered `next` array. An agent obeys
