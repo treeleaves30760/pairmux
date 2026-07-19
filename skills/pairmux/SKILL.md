@@ -58,6 +58,8 @@ interactive, long-lived, or shared with a human.
 3. **Answer a prompt once.** Send the answer a single time; do not spam Enter.
 4. **Never type or guess a secret.** On a password/passphrase/passcode prompt, pairmux says
    `do NOT guess or type secrets`. Hand off to a human: `pairmux wait <name> --human --notify`.
+   If the shell/tool client interrupts before pairmux returns, immediately reissue that same wait;
+   never shorten pairmux's 300s default (one valid explicit timeout of at least 300s is equivalent).
 5. **Prefer reading the log over re-running.** The journal already has the full output —
    `pairmux log` is free and instant; re-running wastes time and can change state.
 6. **Treat `next` as contextual hints, not a script.** Read entries in order and obey safety/prose.

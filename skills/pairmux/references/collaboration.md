@@ -29,6 +29,9 @@ pairmux wait dbmigrate --human --notify
 ```
 `wait --human` blocks until a human leaves a note; `--notify` pops a desktop notification
 (`osascript` on macOS, `notify-send` on Linux — best-effort). Your tool call is now parked.
+If the shell/tool client interrupts before pairmux returns, immediately reissue the same
+`wait --human --notify`; never type the secret or shorten the 300-second default wait. An explicit
+handoff timeout must be a single valid Go duration of at least `300s`.
 
 **3. The human takes over the same pane, types the secret, and leaves a note:**
 ```bash
