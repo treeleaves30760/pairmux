@@ -172,7 +172,9 @@ do_install() {
 
 	info "extracting"
 	tar -xzf "$archive" -C "$TMPDIR_PM" pairmux || err "failed to extract pairmux from ${archive}"
-	[ -f "${TMPDIR_PM}/pairmux" ] && [ ! -L "${TMPDIR_PM}/pairmux" ] || err "archive did not contain a regular pairmux binary"
+	if [ ! -f "${TMPDIR_PM}/pairmux" ] || [ -L "${TMPDIR_PM}/pairmux" ]; then
+		err "archive did not contain a regular pairmux binary"
+	fi
 
 	mkdir -p "$INSTALL_DIR" || err "could not create ${INSTALL_DIR}"
 	INSTALL_TMP=$(mktemp "${INSTALL_DIR}/.pairmux.XXXXXX") || err "could not create a temporary file in ${INSTALL_DIR}"
