@@ -1025,7 +1025,7 @@ func (c *Ctx) cmdNote(args []string) int {
 	}
 	return c.emit(output.Envelope{
 		Status: "noted", Terminal: name,
-		Next: []string{"the agent sees this note on its next run/peek/wait of " + name},
+		Next: []string{"the agent sees this note in its next run/peek, or as output from pairmux wait " + name + " --human"},
 	})
 }
 

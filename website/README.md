@@ -5,10 +5,10 @@ This website is built using [Docusaurus](https://docusaurus.io/), a modern stati
 ## Installation
 
 ```bash
-npm install
+npm ci
 ```
 
-**Note**: feel free to use the package manager of your choice.
+The checked-in `package-lock.json` is the dependency source of truth. Node.js 20 or newer is required.
 
 ## Local Development
 
@@ -21,23 +21,18 @@ This command starts a local development server and opens up a browser window. Mo
 ## Build
 
 ```bash
+npm run typecheck
 npm run build
 ```
 
-This command generates static content into the `build` directory and can be served using any static contents hosting service.
+The build synchronizes `website/docs/changelog.md` from the repository's `ChangeLog.md`, then generates static content in `build/`. Preview that production output locally with:
+
+```bash
+npm run serve
+```
 
 ## Deployment
 
-Using SSH:
+Deployment is handled by [`.github/workflows/docs.yml`](../.github/workflows/docs.yml). A push to `main` that changes the website, `ChangeLog.md`, or the workflow runs `npm ci`, the dependency audit, typecheck, and production build, then publishes the `build/` artifact with GitHub Actions' Pages deployment.
 
-```bash
-USE_SSH=true npm run deploy
-```
-
-Not using SSH:
-
-```bash
-GIT_USER=<Your GitHub username> npm run deploy
-```
-
-If you are using GitHub Pages for hosting, this command is a convenient way to build the website and push to the `gh-pages` branch.
+The workflow can also be started manually with `workflow_dispatch`. This repository does not use a local `npm run deploy` step or a `gh-pages` branch for its normal deployment path.

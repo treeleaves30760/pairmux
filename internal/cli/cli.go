@@ -194,7 +194,7 @@ agent commands:
   new   [--name N] [--cwd D] [--cmd "..."]         create a terminal            e.g. pairmux new --name build
   run   <name> <cmd...> [--timeout 60s] [--head N] [--tail N]  run and wait     e.g. pairmux run build "make -j4"
   peek  <name> [--screen | --tail N]               recent output + status       e.g. pairmux peek build
-  wait  <name> [--idle MS|--pattern RE|--human] [--notify] [--timeout D]        e.g. pairmux wait build --pattern "listening"
+  wait  <name> [--idle MS] [--pattern RE] [--human] [--notify] [--timeout D]  e.g. pairmux wait build --pattern "listening"
   send  <name> [--text S] [--key K] [--enter]      send input to a program      e.g. pairmux send build --text y --enter
   log   <name> [--cmd N|--grep RE|--range A:B|A:end] bounded tail or selection  e.g. pairmux log build --cmd 2
   ls                                               list terminals + status      e.g. pairmux ls
@@ -209,7 +209,8 @@ human commands:
   mcp serve                serve typed tools over MCP stdio  e.g. pairmux mcp serve
   version                  print version
 
-add --json anywhere for machine-readable envelopes from non-interactive commands.
+add --json anywhere for machine-readable envelopes from ordinary CLI commands
+(attach/watch are interactive, help is plain text, and mcp serve uses JSON-RPC).
 put -- before a command that itself contains --json or --socket.
 `
 

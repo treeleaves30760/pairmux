@@ -35,6 +35,29 @@ The builder maps GoReleaser's `goos_goarch` to a PyPI platform tag:
 Windows is intentionally unsupported (use WSL). The compressed manylinux tags
 expand to two `Tag:` lines each in the wheel's `WHEEL` metadata, per spec.
 
+## Project metadata and PyPI description
+
+`build_wheels.py` owns the Core Metadata headers written into every wheel.
+[`DESCRIPTION.md`](./DESCRIPTION.md) is the single source for the user-facing
+Markdown rendered on the PyPI project page; the root README and this packaging
+guide are not uploaded as the Description.
+
+Keep every link in `DESCRIPTION.md` absolute so it works outside the GitHub
+repository view. Metadata tests verify the content type, source file, project
+links, runtime requirement, and install examples. Before publishing, also ask
+PyPI's renderer to check the completed wheels:
+
+```bash
+uvx --from twine==6.2.0 twine check --strict dist/wheels/*.whl
+```
+
+The publish job runs this pinned renderer check again on the exact downloaded
+wheel artifacts before reading release credentials or staging GitHub assets.
+
+PyPI release files are immutable. Editing the description does not change an
+already-published project version; the new metadata appears when the next
+version's wheels are uploaded.
+
 ## `build_wheels.py`
 
 A dependency-free, stdlib-only (`zipfile`/`hashlib`/`base64`) Python 3.9+ script

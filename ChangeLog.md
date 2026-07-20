@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-20
+
+### Changed
+
+- PyPI wheels now use a dedicated Markdown project description with copyable installation and
+  quickstart commands, precise platform requirements, Agent Skill and MCP entry points, and links to
+  the documentation, changelog, and issue tracker. Core Metadata also advertises tmux as an external
+  requirement and adds discovery keywords; the release workflow rejects wheels whose description
+  fails PyPI's strict renderer check.
+- The README and documentation now use reproducible JSON examples, distinguish direct `.deb`/`.rpm`
+  downloads from the not-yet-implemented APT repository, and document prompt detection, future-only
+  pattern waits, program terminals, notes, and human handoff without overstating their guarantees.
+  The note command's self-teaching hint now distinguishes `run`/`peek` note fields from
+  `wait --human`'s `output` result, and the nested-tmux attach hint no longer recommends an impossible
+  cross-server `switch-client`.
+
 ## [0.1.0] - 2026-07-20
 
 ### Fixed
@@ -59,7 +75,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `wait` family: `pairmux wait <name>` blocks until the shell is truly idle (`--idle MS`, the default),
   a regex matches new output (`--pattern RE`), or a human note arrives (`--human`), with `--timeout`
   and a `--notify` desktop ping.
-- Notes and human handoff: `pairmux note <name> <text>` records a message that surfaces in the driving agent's next `run`/`peek`/`wait` envelope; `wait --human` returns `human-done` when a human leaves a note.
+- Notes and human handoff: `pairmux note <name> <text>` records a message that surfaces in the
+  driving agent's next `run`/`peek` envelope; `wait --human` instead returns `human-done` with the
+  note text in `output`.
 - Awaiting-input detection: a quiet command whose last screen line matches an interactive prompt
   (`[y/N]`, `password:`, pager `--More--`/`(END)`, "press any key") makes `run` return
   `awaiting-input` before its overall timeout. Password/passphrase/passcode prompts are classified as
@@ -78,5 +96,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stable `error.code` values (`E_NO_TERMINAL`, `E_EXISTS`, `E_BUSY`, `E_DEAD`, `E_BAD_ARGS`,
   `E_TMUX`, `E_INTERNAL`).
 
-[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/treeleaves30760/pairmux/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/treeleaves30760/pairmux/releases/tag/v0.1.0

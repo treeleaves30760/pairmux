@@ -127,6 +127,8 @@ jobs:
         with:
           name: validated-wheels
           path: dist/wheels
+      - name: Verify the PyPI description renders
+        run: uvx --from twine==6.2.0 twine check --strict dist/wheels/*.whl
       - name: Preflight credentials and artifact set
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

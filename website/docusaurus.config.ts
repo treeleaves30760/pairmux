@@ -6,7 +6,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'pairmux',
-  tagline: 'Reliable terminal primitives for AI agents on tmux — humans can watch, attach, and help in the same live terminal',
+  tagline: 'Blocking, observable tmux terminals for AI agents — with live human handoff',
   favicon: 'img/favicon.ico',
 
   future: {

@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"syscall"
 
-	"github.com/treeleaves30760/pairmux/internal/core"
 	"github.com/treeleaves30760/pairmux/internal/output"
 	"github.com/treeleaves30760/pairmux/internal/state"
 )
@@ -61,7 +60,7 @@ func (c *Ctx) cmdAttach(args []string) int {
 	if insideTmux() {
 		return c.fail(output.CodeBadArgs,
 			"already inside tmux ($TMUX is set); attaching here would nest tmux",
-			"from your tmux session run: tmux switch-client -t "+core.SessionName)
+			"detach from the current tmux client, then run pairmux attach from the outer shell (or use another terminal)")
 	}
 	if !isTTY() {
 		return c.fail(output.CodeBadArgs,

@@ -1,189 +1,267 @@
 # pairmux
 
-Reliable terminal primitives for AI agents on top of tmux — with a human able to watch, attach, and help in the same live terminal.
+**Blocking, observable tmux terminals for AI agents — with live human handoff.**
 
-Agents are bad at raw terminals for three separate reasons: they **guess `sleep N`** because nothing tells them when a command is done, `capture-pane` output is **dirty and truncated** (ANSI, spinners, scrolled-off history, no exit code), and existing headless tools **lock humans out** of the session entirely. pairmux closes all three gaps: blocking calls that return on completion, input, requested conditions, or timeout; a journal that keeps clean full history with exit codes; and native `tmux attach` so a human can step in and hand back.
+[PyPI](https://pypi.org/project/pairmux/) ·
+[Documentation](https://treeleaves30760.github.io/pairmux/) ·
+[CLI reference](https://treeleaves30760.github.io/pairmux/cli-reference) ·
+[Changelog](https://github.com/treeleaves30760/pairmux/blob/main/ChangeLog.md) ·
+[Source](https://github.com/treeleaves30760/pairmux)
+
+pairmux is a small coordination layer over tmux. Agents get blocking command outcomes, shaped
+terminal output, retained history, and machine-readable recovery hints. Humans keep normal access to
+the same live terminal and can step in when an interactive program needs help.
+
+## Why pairmux
+
+- **Actionable waits.** `run` blocks until a command completes, a recognized prompt appears, or
+  its timeout expires. A completed run includes its exit code and duration; if no completion was
+  observed by the deadline, the response reports `running` and does not kill the command.
+- **Captured history.** Managed terminals stream pane output into a per-terminal journal. Routine
+  reads stay bounded, while explicit `log` selectors retrieve a recorded command or selected
+  journal history. Truncated replies include the command that fetches the rest.
+- **Shared control.** Agents can inspect a terminal while a human watches or attaches to the same
+  tmux session. Only one `run` writer is allowed per terminal; a conflicting run returns
+  `E_BUSY`.
+- **Agent-readable replies.** `--json` emits a versioned `pairmux.v1` envelope with status,
+  shaped output, recovery hints, and ordered next steps.
 
 ## Install
 
-pairmux is a single static Go binary. It needs **tmux >= 3.2** and runs on **macOS and Linux**.
+pairmux requires **tmux 3.2 or newer** at runtime.
 
-Install the platform wheel with `uv` or `pipx`:
+Release artifacts target:
+
+| Platform | Architectures | Additional requirement |
+| --- | --- | --- |
+| macOS 12+ | x86-64, ARM64 | None for the installed binary |
+| Linux | x86-64, ARM64/aarch64 | PyPI wheels use the `manylinux_2_17` / glibc 2.17+ tags |
+| Windows | No native artifact | Use a compatible Linux distribution inside WSL |
+
+### PyPI
+
+Install the platform wheel with an isolated tool manager, or use `pip` inside a dedicated virtual
+environment:
 
 ```bash
 uv tool install pairmux
 # or: pipx install pairmux
+# or, inside a dedicated environment:
+python -m pip install pairmux
 ```
 
-Or install the checksummed binary from the latest GitHub release:
+Wheel installers must select Python 3.9 or newer. The wheel contains a prebuilt native Go binary;
+the installed `pairmux` executable contains no Python code and needs no Go toolchain.
+
+### Checksummed release archive
+
+The installer selects the latest matching GitHub release archive, verifies its SHA-256 checksum,
+and installs the binary under `~/.local/bin` by default:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.sh | sh
 ```
 
-To build from this checkout instead:
+Use `PAIRMUX_INSTALL_DIR` to choose another directory. Specific versions are available from
+[GitHub Releases](https://github.com/treeleaves30760/pairmux/releases).
+
+### Direct `.deb` and `.rpm` packages
+
+Each stable GitHub release includes `.deb` and `.rpm` files for Linux x86-64 and ARM64. Download the
+matching file and `checksums.txt` from
+[GitHub Releases](https://github.com/treeleaves30760/pairmux/releases), verify its SHA-256 checksum,
+then install that local file (the [Getting Started guide](https://treeleaves30760.github.io/pairmux/)
+shows the complete commands):
+
+```bash
+sudo apt install ./downloaded-file.deb
+# or, on an RPM-based distribution
+sudo dnf install ./downloaded-file.rpm
+```
+
+These downloadable files are not an APT repository. A public pairmux APT repository is **not live
+yet**, so `sudo apt install pairmux` without a local `./file.deb` path is not currently a supported
+installation method.
+
+### Build this checkout
+
+Source builds require Go 1.25:
 
 ```bash
 make build
-install -m 0755 bin/pairmux ~/.local/bin/pairmux
+mkdir -p "$HOME/.local/bin"
+install -m 0755 bin/pairmux "$HOME/.local/bin/pairmux"
 pairmux version
 ```
 
-Homebrew distribution is deferred until the macOS binaries can be signed, notarized, and exercised
-through Gatekeeper in CI. The direct archive and wheel channels do not claim cask support.
-
-Verify the environment at any time:
+After installation, check tmux, state access, shell integration, and notification support. The live
+shell probe uses an isolated temporary tmux server and does not disturb managed terminals:
 
 ```bash
 pairmux doctor
 ```
+
+## Reproducible quickstart
+
+The following sequence uses only standard macOS/Linux shell commands. Use a different valid name if
+`demo` is already an active pairmux terminal.
+
+```bash
+# 1. Create the managed terminal before using it.
+pairmux --json new --name demo
+
+# 2. Run a command and wait for completion.
+pairmux --json run demo "echo hello from pairmux"
+
+# 3. Demonstrate a timeout without killing the command.
+#    This returns status=running after one second.
+pairmux --json run demo "sleep 2; echo finished" --timeout 1s
+
+# 4. Keep waiting without sleep-and-guess polling.
+#    Silence alone is not completion; pairmux refreshes the terminal state.
+pairmux --json wait demo --idle 800 --timeout 10s
+
+# 5. Inspect recent output, then retrieve the complete second command.
+pairmux --json peek demo
+pairmux --json log demo --cmd 2
+
+# 6. Stop the terminal when finished. Its journal is retained.
+pairmux --json kill demo
+```
+
+`run` returns `done`, `running`, or `awaiting-input`. A default or explicit idle wait can
+return `idle`, `awaiting-input`, `dead`, or `timeout`; it does not mistake a quiet running
+program for a completed command. `peek`, `log`, `ls`, and `wait` do not take the terminal's
+`run` writer lock.
+
+## Interactive work and human handoff
+
+After 800 ms of output quiet, pairmux can recognize supported prompt shapes: confirmations,
+password/passphrase/passcode prompts, pager markers, press-key messages, and Python's `>>>`.
+Recognition is heuristic. pairmux never auto-answers, and a secret-shaped response recommends human
+handoff instead of suggesting `send`.
+
+This safe demo creates its terminal first and uses a disposable input value. The simulated program
+turns terminal echo off before reading:
+
+```bash
+# Terminal A: create a terminal and start the prompt.
+pairmux --json new --name handoff
+pairmux --json run handoff "sh -c 'printf \"Password: \"; stty -echo; IFS= read -r secret; stty echo; printf \"\\ninput received\\n\"'"
+
+# Once run reports awaiting-input, wait for an explicit human note.
+pairmux --json wait handoff --human --notify --timeout 5m
+```
+
+From a second interactive terminal, outside an existing tmux client:
+
+```bash
+pairmux attach handoff
+```
+
+Type a disposable value such as `demo-only`, press Enter, then detach using the configured tmux
+binding (default `Ctrl-b d`). Back in the second shell, leave the hand-back note:
+
+```bash
+pairmux --json note handoff "demo input completed"
+```
+
+The wait in Terminal A then returns `human-done`. Clean up afterward with:
+
+```bash
+pairmux --json kill handoff
+```
+
+`attach` needs a TTY and deliberately refuses to nest inside tmux. If you are already in tmux,
+detach to the outer shell first or use another terminal, then run `pairmux attach`. A tmux
+`switch-client` cannot cross from another server to pairmux's named socket. `note` does not detach a
+client or enforce exclusive control; it records a coordination event that releases `wait --human`.
+
+`--notify` is best-effort and needs `osascript` on macOS or `notify-send` on Linux. Human
+handoff avoids routing input through the agent-facing `pairmux send` command, but pairmux cannot
+guarantee how another application echoes, stores, or logs its input. Never type a real secret into a
+demo, and never ask an agent to guess one.
+
+## The `pairmux.v1` envelope
+
+Ordinary non-interactive command replies have a friendly text form by default. Add `--json`
+before or after the command for a compact, one-line `pairmux.v1` envelope:
 
 ```text
-pairmux doctor
-
-✓  tmux        3.7b at /opt/homebrew/bin/tmux (>= 3.2)
-✓  state dir   writable: ~/.local/state/pairmux
-✓  live probe  zsh: hooks;  bash: hooks-no-C;  fish: hooks;  dash: sentinel
-✓  notifier    osascript at /usr/bin/osascript (macOS notifications available)
+pairmux [--json] [--socket NAME] <command> [args]
 ```
 
-## 60-second quickstart
+Use a literal `--` when the command being sent contains a token such as `--json` or `--socket`.
+`attach` and `watch` are interactive human interfaces, `help` is plain help text, and
+`mcp serve` reserves stdout for JSON-RPC; those interfaces do not produce ordinary CLI envelopes.
 
-Every non-interactive command accepts `--json` for a machine-readable `pairmux.v1` envelope;
-without it you get a friendly text block. `attach` and `watch` are native interactive human interfaces.
+Common terminal states:
 
-```bash
-# 1. Open a terminal (tmux window + journal + shell integration)
-pairmux new --name build
-```
-```json
-{"schema":"pairmux.v1","ok":true,"status":"created","terminal":"build","mode":"hooks","next":["pairmux run build \"echo hello\""]}
-```
+| State | Meaning |
+| --- | --- |
+| `idle` | The shell is at a prompt with no pairmux-recorded command running |
+| `running` | A command or program is executing |
+| `awaiting-input` | A running command is quiet and its last line matches a supported prompt |
+| `unknown` | The terminal is alive but recent activity or unreadable state prevents a safe classification |
+| `dead` | The tmux pane is gone; its journal remains available |
 
-```bash
-# 2. Run a command and block until it finishes, needs input, or times out
-pairmux run build "echo hello world"
-```
-```json
-{"schema":"pairmux.v1","ok":true,"status":"done","terminal":"build","mode":"hooks","exit_code":0,"duration_ms":101,"output":"hello world"}
-```
+`run` reports `done`, `running`, or `awaiting-input`; `wait` can also report `idle`,
+`pattern-found`, `human-done`, `dead`, or `timeout`. See the
+[CLI reference](https://treeleaves30760.github.io/pairmux/cli-reference) for every command status,
+field, flag, and exit behavior.
 
-```bash
-# 3. Long-running command: run returns "running" at the timeout, then keep waiting
-pairmux run build "make -j4" --timeout 30s      # -> status: running, with a tail
-pairmux wait build --idle 800                    # block until the shell is truly idle
-pairmux peek build                               # look any time, read-only
-```
+Errors set `ok:false` and include a stable `error.code`: `E_NO_TERMINAL`, `E_EXISTS`,
+`E_BUSY`, `E_DEAD`, `E_BAD_ARGS`, `E_TMUX`, or `E_INTERNAL`. Actionable replies carry an
+ordered `next` array; safety or information entries may precede the first executable command.
 
-```bash
-# 4. Interactive program: pairmux surfaces the prompt as awaiting-input
-pairmux run deploy "terraform apply"             # -> status: awaiting-input on [y/N]
-pairmux send deploy --text yes --enter
-```
+## Completion modes
 
-```bash
-# 5. Humans jump into the same live terminal
-pairmux attach build      # take over the tmux session
-pairmux watch             # live dashboard of every terminal
-```
+`new` records either `hooks` (OSC 133 marks injected for bash/zsh or emitted by fish 4+) or
+`sentinel` (a shell-specific marker carrying the previous exit status). If a nominal hooks shell
+emits no ready mark, `new` records `sentinel`. `doctor` may call bash 3.2 `hooks-no-C`; its stored
+terminal mode is still `hooks`.
 
-## Human handoff: a real transcript
+Program terminals created with `new --cmd` also report `sentinel` to keep the envelope's mode field
+two-valued, but they do not accept `run` or receive per-command sentinel markers. Drive them with
+`send`/`wait`/`peek`; their status follows the program pane's liveness and recognized prompts.
 
-The rule for the agent is simple: **never guess a secret.** When a command asks for a password, pairmux tells the agent to hand off, and a human answers in the same pane.
-
-```bash
-# Agent runs a migration that prompts for a DB password:
-pairmux --json run dbmigrate "psql -h prod ..."
-```
-```json
-{"schema":"pairmux.v1","ok":true,"status":"awaiting-input","terminal":"dbmigrate","mode":"hooks",
- "output":"\nPassword: ",
- "next":["do NOT guess or type secrets","pairmux wait dbmigrate --human --notify   # hand off to the human"]}
-```
-
-```bash
-# Agent hands off and blocks, pinging the human's desktop:
-pairmux wait dbmigrate --human --notify
-```
-
-```bash
-# Human takes over the exact same pane, types the password, and leaves a note:
-pairmux attach dbmigrate                              # type the password in the pane
-pairmux note dbmigrate "entered the db password"
-```
-
-```json
-// The agent's wait unblocks the moment the note lands:
-{"schema":"pairmux.v1","ok":true,"status":"human-done","terminal":"dbmigrate","mode":"hooks",
- "output":"entered the db password","next":["pairmux peek dbmigrate"]}
-```
-
-The agent resumes with `pairmux peek dbmigrate` and carries on. The password was never seen by, echoed to, or logged for the agent.
-
-## Statuses and modes
-
-A terminal's derived status (shown by `ls`, `peek`, `wait`):
-
-| status           | meaning                                                          |
-|------------------|-----------------------------------------------------------------|
-| `idle`           | shell at a prompt, no command running                           |
-| `running`        | a command is executing                                          |
-| `awaiting-input` | running but quiet, last line looks like a prompt (answer it)    |
-| `dead`           | the terminal's pane is gone; journal is retained                |
-
-Commands also report an action status in their envelope: `created`; `run`'s `done` / `running` / `awaiting-input`; `sent`, `noted`, `killed`, `ok`; and `wait`'s `idle` / `awaiting-input` / `pattern-found` / `human-done` / `dead` / `timeout`. Errors carry `ok:false` and a stable `error.code`: `E_NO_TERMINAL`, `E_EXISTS`, `E_BUSY`, `E_DEAD`, `E_BAD_ARGS`, `E_TMUX`, `E_INTERNAL`.
-
-Completion-detection **mode**, chosen per terminal at `new`:
-
-| mode | how completion is detected |
-|------|----------------------------|
-| `hooks` | OSC 133 marks: injected for bash/zsh and emitted natively by fish 4+ |
-| `sentinel` | an injected `printf` marker carrying `$?` (or fish's `$status`) |
-
-If a nominal hooks shell emits no ready mark, `new` records `sentinel` instead. This is how fish
-versions/configurations without native OSC 133 support degrade safely. `doctor` may report the more
-specific diagnostic tier `hooks-no-C` for bash 3.2; the terminal's stored mode remains `hooks`.
-
-## State and history
+## State and retained history
 
 The state root is `$PAIRMUX_STATE_DIR`, `$XDG_STATE_HOME/pairmux`, or
-`~/.local/state/pairmux`. Each tmux endpoint gets an isolated
-`<root>/.sockets/<sha256>/` namespace; the hash covers the canonical `TMUX_TMPDIR`, uid, and socket
-label. Equal terminal names on separate tmux servers therefore cannot share metadata. Journals from
-the historical `<root>/<terminal>/` layout remain readable only for the conventional default endpoint
-and are never moved implicitly.
+`~/.local/state/pairmux`. Each tmux endpoint gets an isolated `<root>/.sockets/<sha256>/` namespace,
+so equal terminal names on different endpoints do not share metadata. Historical default-endpoint
+state remains readable and is never moved implicitly.
 
-`peek` and an unqualified `log` deliberately return bounded recent views. If a byte prefix was skipped,
-`truncated.omitted_bytes` says how much and `get_full` is an executable command such as
-`pairmux log build --range 1:end`. Explicit `log --cmd N`, `--grep RE`, and
-`--range A:B`/`A:end` read the complete selected history and can therefore return large results.
-Read-only `peek`, `log`, `ls`, and `wait` calls record no events. `attach` is also just a native tmux
-operation; a human records the hand-back explicitly with `pairmux note`.
+`peek` and unqualified `log` are bounded. A truncated reply provides `truncated.get_full`, such as
+`pairmux log demo --range 1:end`. Explicit `log --cmd`, `--grep`, and `--range` selectors scan the
+complete selected history and may return large results.
 
-## For AI agents
+`peek`, `log`, `ls`, and `wait` record no journal events. `attach` starts a native tmux
+client; a human records the hand-back explicitly with `pairmux note`.
 
-pairmux embeds its canonical Agent Skill. The skill teaches the golden loop (`run` -> `wait` -> read
-`status` -> `send`/`log`) and the ironclad rules (never `sleep` to guess timing; hand passwords to
-humans; prefer reading the log over re-running). Install one target explicitly, or update only the
-agent configuration directories that already exist:
+## Teach an AI agent
+
+pairmux embeds its Agent Skill. The skill teaches the `new → run → wait/send/log` loop and the
+safety rules: do not guess timing with `sleep`, do not send secrets, and inspect retained output
+before re-running work.
+
+Preview or install one target, or update supported agent directories that already exist:
 
 ```bash
+pairmux skill install --target codex --dry-run
 pairmux skill install --target codex
 pairmux skill install --target all
 ```
 
-Supported targets are Claude Code, Codex, Gemini CLI, Cursor, OpenCode, GitHub Copilot, Windsurf,
-Kiro, Amp, and the shared `~/.agents/skills` location (`codex` and `agents` are aliases). The companion `pairmux-skills` repository
-is the public source of truth; release changes are synced into the embedded copy in this repository.
-
-The envelopes are also self-teaching: actionable replies carry an ordered `next` array. An agent obeys
-any leading safety/information entries, then runs the first executable command.
+Supported targets and install paths are documented in the
+[Agent Skills guide](https://treeleaves30760.github.io/pairmux/skills). The companion
+[`pairmux-skills` repository](https://github.com/treeleaves30760/pairmux-skills) is the public
+source of the embedded skill.
 
 ## MCP clients
 
-`pairmux mcp serve` exposes the same terminal operations as typed tools over the
-[MCP `2025-11-25` stdio transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports).
-Point an MCP client at the binary directly (the exact configuration key varies by client):
+`pairmux mcp serve` exposes core operations as typed tools over the MCP `2025-11-25` stdio
+transport. Point a client at the binary directly (the surrounding configuration key varies):
 
 ```json
 {
@@ -192,24 +270,25 @@ Point an MCP client at the binary directly (the exact configuration key varies b
 }
 ```
 
-The server advertises `pairmux_new`, `pairmux_run`, `pairmux_peek`, `pairmux_wait`,
-`pairmux_send`, `pairmux_log`, `pairmux_ls`, `pairmux_kill`, `pairmux_note`, and
-`pairmux_doctor`. Tool calls execute the existing CLI with argv arrays, never through a wrapper shell.
-Each result includes the original `pairmux.v1` envelope as both `structuredContent` and JSON text for
-older clients; pairmux errors are tool results with `isError: true` so a model can follow their recovery
-hints. Tool subprocess stdout is capped at 1 MiB to protect the server; a larger result becomes an
-actionable tool error, so narrow `pairmux_log` with `command_id`, `grep`, or a smaller `range`. Clients
-should require confirmation for commands, input, and terminal kills that can have side effects.
+The server advertises typed tools for `new`, `run`, `peek`, `wait`, `send`, `log`, `ls`, `kill`,
+`note`, and `doctor`. Tools invoke the executable with argv arrays, never a wrapper shell.
 
-## Docs and changelog
+A CLI tool result, including a pairmux command error, returns its envelope as both
+`structuredContent` and JSON text. MCP-level argument, transport, and capture-limit errors do not.
+Subprocess capture is limited to 1 MiB stdout and 64 KiB stderr; overflow terminates it. Narrow large
+`pairmux_log` calls with `command_id`, `grep`, or a smaller `range`.
 
-- Documentation source: [`website/docs`](./website/docs)
-- CLI reference and the full `pairmux.v1` envelope schema: [`website/docs/cli-reference.md`](./website/docs/cli-reference.md)
-- [ChangeLog.md](./ChangeLog.md)
-- Release channels and remaining work: [RELEASING.md](./RELEASING.md)
+Clients should require confirmation before running commands, sending input, or killing terminals
+when those actions can have side effects.
 
-A hosted GitHub Pages site becomes available after Pages is enabled with GitHub Actions as its source.
+## Documentation
+
+- [Getting started and task guides](https://treeleaves30760.github.io/pairmux/)
+- [CLI reference and envelope schema](https://treeleaves30760.github.io/pairmux/cli-reference)
+- [Human collaboration](https://treeleaves30760.github.io/pairmux/guides/human-collaboration)
+- [Documentation source](./website/docs)
+- [Release channels and remaining work](./RELEASING.md)
 
 ## License
 
-pairmux is released under the MIT License. See [LICENSE](./LICENSE).
+pairmux is released under the [MIT License](./LICENSE).
