@@ -116,6 +116,9 @@ func TestWaitHumanNote(t *testing.T) {
 	if code != 0 || nenv.Status != "noted" {
 		t.Fatalf("note: code=%d env=%+v", code, nenv)
 	}
+	if !nextContains(nenv.Next, "next run/peek") || !nextContains(nenv.Next, "wait t1 --human") {
+		t.Fatalf("note next = %v, want run/peek fields and wait --human output guidance", nenv.Next)
+	}
 
 	wenv, code := collect()
 	if code != 0 || wenv.Status != "human-done" {

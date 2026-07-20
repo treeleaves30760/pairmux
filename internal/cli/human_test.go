@@ -121,8 +121,8 @@ func TestAttachRefusesInsideTmux(t *testing.T) {
 	if e.OK || e.Error == nil || e.Error.Code != output.CodeBadArgs {
 		t.Fatalf("envelope = %+v", e)
 	}
-	if !strings.Contains(e.Error.Hint, "switch-client") {
-		t.Errorf("hint = %q, want switch-client guidance", e.Error.Hint)
+	if !strings.Contains(e.Error.Hint, "detach") || !strings.Contains(e.Error.Hint, "outer shell") {
+		t.Errorf("hint = %q, want detach and outer-shell guidance", e.Error.Hint)
 	}
 }
 

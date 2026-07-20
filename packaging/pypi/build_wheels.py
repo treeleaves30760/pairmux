@@ -61,8 +61,14 @@ from typing import List, Tuple
 
 PROJECT_NAME = "pairmux"          # PyPI distribution name (already lowercase/normalized)
 SCRIPT_NAME = "pairmux"           # command installed into bin/
-SUMMARY = "Reliable terminal primitives for AI agents on tmux"
+SUMMARY = "Blocking tmux terminal control for AI agents, with captured logs and live human handoff"
 HOMEPAGE = "https://github.com/treeleaves30760/pairmux"
+DOCUMENTATION = "https://treeleaves30760.github.io/pairmux/"
+CHANGELOG = HOMEPAGE + "/blob/main/ChangeLog.md"
+ISSUES = HOMEPAGE + "/issues"
+DESCRIPTION_PATH = Path(__file__).resolve().with_name("DESCRIPTION.md")
+DESCRIPTION_CONTENT_TYPE = "text/markdown; charset=UTF-8; variant=GFM"
+KEYWORDS = "ai agents, tmux, terminal, cli, mcp, developer tools"
 REQUIRES_PYTHON = ">=3.9"
 GENERATOR = "pairmux-build"
 METADATA_VERSION = "2.1"
@@ -94,39 +100,6 @@ CLASSIFIERS = [
     "Topic :: Terminals",
     "Topic :: Utilities",
 ]
-
-LONG_DESCRIPTION = """\
-pairmux — reliable terminal primitives for AI agents on tmux
-
-pairmux lets an AI agent drive a real terminal through a reliable, blocking
-interface while a human can watch, attach, and help at any time. It is an
-Agent-Computer Interface (ACI) layer built on top of tmux, not a replacement
-for it: tmux stays the terminal-state engine, so a human can `tmux attach` and
-take over almost for free.
-
-Highlights:
-  * Blocking `run` / `wait` calls return when a command actually finishes,
-    times out, or starts asking for input — the agent never guesses `sleep N`.
-  * A per-terminal journal is the single source of truth: full scrollback is
-    always available via `log`, even after output scrolls off screen.
-  * Completion detection degrades gracefully: OSC 133 shell integration first,
-    then a printed sentinel, then output quiescence.
-  * Output is shaped for models (ANSI stripped, carriage-return redraws folded)
-    and truncated responses always carry the exact command to fetch the rest.
-  * Humans and agents share one live terminal; `note`, `attach`, and a
-    per-terminal writer lock keep hand-offs sane.
-
-Installation model:
-  This is a platform wheel bundling a prebuilt native `pairmux` executable.
-  Installing it drops the binary straight onto your PATH (the environment's
-  bin/ directory) — there is no Python code and no build step, so
-  `uv tool install pairmux` and `pipx install pairmux` just work.
-
-Runtime requirement: tmux >= 3.2 (`pairmux doctor` checks your environment).
-
-Homepage / source: https://github.com/treeleaves30760/pairmux
-License: MIT
-"""
 
 # Release tags use one canonical SemVer shape. Keeping this stricter than the
 # full PEP 440 grammar prevents GitHub, GoReleaser, and wheel metadata from
@@ -328,11 +301,16 @@ def metadata_bytes(version: str) -> bytes:
     lines += [
         "Project-URL: Homepage, " + HOMEPAGE,
         "Project-URL: Repository, " + HOMEPAGE,
+        "Project-URL: Documentation, " + DOCUMENTATION,
+        "Project-URL: Changelog, " + CHANGELOG,
+        "Project-URL: Issues, " + ISSUES,
+        "Keywords: " + KEYWORDS,
         "Requires-Python: " + REQUIRES_PYTHON,
-        "Description-Content-Type: text/plain",
+        "Requires-External: tmux (>=3.2)",
+        "Description-Content-Type: " + DESCRIPTION_CONTENT_TYPE,
     ]
     header = "\n".join(lines)
-    body = LONG_DESCRIPTION.strip("\n")
+    body = DESCRIPTION_PATH.read_text(encoding="utf-8").strip("\n")
     return (header + "\n\n" + body + "\n").encode("utf-8")
 
 

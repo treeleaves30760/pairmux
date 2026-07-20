@@ -9,21 +9,30 @@ import TabItem from '@theme/TabItem';
 
 # pairmux
 
-**Reliable terminal primitives for AI agents on tmux — and humans can watch, attach, and help in the same live terminal.**
+**Blocking, observable tmux terminals for AI agents — with live human handoff.**
 
 Driving a raw terminal is hard for agents for three separate reasons:
 
 - **Timing.** After sending a command, an agent has no signal for when it is done, so it guesses `sleep N` — and reads half-finished output or wastes time.
-- **Information quality.** `capture-pane` shows only the current viewport, mangled with ANSI escapes, spinners, and progress bars, with no exit code and no "is it finished?" signal.
-- **Human access.** Headless PTY tools lock humans out entirely, so no one can step in when the agent is stuck.
+- **Information quality.** A raw `capture-pane` view is screen-oriented: it may contain ANSI-driven
+  redraws, omit scrolled-off output, and does not provide a command exit code or completion signal.
+- **Human access.** Many automation interfaces do not expose the same live terminal to a human who
+  needs to observe or provide authorized input.
 
-pairmux is an **ACI (Agent-Computer Interface) layer** on top of tmux that closes all three: blocking calls that return on completion, input, requested conditions, or timeout; a journal that keeps clean full history with exit codes; and native `tmux attach` so a human can take over and hand back.
+pairmux is an **ACI (Agent-Computer Interface) layer** on top of tmux: blocking calls return on a
+command completion, a recognized prompt, a requested condition, or timeout; a journal retains raw
+pane output while CLI reads shape it for agents; and `pairmux attach` opens a native tmux client on
+the managed session so a human can collaborate in the same pane.
 
 ## Requirements
 
 - **tmux >= 3.2** (for stable `pipe-pane` and pane user-option behavior).
-- **macOS or Linux.** On Windows, use WSL.
-- No runtime dependencies otherwise — pairmux is a single static Go binary.
+- **macOS 12+ or Linux**, on x86-64 or ARM64. There is no native Windows build; use a supported
+  Linux distribution inside WSL.
+- Released pairmux executables are static Go binaries. Core terminal state needs no background
+  pairmux service, although tmux keeps its normal server and `mcp serve` is an explicit foreground
+  process. Installing the PyPI wheel requires Python 3.9+; building from a checkout requires Go
+  1.25+ and `make`.
 
 ## Install
 
@@ -37,29 +46,73 @@ uv tool install pairmux
 # or: pipx install pairmux
 ```
 
+The published wheels target macOS 12+ and manylinux_2_17 (glibc 2.17+) on x86-64 and ARM64.
+
+</TabItem>
+<TabItem value="linux-packages" label=".deb / .rpm">
+
+GitHub Releases contain native `.deb` and `.rpm` files for Linux x86-64 (`amd64`) and ARM64.
+Choose a version from the [release page](https://github.com/treeleaves30760/pairmux/releases), then
+download and verify the matching asset:
+
+```bash
+PAIRMUX_VERSION=X.Y.Z # replace with the selected release version, without the leading v
+PAIRMUX_ARCH=amd64 # use arm64 on aarch64 systems
+
+# Debian / Ubuntu
+PAIRMUX_PACKAGE="pairmux_${PAIRMUX_VERSION}_linux_${PAIRMUX_ARCH}.deb"
+curl -fLO "https://github.com/treeleaves30760/pairmux/releases/download/v${PAIRMUX_VERSION}/${PAIRMUX_PACKAGE}"
+curl -fLO "https://github.com/treeleaves30760/pairmux/releases/download/v${PAIRMUX_VERSION}/checksums.txt"
+sha256sum --ignore-missing -c checksums.txt
+sudo apt install "./${PAIRMUX_PACKAGE}"
+```
+
+For an RPM-based distribution, download the `.rpm` asset with the same naming scheme, verify it
+against `checksums.txt`, and install the local file with `dnf`:
+
+```bash
+PAIRMUX_VERSION=X.Y.Z # replace with the selected release version, without the leading v
+PAIRMUX_ARCH=amd64 # use arm64 on aarch64 systems
+PAIRMUX_PACKAGE="pairmux_${PAIRMUX_VERSION}_linux_${PAIRMUX_ARCH}.rpm"
+curl -fLO "https://github.com/treeleaves30760/pairmux/releases/download/v${PAIRMUX_VERSION}/${PAIRMUX_PACKAGE}"
+curl -fLO "https://github.com/treeleaves30760/pairmux/releases/download/v${PAIRMUX_VERSION}/checksums.txt"
+sha256sum --ignore-missing -c checksums.txt
+sudo dnf install "./${PAIRMUX_PACKAGE}"
+```
+
+:::caution No APT or Yum repository yet
+The package files are release downloads, not a signed package repository. `apt install pairmux`
+without a local `./file.deb` does not work yet, and these direct installs do not receive repository
+updates automatically.
+:::
+
 </TabItem>
 <TabItem value="source" label="Source checkout">
 
+From the repository root:
+
 ```bash
 make build
-install -m 0755 bin/pairmux ~/.local/bin/pairmux
+mkdir -p "$HOME/.local/bin"
+install -m 0755 bin/pairmux "$HOME/.local/bin/pairmux"
 pairmux version
 ```
 
 </TabItem>
-<TabItem value="curl" label="curl | bash">
+<TabItem value="curl" label="curl | sh">
 
-The installer detects your OS and architecture, downloads the matching release, and checks for tmux:
+The installer requires `curl`, `tar`, and either `sha256sum` or `shasum`. It detects your OS and
+architecture, verifies the matching release archive, installs to `~/.local/bin`, and checks for tmux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.sh | sh
 ```
 
 </TabItem>
 </Tabs>
 
 Homebrew distribution is deferred until release binaries are signed, notarized, and verified through
-Gatekeeper. Use the source, wheel, or checksummed archive channel in the meantime.
+Gatekeeper. Use a wheel, Linux package, source build, or checksummed archive in the meantime.
 
 ## Verify your environment
 
@@ -69,13 +122,16 @@ Gatekeeper. Use the source, wheel, or checksummed archive channel in the meantim
 pairmux doctor
 ```
 
+The exact paths and shell list depend on the machine. A healthy Linux result has this shape:
+
 ```text
+ok
 pairmux doctor
 
-✓  tmux        3.7b at /opt/homebrew/bin/tmux (>= 3.2)
-✓  state dir   writable: ~/.local/state/pairmux
-✓  live probe  zsh: hooks;  bash: hooks-no-C;  fish: hooks;  dash: sentinel
-✓  notifier    osascript at /usr/bin/osascript (macOS notifications available)
+✓  tmux        3.4 at /usr/bin/tmux (>= 3.2)
+✓  state dir   writable: /home/alice/.local/state/pairmux/.sockets/<endpoint-id>
+✓  live probe  bash: hooks;  dash: sentinel
+✓  notifier    notify-send at /usr/bin/notify-send (desktop notifications available)
 ```
 
 The **live probe** line reports which completion-detection tier each shell reaches. Fish 4+ emits
@@ -84,26 +140,33 @@ compatible OSC 133 marks natively; fish without a ready mark degrades to a `$sta
 
 ## Quick start
 
-Every non-interactive command accepts `--json` for a machine-readable [`pairmux.v1` envelope](./cli-reference.md#the-envelope-schema); without it you get a friendly text block. `attach` and `watch` are interactive human interfaces. The examples below show the JSON an agent sees.
+Every command that emits a single pairmux response accepts `--json` for a machine-readable
+[`pairmux.v1` envelope](./cli-reference.md#the-envelope-schema); without it you get a friendly text
+block. `attach` and `watch` are interactive human interfaces, while `mcp serve` reserves stdout for
+MCP JSON-RPC. Commands followed by JSON below explicitly enable `--json`.
 
 ### 1. Open a terminal
 
 ```bash
-pairmux new --name build
+pairmux --json new --name build
 ```
 
 ```json
 {"schema":"pairmux.v1","ok":true,"status":"created","terminal":"build","mode":"hooks","next":["pairmux run build \"echo hello\""]}
 ```
 
-This opens a tmux window, starts capturing its output into a journal, and injects shell integration so completions are detected precisely (`mode: hooks`).
+This opens a tmux window and starts capturing output into a journal. zsh, bash, and compatible fish
+configurations normally report `mode: hooks`; other shells, or a failed hook-ready probe, report
+`mode: sentinel`. Always act on the returned mode and status rather than assuming either one.
 
 ### 2. Run a command and block for an actionable outcome
 
-No `sleep`, no guessing — `run` returns when the command completes, needs input, or reaches its timeout. A completed command includes the exit code and duration:
+No `sleep`, no guessing — `run` returns when the command completes, a recognized prompt has been
+quiet long enough to trust, or its timeout expires. A completed command includes the exit code and
+duration:
 
 ```bash
-pairmux run build "echo hello world"
+pairmux --json run build "echo hello world"
 ```
 
 ```json
@@ -115,34 +178,45 @@ pairmux run build "echo hello world"
 If a command outlives `--timeout` (default 60s), `run` returns `status: running` with the current tail instead of failing. You then keep waiting or look whenever you like:
 
 ```bash
-pairmux run build "make -j4" --timeout 30s   # -> status: running, with a tail + next steps
-pairmux wait build --idle 800                 # block until the shell is truly idle
-pairmux peek build                            # read-only snapshot, any time
+pairmux --json run build 'for step in 1 2 3; do echo "step $step"; sleep 1; done' --timeout 1s
+pairmux --json wait build --idle 800 # returns on idle, input, pane death, or timeout
+pairmux --json peek build            # read-only snapshot, any time
 ```
 
 See the [long-running commands guide](./guides/long-running-commands.md).
 
 ### 4. Interactive programs
 
-When a command goes quiet on a prompt, pairmux reports `awaiting-input` and tells you exactly how to answer:
+Start a separate terminal for an interactive flow. When its command goes quiet on a recognized
+prompt, pairmux reports `awaiting-input` and tells you how to answer:
 
 ```bash
-pairmux run deploy "terraform apply"   # -> status: awaiting-input on the [y/N] prompt
-pairmux send deploy --text yes --enter
+pairmux --json new --name confirm
+pairmux --json run confirm 'printf "Continue? [y/N] "; read answer; printf "answer=%s\n" "$answer"'
+pairmux --json send confirm --text y --enter
+pairmux --json wait confirm --idle 800
+pairmux --json peek confirm
 ```
 
-Passwords are special: pairmux refuses to guess and hands off to a human. See [interactive programs](./guides/interactive-programs.md) and [human collaboration](./guides/human-collaboration.md).
+For password, passphrase, and passcode prompts, the returned `next` omits `send` and recommends a
+human handoff. The CLI cannot enforce that policy, so the driving agent must never guess or send the
+secret itself. See [interactive programs](./guides/interactive-programs.md) and
+[human collaboration](./guides/human-collaboration.md).
 
 ### 5. Humans jump into the same terminal
 
 ```bash
-pairmux attach build   # take over the live tmux session
-pairmux watch          # live dashboard of every terminal
+pairmux attach build # run from an interactive terminal outside tmux
+pairmux watch        # live dashboard of every terminal
 ```
+
+`attach` refuses a non-TTY or nested tmux client. If you are already in tmux, detach to the outer
+shell first or use another terminal, then run `pairmux attach`; `switch-client` cannot cross tmux
+servers to pairmux's named socket.
 
 ## Next steps
 
-- [CLI Reference](./cli-reference.md) — every command, every flag, one real JSON example each, and the full envelope schema.
+- [CLI Reference](./cli-reference.md) — every command and flag, plus the full envelope schema.
 - [Concepts](./concepts.md) — why pairmux is built the way it is: tmux as a state engine, endpoint-isolated journals, completion modes, and the idle backstop.
-- [Guides](./guides/long-running-commands.md) — task-oriented playbooks.
+- [Long-running commands guide](./guides/long-running-commands.md) — the complete run/wait/peek playbook.
 - [Agent Skills](./skills.md) — install targets and the repeatable cross-agent benchmark runner.

@@ -1,8 +1,11 @@
 import os
+import re
 import struct
 import tempfile
 import unittest
 import zipfile
+from email.parser import BytesParser
+from email.policy import compat32
 from pathlib import Path
 
 import build_wheels
@@ -42,6 +45,57 @@ class BuildWheelsTest(unittest.TestCase):
             with self.subTest(invalid=invalid):
                 with self.assertRaises(ValueError):
                     build_wheels.normalize_version(invalid)
+
+    def test_metadata_uses_the_markdown_description_source(self) -> None:
+        metadata = BytesParser(policy=compat32).parsebytes(
+            build_wheels.metadata_bytes("1.2.3")
+        )
+
+        self.assertTrue(build_wheels.DESCRIPTION_PATH.is_absolute())
+        self.assertEqual(
+            metadata["Description-Content-Type"],
+            "text/markdown; charset=UTF-8; variant=GFM",
+        )
+        self.assertEqual(
+            metadata["Summary"],
+            "Blocking tmux terminal control for AI agents, with captured logs "
+            "and live human handoff",
+        )
+        self.assertEqual(
+            metadata.get_all("Project-URL"),
+            [
+                "Homepage, https://github.com/treeleaves30760/pairmux",
+                "Repository, https://github.com/treeleaves30760/pairmux",
+                "Documentation, https://treeleaves30760.github.io/pairmux/",
+                "Changelog, "
+                "https://github.com/treeleaves30760/pairmux/blob/main/ChangeLog.md",
+                "Issues, https://github.com/treeleaves30760/pairmux/issues",
+            ],
+        )
+        self.assertEqual(metadata["Requires-External"], "tmux (>=3.2)")
+        self.assertEqual(
+            metadata["Keywords"],
+            "ai agents, tmux, terminal, cli, mcp, developer tools",
+        )
+        self.assertEqual(
+            metadata.get_payload(decode=True).decode("utf-8"),
+            build_wheels.DESCRIPTION_PATH.read_text(encoding="utf-8").strip("\n")
+            + "\n",
+        )
+
+    def test_markdown_description_uses_portable_links_and_real_json_commands(
+        self,
+    ) -> None:
+        description = build_wheels.DESCRIPTION_PATH.read_text(encoding="utf-8")
+        destinations = re.findall(r"\]\(([^)]+)\)", description)
+
+        self.assertTrue(destinations)
+        self.assertTrue(
+            all(destination.startswith("https://") for destination in destinations),
+            destinations,
+        )
+        self.assertIn("pairmux --json new --name demo", description)
+        self.assertIn("pairmux --json run demo", description)
 
     def test_scan_dist_accepts_goreleaser_variants(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -193,7 +247,19 @@ class BuildWheelsTest(unittest.TestCase):
             )
 
             self.assertEqual(rc, 0)
-            self.assertEqual(len(list(out.glob("*.whl"))), 4)
+            wheels = list(out.glob("*.whl"))
+            self.assertEqual(len(wheels), 4)
+
+            metadata_blobs = set()
+            for wheel in wheels:
+                with zipfile.ZipFile(wheel) as zf:
+                    metadata_name = next(
+                        name
+                        for name in zf.namelist()
+                        if name.endswith(".dist-info/METADATA")
+                    )
+                    metadata_blobs.add(zf.read(metadata_name))
+            self.assertEqual(len(metadata_blobs), 1)
 
     def test_validate_version_only_needs_no_binary(self) -> None:
         self.assertEqual(
