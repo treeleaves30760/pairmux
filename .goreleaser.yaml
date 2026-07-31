@@ -93,16 +93,14 @@ nfpms:
           mode: 0644
 
 # Homebrew tap cask (goreleaser >= 2.16 replaces formulas with casks for
-# binary distribution). Publishing is disabled (skip_upload: true) until the
-# tap exists; the cask is still rendered into dist/ on every release-check so
-# the config stays validated. The post-install xattr hook strips Apple's
-# quarantine attribute, so the unsigned binary runs without a Gatekeeper
-# prompt; signing/notarization stays a separate wider-release item. To
-# activate:
-#   1. create the public repo treeleaves30760/homebrew-pairmux
-#   2. add a repo-scoped PAT as the HOMEBREW_TAP_GITHUB_TOKEN actions secret
-#      (the default GITHUB_TOKEN cannot push to another repository)
-#   3. flip skip_upload to "auto" (auto still skips prereleases)
+# binary distribution). Activated 2026-08-01: the tap repo
+# treeleaves30760/homebrew-pairmux exists and HOMEBREW_TAP_GITHUB_TOKEN is a
+# repository Actions secret (the default GITHUB_TOKEN cannot push cross-repo).
+# skip_upload "auto" publishes on stable tags and skips prereleases; snapshot
+# builds still render the cask into dist/ for validation. The post-install
+# xattr hook strips Apple's quarantine attribute, so the unsigned binary runs
+# without a Gatekeeper prompt; signing/notarization stays a separate
+# wider-release item.
 homebrew_casks:
   - ids:
       - pairmux
@@ -116,7 +114,7 @@ homebrew_casks:
       token: '{{ envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "" }}'
     homepage: https://github.com/treeleaves30760/pairmux
     description: Let AI agents drive interactive terminal programs on tmux, with live human handoff
-    skip_upload: true
+    skip_upload: auto
     commit_msg_template: "chore: update-pairmux-to-{{ .Tag }}"
     url:
       verified: "github.com/treeleaves30760/pairmux/"

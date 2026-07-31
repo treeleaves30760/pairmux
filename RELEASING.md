@@ -13,7 +13,7 @@ Linux packages, install script, and documentation site. The companion
 | Direct installer | `install.sh` selects a GitHub archive and installs atomically. | Smoke-test the public URL on macOS and Linux after every release. |
 | Debian/RPM files | GoReleaser emits installable `.deb` and `.rpm` release assets. | No extra work for direct package downloads. |
 | APT repository | **Live.** The [`pairmux-apt`](https://github.com/treeleaves30760/pairmux-apt) repository signs and publishes metadata rebuilt from every stable release to GitHub Pages. | Operate per `pairmux-apt/OPERATIONS.md` (key custody, rebuild workflow). |
-| Homebrew tap | **Staged.** `.goreleaser.yaml` renders a cask (binary + manpage, `depends_on formula: tmux`, quarantine-stripping postflight) with `skip_upload: true`, so releases stay green while the tap does not exist. | Activate per the Homebrew section below. |
+| Homebrew tap | **Active.** GoReleaser renders the cask (binary + manpage, `depends_on formula: tmux`, quarantine-stripping postflight) during the build; the release workflow pushes `Casks/pairmux.rb` to [`homebrew-pairmux`](https://github.com/treeleaves30760/homebrew-pairmux) after the release goes public. Prereleases are skipped. | Smoke-test `brew install --cask treeleaves30760/pairmux/pairmux` + `pairmux doctor` on a clean machine after each stable release. |
 
 ## Release checklist
 
@@ -44,25 +44,27 @@ Linux packages, install script, and documentation site. The companion
 7. Smoke-test `uv tool install pairmux`, `install.sh`, and one `.deb` on clean
    systems. Never publish artifacts from an old local `dist/` directory.
 
-## Homebrew activation
+## Homebrew (activated 2026-08-01)
 
-Homebrew is the missing first-class path on macOS — the platform where the
-interactive-terminal use case is most common — and the only channel that can
-install the hard tmux >= 3.2 runtime dependency in the same command. The cask
-configuration is already validated by `make release-check`; what remains needs
-repository-owner access:
+Homebrew is the first-class path on macOS — the platform where the
+interactive-terminal use case is most common — and the only channel that
+installs the hard tmux >= 3.2 runtime dependency in the same command. How it
+is wired:
 
-1. Create the public repo `treeleaves30760/homebrew-pairmux` (empty is fine;
-   GoReleaser creates `Casks/pairmux.rb` on first publish).
-2. Add a repo-scoped personal access token as the `HOMEBREW_TAP_GITHUB_TOKEN`
-   Actions secret on this repository — the workflow's default `GITHUB_TOKEN`
-   cannot push to another repository.
-3. Flip `skip_upload: true` to `auto` in `.goreleaser.yaml` (`auto` still
-   skips prereleases) and release normally.
-4. Smoke-test on a clean machine: `brew install treeleaves30760/pairmux/pairmux`,
-   then `pairmux version` and `pairmux doctor` (confirms tmux arrived and no
-   Gatekeeper prompt appears; the cask's postflight strips the quarantine
-   attribute from the curl-fetched binary).
+- The tap repo is [`treeleaves30760/homebrew-pairmux`](https://github.com/treeleaves30760/homebrew-pairmux);
+  a repo-scoped PAT lives in the `HOMEBREW_TAP_GITHUB_TOKEN` Actions secret
+  (the workflow's default `GITHUB_TOKEN` cannot push cross-repo).
+- This pipeline uses GoReleaser as a **builder only** (`--skip=publish`), so
+  the cask config's `skip_upload: auto` never publishes from GoReleaser
+  itself. Instead the validate job preserves the rendered
+  `dist/homebrew/Casks/pairmux.rb` as an artifact, and the publish job pushes
+  it to the tap via the GitHub contents API **after** the release goes
+  public — never for prerelease tags — then reads it back and byte-compares.
+- After each stable release, smoke-test on a clean machine:
+  `brew install --cask treeleaves30760/pairmux/pairmux`, then
+  `pairmux version` and `pairmux doctor` (confirms tmux arrived and that no
+  Gatekeeper prompt appears; the cask's postflight strips the quarantine
+  attribute from the fetched binary).
 
 Signing and notarization of the macOS binaries remain recommended for a wider
 stable release, together with an SBOM and build provenance, but they are
