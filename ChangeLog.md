@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Documentation builds pick up the patched `fast-uri` release and override the vulnerable
+  transitive `brace-expansion` versions with 5.0.9; `npm audit` reports zero known
+  vulnerabilities again.
 - The commit-subject validator pins `LC_ALL=C` so its `[a-z]` pattern brackets match bytes rather
   than locale collation. Under locales such as `zh_TW.UTF-8` the ranges also matched uppercase
   letters, silently accepting invalid subjects (and failing `--self-test`) on contributor machines
