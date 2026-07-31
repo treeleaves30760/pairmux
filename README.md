@@ -239,6 +239,11 @@ complete selected history and may return large results.
 `peek`, `log`, `ls`, and `wait` record no journal events. `attach` starts a native tmux
 client; a human records the hand-back explicitly with `pairmux note`.
 
+Retention has a documented exit: `kill` keeps a terminal's journal so post-mortem `log` still
+works, and `pairmux prune [name] [--older-than 7d] [--dry-run]` reclaims the disk once the history
+is no longer needed — dead terminals' directories and `.prev` rotation archives, never a live
+terminal's journal. `pairmux doctor` reports how much the state root currently retains.
+
 ## Teach an AI agent
 
 pairmux embeds its Agent Skill. The skill teaches the `new → run → wait/send/log` loop and the

@@ -362,8 +362,39 @@ pairmux --json kill deploy
 ```
 
 ```json
-{"schema":"pairmux.v1","ok":true,"status":"killed","terminal":"deploy","next":["journal retained under the pairmux state namespace","pairmux ls"]}
+{"schema":"pairmux.v1","ok":true,"status":"killed","terminal":"deploy","next":["journal retained under the pairmux state namespace","pairmux prune deploy reclaims its disk when the history is no longer needed","pairmux ls"]}
 ```
+
+### prune
+
+Remove retained journals whose terminals are gone: state directories of **dead** terminals plus
+`.prev` archives left when a terminal name was reused. This is the documented exit for `kill`'s
+retain-the-journal default — pruned history is unrecoverable, so read or export anything you still
+need first.
+
+```text
+pairmux prune [name] [--older-than 7d] [--dry-run]
+```
+
+- Without a name, sweeps the current endpoint namespace: every dead terminal's directory and every
+  `.prev` archive (including orphaned archives that `ls` cannot show).
+- With a name: a dead terminal loses its journal and archive; a **live** terminal loses only its
+  `.prev` archive. A live terminal with no archive returns `E_BUSY` (`kill` it first).
+- `--older-than` — only prune directories whose last activity (raw.log mtime) is older. Accepts Go
+  durations plus whole-day shorthand (`7d`).
+- `--dry-run` — list what would be pruned, remove nothing.
+- A directory whose write lock is currently held is always kept and reported.
+
+```bash
+pairmux --json prune --older-than 7d
+```
+
+```json
+{"schema":"pairmux.v1","ok":true,"status":"pruned","output":"byebye  4KB  pruned\nrotated.prev  312MB  pruned\npruned 2 of 2, 312MB","next":["pairmux ls"]}
+```
+
+`doctor` reports total retained bytes and the largest terminal directories, and suggests `prune`
+when the state root has outgrown the large-journal guard.
 
 ---
 
