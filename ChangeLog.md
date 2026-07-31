@@ -37,9 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a known credential prompt sitting quiet at `running` should be treated as a handoff candidate.
 
 - A Homebrew cask (binary + man page, `depends_on formula: tmux`, quarantine-stripping postflight)
-  is staged in the GoReleaser configuration with `skip_upload: true`. RELEASING.md documents the
-  three owner-side activation steps (tap repository, `HOMEBREW_TAP_GITHUB_TOKEN` secret, flip to
-  `auto`) and records the APT channel as live via the pairmux-apt repository.
+  is staged in the GoReleaser configuration, and the channel is now **active**: the release
+  workflow preserves the rendered cask during validation and pushes `Casks/pairmux.rb` to the
+  `treeleaves30760/homebrew-pairmux` tap after the release goes public (prereleases skipped,
+  content read back and byte-compared). RELEASING.md documents the wiring, and the APT channel is
+  recorded as live via the pairmux-apt repository.
 
 ### Fixed
 

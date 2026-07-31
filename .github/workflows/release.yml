@@ -101,6 +101,13 @@ jobs:
           path: dist/wheels/*.whl
           if-no-files-found: error
           retention-days: 1
+      - name: Preserve the rendered Homebrew cask
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: validated-homebrew-cask
+          path: dist/homebrew/Casks/pairmux.rb
+          if-no-files-found: error
+          retention-days: 1
 
   # Publishing never rebuilds. A draft holds the exact GitHub assets while
   # PyPI is updated; only after PyPI succeeds does the release become visible.
@@ -250,3 +257,48 @@ jobs:
             -F draft=false \
             -F prerelease="$prerelease" \
             --silent
+      - name: Download the rendered Homebrew cask
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: validated-homebrew-cask
+          path: dist/homebrew
+      # goreleaser only builds in this pipeline (publishing is workflow-owned),
+      # so the cask is pushed here — after the release is public, never for
+      # prereleases, mirroring the config's skip_upload "auto" semantics. The
+      # default GITHUB_TOKEN cannot push cross-repo; the tap uses a dedicated
+      # repo-scoped secret.
+      - name: Publish the Homebrew cask to the tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          TAP_REPO: treeleaves30760/homebrew-pairmux
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REF_NAME" in
+            *-*)
+              echo "prerelease tag; skipping tap publish"
+              exit 0
+              ;;
+          esac
+          test -n "$TAP_TOKEN"
+          cask=dist/homebrew/pairmux.rb
+          test -s "$cask"
+          grep -qF "download/$GITHUB_REF_NAME/" "$cask"
+          content=$(base64 < "$cask" | tr -d '\n')
+          sha=$(
+            GH_TOKEN="$TAP_TOKEN" gh api \
+              "repos/$TAP_REPO/contents/Casks/pairmux.rb" \
+              --jq .sha 2>/dev/null || true
+          )
+          args=(-f message="chore: update-pairmux-to-$GITHUB_REF_NAME" -f content="$content")
+          if [[ -n "$sha" ]]; then
+            args+=(-f sha="$sha")
+          fi
+          GH_TOKEN="$TAP_TOKEN" gh api --method PUT \
+            "repos/$TAP_REPO/contents/Casks/pairmux.rb" \
+            "${args[@]}" --silent
+          published=$(
+            GH_TOKEN="$TAP_TOKEN" gh api \
+              "repos/$TAP_REPO/contents/Casks/pairmux.rb" \
+              --jq .content | tr -d '\n'
+          )
+          test "$published" = "$content"
