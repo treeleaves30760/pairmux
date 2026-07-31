@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- README, the docs site, and the Agent Skill now lead with what only pairmux provides — a real PTY
+  for interactive programs, persistent shell state, live human handoff, and shared observation —
+  and include an explicit "when to use it and when not to" table that sends short commands to the
+  agent's own shell tool and plain long non-interactive commands to the harness's background mode.
+  The install docs now cover the live signed APT repository (pairmux-apt) instead of calling it
+  unavailable, and state the tmux ≥ 3.2 requirement up front.
 - Secret-prompt recognition covers far more than English password prompts: PIN, OTP/MFA/2FA,
   verification/security/access codes, API/encryption/private keys, tokens and client secrets, plus
   the standard sudo password translations (zh-TW/zh-CN 密碼/密码, de Passwort, fr mot de passe,

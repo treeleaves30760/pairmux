@@ -1,28 +1,29 @@
 # pairmux
 
-**Blocking, observable tmux terminals for AI agents — with live human handoff.**
+**Let AI agents drive interactive terminal programs — and hand off to a human when they can't.**
 
 [Documentation](https://treeleaves30760.github.io/pairmux/) ·
 [CLI reference](https://treeleaves30760.github.io/pairmux/cli-reference) ·
 [Changelog](https://github.com/treeleaves30760/pairmux/blob/main/ChangeLog.md) ·
 [Source](https://github.com/treeleaves30760/pairmux)
 
-pairmux is a small coordination layer over tmux with no separate pairmux service to supervise.
-Agents get actionable command outcomes and clean, bounded-by-default output; humans keep normal
-access to the same live terminal.
+pairmux is a small Agent-Computer Interface layer over tmux with no separate service to supervise.
+Agents get a real PTY with persistent shell state and actionable command outcomes; humans keep
+normal access to the same live terminal — watch, take over, hand back.
 
 ## Why pairmux
 
-- **Actionable waits.** `run` blocks until a command completes, a recognized prompt appears, or
-  its timeout expires. Completed runs include the exit code and duration; if no completion was
-  observed by the deadline, the response reports `running` and does not kill the command.
-- **Captured history.** Managed terminals write pane output to a per-terminal journal. Routine
-  reads stay bounded, while explicit `log` selectors retrieve a captured command or selected
-  journal history. Truncated replies point to the command that fetches the rest.
-- **Shared control.** Humans can `watch`, `attach`, and leave a `note`. Read-only observation is
-  lock-free; only one `run` writer is allowed per terminal, and a conflict returns `E_BUSY`.
-- **Agent-readable replies.** `--json` emits a versioned `pairmux.v1` envelope with status, shaped
-  output, recovery hints, and ordered next steps.
+- **A real PTY.** Exec-style agent shell tools run commands without a terminal, so REPLs, `psql`,
+  `ssh` password prompts, `docker exec -it`, `git rebase -i`, pagers, and TUIs are impossible
+  there. pairmux makes them drivable.
+- **Human handoff on credentials and judgment calls.** A recognized secret prompt never suggests
+  an answer; `wait --human --notify`, `attach`, and `note` turn a blocked credential prompt into a
+  resumable checkpoint.
+- **Persistent shell state.** `source venv/bin/activate`, `export`, and `nvm use` happen once in a
+  live shell instead of being re-composed into every command.
+- **Actionable waits and captured history.** `run` blocks until completion, a recognized prompt,
+  or timeout (never killing the command); journals retain full output with exit codes, and
+  `--json` emits a versioned `pairmux.v1` envelope with ordered next steps.
 
 ## Install
 

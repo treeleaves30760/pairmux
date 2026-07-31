@@ -71,8 +71,11 @@ pairmux new [--name N] [--cwd D] [--cmd "..."]
 
 ### run — send a command and block until it completes or times out
 ```text
-pairmux run <name> <cmd...> [--timeout 60s] [--head 50] [--tail 200]
+pairmux run <name> "<cmd>" [--timeout 60s] [--head 50] [--tail 200]
 ```
+- **The command is one quoted argument** (same contract as the MCP tool). Multiple command tokens
+  return `E_BAD_ARGS` with a hint showing the correctly quoted form — quoting your shell already
+  consumed is never silently re-split.
 - `--timeout` — Go duration (`90s`, `5m`); default `60s`. **On timeout the reply is `status:"running"`,
   not an error** — it carries the tail and a `next` for continuing to wait.
 - `--head N` / `--tail N` — leading/trailing lines to keep (defaults 50 / 200); the middle is elided
@@ -180,8 +183,18 @@ Text form is a table; a lock holder pid, pending command, and a `[notes:N]` badg
 pairmux kill <name> | --all
 ```
 ```json
-{"schema":"pairmux.v1","ok":true,"status":"killed","terminal":"deploy","next":["journal retained under the pairmux state root","pairmux ls"]}
+{"schema":"pairmux.v1","ok":true,"status":"killed","terminal":"deploy","next":["journal retained under the pairmux state root","pairmux prune deploy reclaims its disk when the history is no longer needed","pairmux ls"]}
 ```
+
+### prune — reclaim retained journals
+```text
+pairmux prune [name] [--older-than 7d] [--dry-run]
+```
+- Removes **dead** terminals' state directories and `.prev` rotation archives; never a live
+  terminal's journal (a named prune on a live terminal reclaims only its archive, or returns
+  `E_BUSY` when there is none). Pruned history is unrecoverable — read what you need first.
+- `--older-than` filters by last activity (Go durations plus `7d` day shorthand); `--dry-run`
+  lists without removing; a directory whose write lock is held is kept and reported.
 
 ---
 
@@ -193,7 +206,8 @@ pairmux kill <name> | --all
   awaiting-input, `xx` flags dead.
 - `pairmux note <name> <text...>` — record a message for the agent; surfaces in the agent's next
   `run`/`peek`/`wait` `notes`, and resolves `wait --human`.
-- `pairmux doctor` — probe tmux version, state-dir writability, per-shell completion tier, notifier.
+- `pairmux doctor` — probe tmux version, state-dir writability + retained journal size, per-shell
+  completion tier, notifier, and (when set) `PAIRMUX_SECRET_PROMPT_RE` validity.
 - `pairmux version` — print the build version.
 - `pairmux skill install [--target T|all] [--dry-run]` — install the embedded canonical skill into a
   supported agent; `all` only touches agent configuration directories that already exist.
