@@ -2,8 +2,10 @@ package detect
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/treeleaves30760/pairmux/internal/core"
@@ -32,29 +34,86 @@ const (
 // prefix) and shows a bare ":" while mid-file, and more, whose "--More--(n%)"
 // can carry surrounding text — hence: --More-- anywhere, "(END)" as a line
 // suffix, or a line that is exactly ":".
+//
+// The secret rule is two alternations because RE2 word boundaries are
+// ASCII-only: Latin-script keywords sit inside \b...\b, while CJK/Hangul/
+// Cyrillic keywords (sudo's 密碼/密码/パスワード/암호/пароль translations)
+// must match bare. The prompt must still end in an ASCII or fullwidth colon.
+// Recognition is best-effort and English-biased — see PAIRMUX_SECRET_PROMPT_RE
+// for extending it without a release.
 var (
-	reSecretPrompt = regexp.MustCompile(`(?i)\bpass(?:word|phrase|code)\b.*:\s*$`)
-	reConfirmYN    = regexp.MustCompile(`\[[yY]/[nN]\]\s*\??\s*$`)
-	reConfirmWord  = regexp.MustCompile(`\((?:yes/no|y/n)\)\s*\??\s*$`)
-	rePager        = regexp.MustCompile(`--More--|\(END\)\s*$|^:\s*$`)
-	rePressKey     = regexp.MustCompile(`(?i)press (any key|enter|return)`)
+	reSecretPrompt = regexp.MustCompile(`(?i)(?:\b(?:` +
+		`pass\s?(?:word|phrase|code)|passwort|contraseña|senha|mot de passe|` +
+		`pin|otp|mfa|2fa|secret|token|credentials?|` +
+		`(?:verification|security|auth(?:entication)?|access) code|` +
+		`(?:api|encryption|private|ssh|gpg) key` +
+		`)\b|密碼|密码|パスワード|暗証番号|비밀번호|암호|пароль).*[:：]\s*$`)
+	reConfirmYN   = regexp.MustCompile(`\[[yY]/[nN](?:/[a-zA-Z]+)*\]\s*\??\s*$`)
+	reConfirmWord = regexp.MustCompile(`(?i)\((?:yes/no|y/n)(?:/\w+)*\)\s*\??\s*$`)
+	rePager       = regexp.MustCompile(`--More--|\(END\)\s*$|^:\s*$`)
+	rePressKey    = regexp.MustCompile(`(?i)press (any key|enter|return)`)
 )
 
+// SecretPromptEnv names the user extension point for secret-prompt
+// recognition: an RE2 pattern OR'd with (never replacing) the builtin
+// heuristics, for locales and tools the builtin list misses. An invalid
+// pattern is ignored here (fail-safe) and surfaced by doctor.
+const SecretPromptEnv = "PAIRMUX_SECRET_PROMPT_RE"
+
+var (
+	extraSecretMu  sync.Mutex
+	extraSecretSrc string
+	extraSecretVal *regexp.Regexp
+)
+
+// extraSecretRE compiles the SecretPromptEnv extension, caching per env value
+// so repeated Refine polling does not recompile.
+func extraSecretRE() *regexp.Regexp {
+	src := os.Getenv(SecretPromptEnv)
+	extraSecretMu.Lock()
+	defer extraSecretMu.Unlock()
+	if src == extraSecretSrc {
+		return extraSecretVal
+	}
+	extraSecretSrc = src
+	extraSecretVal = nil
+	if src != "" {
+		if re, err := regexp.Compile(src); err == nil {
+			extraSecretVal = re
+		}
+	}
+	return extraSecretVal
+}
+
 // isInteractivePrompt reports whether a shaped, trimmed line looks like a
-// program waiting for a human answer.
+// program waiting for a human answer. A line matching the user's secret
+// extension counts: it must be able to upgrade running to awaiting-input, or
+// LooksSecret would never be consulted for it.
 func isInteractivePrompt(line string) bool {
-	return strings.TrimSpace(line) == ">>>" ||
+	if strings.TrimSpace(line) == ">>>" ||
 		reSecretPrompt.MatchString(line) ||
 		reConfirmYN.MatchString(line) ||
 		reConfirmWord.MatchString(line) ||
 		rePager.MatchString(line) ||
-		rePressKey.MatchString(line)
+		rePressKey.MatchString(line) {
+		return true
+	}
+	re := extraSecretRE()
+	return re != nil && re.MatchString(line)
 }
 
 // LooksSecret reports whether prompt belongs to the password/passphrase/
 // passcode class, i.e. an answer to it must never be echoed or logged.
+// Recognition is heuristic: a miss degrades to a quiet running terminal, so
+// callers that know a command needs credentials should treat a prolonged
+// quiet "running" as a handoff candidate regardless.
 func LooksSecret(prompt string) bool {
-	return reSecretPrompt.MatchString(strings.TrimSpace(prompt))
+	p := strings.TrimSpace(prompt)
+	if reSecretPrompt.MatchString(p) {
+		return true
+	}
+	re := extraSecretRE()
+	return re != nil && re.MatchString(p)
 }
 
 // Refine upgrades StatusRunning to StatusAwaitingInput when the journal has

@@ -154,7 +154,12 @@ history. They can produce large replies by design, because the selector is the c
 
 Separately, pairmux watches for a command that has gone **quiet with a prompt-shaped last line** — `[y/N]`, `password:`, a pager's `--More--`/`(END)`, "press any key". This refines `running` into the `awaiting-input` status. It is surfaced as a status only; pairmux never auto-answers.
 
-Password/passphrase/passcode prompts are classified as **secrets**. Instead of a "send this answer" hint, the reply says `do NOT guess or type secrets` and points at human handoff (`wait --human --notify`). See [human collaboration](./guides/human-collaboration.md).
+Secret-shaped prompts — password/passphrase/passcode, PIN, OTP/MFA/verification codes, API keys,
+tokens, and the standard sudo password translations for common locales — are classified as
+**secrets**. Instead of a "send this answer" hint, the reply says `do NOT guess or type secrets` and
+points at human handoff (`wait --human --notify`). Recognition is best-effort: a missed prompt
+leaves the terminal `running` (never an auto-answer), and `PAIRMUX_SECRET_PROMPT_RE` extends the
+patterns for your environment. See [human collaboration](./guides/human-collaboration.md).
 
 ## Self-teaching output
 

@@ -45,11 +45,21 @@ pairmux --json peek confirm
 `wait --idle` can return `idle`, `awaiting-input`, `dead`, or `timeout`; inspect `status` instead of
 assuming the answer completed the command.
 
-pairmux recognizes `[y/N]`, `(yes/no)`, `password:`-style prompts, pagers (`--More--`, `(END)`, a bare `:`), and "press any key". It **never auto-answers** — it only reports the state.
+pairmux recognizes `[y/N]`/`[y/N/a]`, `(yes/no)`, secret prompts (`password:`, `PIN:`, MFA and
+verification codes, API keys, and localized sudo password prompts), pagers (`--More--`, `(END)`, a
+bare `:`), and "press any key". It **never auto-answers** — it only reports the state.
+
+Recognition is **best-effort and biased toward English plus common locales**. A prompt outside the
+patterns — unusual wording, another locale, or a full-screen dialog such as pinentry — is a false
+negative: the terminal just stays `running`. If a command you know needs credentials sits quiet at
+`running`, treat it as a handoff candidate (`peek --screen`, then `wait --human --notify`). The
+`PAIRMUX_SECRET_PROMPT_RE` environment variable adds your own RE2 pattern on top of the builtin
+recognition (it never replaces it); `pairmux doctor` reports whether the pattern compiles.
 
 ## The never-guess-secrets rule
 
-When a recognized prompt is for a **password, passphrase, or passcode**, pairmux classifies it as a
+When a recognized prompt is secret-shaped — a **password, passphrase, passcode, PIN, one-time or
+verification code, API key, or token** — pairmux classifies it as a
 secret. Its `next` field deliberately omits a `send` command and points at human handoff:
 
 ```json

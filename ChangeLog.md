@@ -19,6 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tail -f`) are driven by `send`/`wait`/`peek` and previously never saw the guard even though they
   grow journals the fastest.
 
+### Changed
+
+- Secret-prompt recognition covers far more than English password prompts: PIN, OTP/MFA/2FA,
+  verification/security/access codes, API/encryption/private keys, tokens and client secrets, plus
+  the standard sudo password translations (zh-TW/zh-CN 密碼/密码, de Passwort, fr mot de passe,
+  ja パスワード, es contraseña, pt senha, ko 암호, ru пароль) and fullwidth-colon endings.
+  Multi-option confirmations (`[y/N/a]`, `(y/N/q)`) are now recognized too. A new
+  `PAIRMUX_SECRET_PROMPT_RE` environment variable extends — never replaces — the builtin patterns;
+  `doctor` validates it. Documentation now states plainly that recognition is best-effort and that
+  a known credential prompt sitting quiet at `running` should be treated as a handoff candidate.
+
 ### Fixed
 
 - `run` now takes the command as exactly one argument, matching the MCP `pairmux_run` contract.

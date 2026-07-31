@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -47,6 +48,9 @@ func (c *Ctx) cmdDoctor(args []string) int {
 		c.checkStateDir(),
 		c.checkLiveProbe(tmuxOK),
 		checkNotifier(),
+	}
+	if ck, present := checkSecretPromptEnv(); present {
+		checks = append(checks, ck)
 	}
 
 	body, issues, topFix := renderDoctor(checks)
@@ -181,6 +185,26 @@ func (c *Ctx) checkLiveProbe(tmuxOK bool) doctorCheck {
 			"; check your shell rc (oh-my-zsh / powerlevel10k / starship) is not clobbering the prompt hooks"
 	}
 	return ck
+}
+
+// checkSecretPromptEnv validates the optional PAIRMUX_SECRET_PROMPT_RE
+// extension; present is false when the variable is unset. Detection ignores an
+// invalid pattern silently (the builtin heuristics stay active as the safety
+// floor), so doctor is where a typo becomes visible.
+func checkSecretPromptEnv() (ck doctorCheck, present bool) {
+	src := os.Getenv(detect.SecretPromptEnv)
+	if src == "" {
+		return doctorCheck{}, false
+	}
+	ck = doctorCheck{name: "secret prompts"}
+	if _, err := regexp.Compile(src); err != nil {
+		ck.detail = detect.SecretPromptEnv + " does not compile: " + err.Error()
+		ck.fix = "fix the RE2 pattern; until then only the builtin secret-prompt patterns apply"
+		return ck, true
+	}
+	ck.ok = true
+	ck.detail = detect.SecretPromptEnv + " extends builtin secret-prompt recognition"
+	return ck, true
 }
 
 // checkNotifier reports which desktop-notification backend is available. It is
