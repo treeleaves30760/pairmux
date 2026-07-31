@@ -43,6 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The commit-subject validator pins `LC_ALL=C` so its `[a-z]` pattern brackets match bytes rather
+  than locale collation. Under locales such as `zh_TW.UTF-8` the ranges also matched uppercase
+  letters, silently accepting invalid subjects (and failing `--self-test`) on contributor machines
+  while CI's C locale rejected them.
 - `run` now takes the command as exactly one argument, matching the MCP `pairmux_run` contract.
   The previous variadic form re-joined tokens on single spaces and typed the result into the shell,
   silently discarding quoting the caller's shell had already consumed (`pairmux run t git commit -m
