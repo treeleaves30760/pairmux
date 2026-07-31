@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `run` now takes the command as exactly one argument, matching the MCP `pairmux_run` contract.
+  The previous variadic form re-joined tokens on single spaces and typed the result into the shell,
+  silently discarding quoting the caller's shell had already consumed (`pairmux run t git commit -m
+  "two words"` committed with the message `two`). Multiple command tokens now return `E_BAD_ARGS`
+  with a hint that reconstructs the correctly quoted single-argument command.
+
 ## [0.1.1] - 2026-07-20
 
 ### Changed

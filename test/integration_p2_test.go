@@ -81,7 +81,7 @@ func pollPeekStatus(t *testing.T, e tenv, name, want string, timeout time.Durati
 func TestWaitIdle(t *testing.T) {
 	e := newEnv(t, bashShell)
 	pmx(t, e, "new", "--name", "t1")
-	pmx(t, e, "run", "t1", "echo", "hi")
+	pmx(t, e, "run", "t1", "echo hi")
 
 	env, code := pmx(t, e, "wait", "t1", "--idle", "400", "--timeout", "15s")
 	if code != 0 || env.Status != "idle" {
@@ -144,13 +144,13 @@ func TestNotesInEnvelopes(t *testing.T) {
 		t.Fatalf("ls notes count = %d, want 1", got)
 	}
 
-	renv, _ := pmx(t, e, "run", "t1", "echo", "ok")
+	renv, _ := pmx(t, e, "run", "t1", "echo ok")
 	if len(renv.Notes) != 1 || renv.Notes[0] != "use port 9999" {
 		t.Fatalf("run notes = %v", renv.Notes)
 	}
 
 	// That run's cmd_end consumed it: the next run carries nothing.
-	renv, _ = pmx(t, e, "run", "t1", "echo", "again")
+	renv, _ = pmx(t, e, "run", "t1", "echo again")
 	if len(renv.Notes) != 0 {
 		t.Fatalf("second run notes = %v, want none", renv.Notes)
 	}

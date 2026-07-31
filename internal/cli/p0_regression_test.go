@@ -20,7 +20,7 @@ func TestEveryTerminalNameCommandRejectsTraversal(t *testing.T) {
 		run  func(*Ctx) int
 	}{
 		{"new", func(c *Ctx) int { return c.cmdNew([]string{"--name", "../escape"}) }},
-		{"run", func(c *Ctx) int { return c.cmdRun([]string{"../escape", "echo", "ok"}) }},
+		{"run", func(c *Ctx) int { return c.cmdRun([]string{"../escape", "echo ok"}) }},
 		{"peek", func(c *Ctx) int { return c.cmdPeek([]string{"../escape"}) }},
 		{"wait", func(c *Ctx) int { return c.cmdWait([]string{"../escape", "--timeout", "1ms"}) }},
 		{"send", func(c *Ctx) int { return c.cmdSend([]string{"../escape", "--enter"}) }},
@@ -59,7 +59,7 @@ func TestStateAndTmuxCommandsRejectInvalidSocketBeforeIO(t *testing.T) {
 		run  func(*Ctx) int
 	}{
 		{"new", func(c *Ctx) int { return c.cmdNew([]string{"--name", "safe"}) }},
-		{"run", func(c *Ctx) int { return c.cmdRun([]string{"safe", "echo", "ok"}) }},
+		{"run", func(c *Ctx) int { return c.cmdRun([]string{"safe", "echo ok"}) }},
 		{"peek", func(c *Ctx) int { return c.cmdPeek([]string{"safe"}) }},
 		{"wait", func(c *Ctx) int { return c.cmdWait([]string{"safe", "--timeout", "1ms"}) }},
 		{"send", func(c *Ctx) int { return c.cmdSend([]string{"safe", "--enter"}) }},

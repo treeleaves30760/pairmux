@@ -241,7 +241,7 @@ func prepareTerminalJournalWith(dir string, ops terminalJournalOps) (*journal.Jo
 // prompt, and returns the shaped output. On timeout it returns status "running"
 // and leaves the command for lazy settlement by a later run.
 func (c *Ctx) cmdRun(args []string) int {
-	const usageLine = `pairmux run <name> <cmd...> [--timeout 60s] [--head 50] [--tail 200]`
+	const usageLine = `pairmux run <name> "<cmd>" [--timeout 60s] [--head 50] [--tail 200]`
 	timeoutS, headS, tailS, pos, err := parseRun(args)
 	if err != nil {
 		return c.usage(usageLine, err.Error())
@@ -256,7 +256,18 @@ func (c *Ctx) cmdRun(args []string) int {
 	if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
 		return rc
 	}
-	cmd := strings.Join(pos[1:], " ")
+	// The command is a single argument, matching the MCP tool contract. Joining
+	// variadic tokens on spaces would silently discard quoting the caller's
+	// shell already consumed (`run t git commit -m "two words"` would commit
+	// "two"), so more than one command token is a loud error instead.
+	if len(pos) > 2 {
+		return c.fail(output.CodeBadArgs, "run takes the command as one argument",
+			fmt.Sprintf("quote the whole command: pairmux run %s %s", name, quotedCommandHint(pos[1:])))
+	}
+	cmd := ""
+	if len(pos) == 2 {
+		cmd = pos[1]
+	}
 	if strings.TrimSpace(cmd) == "" {
 		return c.fail(output.CodeBadArgs, "run needs a command", fmt.Sprintf("pairmux run %s \"echo hello\"", name))
 	}
@@ -460,6 +471,34 @@ func recordAndSendCommand(j *journal.Journal, start core.Event, sendLiteral, sen
 		return abort(runSendEnter, err)
 	}
 	return nil
+}
+
+// shellWordSafe matches tokens that survive shell re-parsing without quotes.
+var shellWordSafe = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
+
+// quoteToken renders one token so a POSIX shell parses it back as the same
+// single word: unchanged when safe, else single-quoted with '\” escapes.
+func quoteToken(tok string) string {
+	if tok != "" && shellWordSafe.MatchString(tok) {
+		return tok
+	}
+	return "'" + strings.ReplaceAll(tok, "'", `'\''`) + "'"
+}
+
+// quotedCommandHint reconstructs the single-argument form of a variadic run
+// command for its rejection hint. Inner quoting restores the word boundaries
+// the caller's shell already consumed; the outer quotes make the whole command
+// one argument again.
+func quotedCommandHint(tokens []string) string {
+	inner := make([]string, len(tokens))
+	for i, t := range tokens {
+		inner[i] = quoteToken(t)
+	}
+	joined := strings.Join(inner, " ")
+	if !strings.ContainsAny(joined, "\"\\$`") {
+		return `"` + joined + `"`
+	}
+	return quoteToken(joined) // single-quote form is safe for any content
 }
 
 // waitDone waits for a command's completion mark. Hooks mode uses the

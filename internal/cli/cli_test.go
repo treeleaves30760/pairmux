@@ -175,6 +175,46 @@ func TestRunRejectsNewline(t *testing.T) {
 	}
 }
 
+func TestRunRejectsVariadicCommand(t *testing.T) {
+	var buf bytes.Buffer
+	c := newTestCtx(&buf, true)
+	rc := c.cmdRun([]string{"t", "git", "commit", "-m", "fix: two words"})
+	if rc != 1 {
+		t.Errorf("rc = %d, want 1", rc)
+	}
+	e := decode(t, &buf)
+	if e.OK || e.Error == nil || e.Error.Code != output.CodeBadArgs {
+		t.Fatalf("envelope = %+v, want E_BAD_ARGS", e)
+	}
+	// The hint must reconstruct the caller's intent, re-quoting the token whose
+	// grouping the caller's shell consumed — not the corrupted space-join.
+	want := `pairmux run t "git commit -m 'fix: two words'"`
+	if !strings.Contains(e.Error.Hint, want) {
+		t.Errorf("hint = %q, want it to contain %q", e.Error.Hint, want)
+	}
+}
+
+func TestQuotedCommandHint(t *testing.T) {
+	tests := []struct {
+		name   string
+		tokens []string
+		want   string
+	}{
+		{"plain words", []string{"make", "-j4"}, `"make -j4"`},
+		{"space token", []string{"echo", "a  b"}, `"echo 'a  b'"`},
+		{"metachar stays literal", []string{"cd", "/tmp", "&&", "ls"}, `"cd /tmp '&&' ls"`},
+		{"dollar forces single quotes", []string{"echo", "$HOME"}, `'echo '\''$HOME'\'''`},
+		{"empty token survives", []string{"printf", ""}, `"printf ''"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := quotedCommandHint(tt.tokens); got != tt.want {
+				t.Errorf("quotedCommandHint(%v) = %s, want %s", tt.tokens, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNewRejectsBadName(t *testing.T) {
 	var buf bytes.Buffer
 	c := newTestCtx(&buf, true)
