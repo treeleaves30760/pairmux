@@ -2,6 +2,13 @@
 
 set -eu
 
+# Pattern brackets like [!a-z0-9-] must match bytes, not locale collation:
+# under locales such as zh_TW.UTF-8 the a-z range also matches uppercase
+# letters, silently accepting invalid subjects on contributor machines while
+# CI's C locale rejects them.
+LC_ALL=C
+export LC_ALL
+
 MAX_SUBJECT_LENGTH=72
 
 usage() {
