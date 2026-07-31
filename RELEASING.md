@@ -11,9 +11,9 @@ Linux packages, install script, and documentation site. The companion
 | GitHub Releases | GoReleaser builds four macOS/Linux archives, four `.deb`/`.rpm` packages, and checksums. | Push a canonical SemVer tag. The workflow verifies and stages the exact artifacts before publishing the release. |
 | PyPI | Four platform wheels wrap the same verified Go binaries. Linux wheel installation is smoke-tested. | Configure the `PYPI_TOKEN` repository secret or migrate to Trusted Publishing. The tag workflow uploads only the four verified wheels. |
 | Direct installer | `install.sh` selects a GitHub archive and installs atomically. | Smoke-test the public URL on macOS and Linux after every release. |
-| Debian/RPM files | GoReleaser emits installable `.deb` and `.rpm` release assets. | No extra work for direct package downloads. These files do not constitute an APT or Yum repository. |
-| APT repository | Not implemented. | Choose hosting and supported distributions, sign repository metadata, publish indexes, document key enrollment, and test `apt update` plus `apt install pairmux`. |
-| Homebrew | Deferred. | Sign and notarize macOS binaries, verify them through Gatekeeper, then add a tap/formula workflow. |
+| Debian/RPM files | GoReleaser emits installable `.deb` and `.rpm` release assets. | No extra work for direct package downloads. |
+| APT repository | **Live.** The [`pairmux-apt`](https://github.com/treeleaves30760/pairmux-apt) repository signs and publishes metadata rebuilt from every stable release to GitHub Pages. | Operate per `pairmux-apt/OPERATIONS.md` (key custody, rebuild workflow). |
+| Homebrew tap | **Staged.** `.goreleaser.yaml` renders a cask (binary + manpage, `depends_on formula: tmux`, quarantine-stripping postflight) with `skip_upload: true`, so releases stay green while the tap does not exist. | Activate per the Homebrew section below. |
 
 ## Release checklist
 
@@ -44,20 +44,36 @@ Linux packages, install script, and documentation site. The companion
 7. Smoke-test `uv tool install pairmux`, `install.sh`, and one `.deb` on clean
    systems. Never publish artifacts from an old local `dist/` directory.
 
-## APT roadmap
+## Homebrew activation
 
-APT requires a signed repository in addition to the `.deb` artifact. Complete
-these as a separate milestone:
+Homebrew is the missing first-class path on macOS — the platform where the
+interactive-terminal use case is most common — and the only channel that can
+install the hard tmux >= 3.2 runtime dependency in the same command. The cask
+configuration is already validated by `make release-check`; what remains needs
+repository-owner access:
 
-- Select managed hosting or a static repository generator such as `aptly` or
-  `reprepro`, and define supported suites and architectures.
-- Keep the repository signing key outside the source tree; document public-key
-  distribution and rotation.
-- Generate `Packages`, `Release`, and `InRelease` metadata from the verified
-  `.deb` files produced by the tag workflow.
-- Publish metadata and packages atomically, retaining old versions for rollback.
-- Add container tests that enroll the key, run `apt update`, install pairmux,
-  and verify `pairmux version` matches the tag.
+1. Create the public repo `treeleaves30760/homebrew-pairmux` (empty is fine;
+   GoReleaser creates `Casks/pairmux.rb` on first publish).
+2. Add a repo-scoped personal access token as the `HOMEBREW_TAP_GITHUB_TOKEN`
+   Actions secret on this repository — the workflow's default `GITHUB_TOKEN`
+   cannot push to another repository.
+3. Flip `skip_upload: true` to `auto` in `.goreleaser.yaml` (`auto` still
+   skips prereleases) and release normally.
+4. Smoke-test on a clean machine: `brew install treeleaves30760/pairmux/pairmux`,
+   then `pairmux version` and `pairmux doctor` (confirms tmux arrived and no
+   Gatekeeper prompt appears; the cask's postflight strips the quarantine
+   attribute from the curl-fetched binary).
 
-Artifact signing, an SBOM, and build provenance are recommended before a wider
-stable release even though they do not block the first public release.
+Signing and notarization of the macOS binaries remain recommended for a wider
+stable release, together with an SBOM and build provenance, but they are
+deliberately decoupled from shipping the tap: the cask installs from the same
+checksummed tarball `install.sh` already uses.
+
+## APT repository
+
+The signed APT repository lives in
+[`pairmux-apt`](https://github.com/treeleaves30760/pairmux-apt): key custody,
+metadata generation from every non-draft stable release, atomic Pages
+publishing, and container-tested key enrollment are documented in that repo's
+`OPERATIONS.md`. Nothing APT-specific remains in this repository's release
+flow beyond producing the `.deb` assets.
