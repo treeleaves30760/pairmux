@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `doctor` validates it. Documentation now states plainly that recognition is best-effort and that
   a known credential prompt sitting quiet at `running` should be treated as a handoff candidate.
 
+- A Homebrew cask (binary + man page, `depends_on formula: tmux`, quarantine-stripping postflight)
+  is staged in the GoReleaser configuration with `skip_upload: true`. RELEASING.md documents the
+  three owner-side activation steps (tap repository, `HOMEBREW_TAP_GITHUB_TOKEN` secret, flip to
+  `auto`) and records the APT channel as live via the pairmux-apt repository.
+
 ### Fixed
 
 - `run` now takes the command as exactly one argument, matching the MCP `pairmux_run` contract.

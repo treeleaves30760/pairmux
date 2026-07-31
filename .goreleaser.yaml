@@ -1,8 +1,10 @@
 # GoReleaser configuration for pairmux.
 # Schema: v2 (goreleaser >= 2). Validate with `make release-check`.
-# Distribution strategy: GitHub Releases + install.sh, PyPI wheels, and native
-# .deb/.rpm packages. Homebrew is intentionally deferred until macOS binaries
-# can be signed and notarized.
+# Distribution strategy: GitHub Releases + install.sh, PyPI wheels, native
+# .deb/.rpm packages (consumed by the pairmux-apt repository), and a Homebrew
+# formula. The formula installs from the release tarball without bottles, so
+# it is not gated on macOS signing/notarization (tracked separately in
+# RELEASING.md for a wider stable release).
 version: 2
 
 project_name: pairmux
@@ -89,6 +91,43 @@ nfpms:
         dst: /usr/share/doc/pairmux/copyright
         file_info:
           mode: 0644
+
+# Homebrew tap cask (goreleaser >= 2.16 replaces formulas with casks for
+# binary distribution). Publishing is disabled (skip_upload: true) until the
+# tap exists; the cask is still rendered into dist/ on every release-check so
+# the config stays validated. The post-install xattr hook strips Apple's
+# quarantine attribute, so the unsigned binary runs without a Gatekeeper
+# prompt; signing/notarization stays a separate wider-release item. To
+# activate:
+#   1. create the public repo treeleaves30760/homebrew-pairmux
+#   2. add a repo-scoped PAT as the HOMEBREW_TAP_GITHUB_TOKEN actions secret
+#      (the default GITHUB_TOKEN cannot push to another repository)
+#   3. flip skip_upload to "auto" (auto still skips prereleases)
+homebrew_casks:
+  - ids:
+      - pairmux
+    binaries:
+      - pairmux
+    manpages:
+      - man/pairmux.1
+    repository:
+      owner: treeleaves30760
+      name: homebrew-pairmux
+      token: '{{ envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "" }}'
+    homepage: https://github.com/treeleaves30760/pairmux
+    description: Let AI agents drive interactive terminal programs on tmux, with live human handoff
+    skip_upload: true
+    commit_msg_template: "chore: update-pairmux-to-{{ .Tag }}"
+    url:
+      verified: "github.com/treeleaves30760/pairmux/"
+    dependencies:
+      - formula: tmux
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/pairmux"]
+          end
 
 release:
   github:
