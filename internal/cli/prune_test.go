@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -60,9 +61,15 @@ func TestHumanBytes(t *testing.T) {
 const prTestSocket = "pmx-unit-nonexistent"
 
 // newPruneCtx returns a Ctx over a temp state root and the namespace dir that
-// prune will sweep for its socket.
+// prune will sweep for its socket. It skips when the tmux binary is absent:
+// prune resolves liveness through state.ListAt, which execs tmux even though
+// the probe socket has no server — a missing binary is E_TMUX, not an empty
+// server, and the unit CI job is contractually tmux-free.
 func newPruneCtx(t *testing.T, buf *bytes.Buffer) (*Ctx, string) {
 	t.Helper()
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux binary not on PATH; prune liveness tests need it")
+	}
 	root := t.TempDir()
 	c := &Ctx{Tmux: tmux.New(prTestSocket), JSON: true, StateDir: root, Stdout: buf}
 	return c, state.SocketDir(root, prTestSocket)
