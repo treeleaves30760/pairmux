@@ -1,6 +1,6 @@
 # pairmux
 
-**Blocking, observable tmux terminals for AI agents — with live human handoff.**
+**Let AI agents drive interactive terminal programs — and hand off to a human when they can't.**
 
 [PyPI](https://pypi.org/project/pairmux/) ·
 [Documentation](https://treeleaves30760.github.io/pairmux/) ·
@@ -8,23 +8,46 @@
 [Changelog](https://github.com/treeleaves30760/pairmux/blob/main/ChangeLog.md) ·
 [Source](https://github.com/treeleaves30760/pairmux)
 
-pairmux is a small coordination layer over tmux. Agents get blocking command outcomes, shaped
-terminal output, retained history, and machine-readable recovery hints. Humans keep normal access to
-the same live terminal and can step in when an interactive program needs help.
+pairmux is a small Agent-Computer Interface layer over tmux. Agents get a real PTY with persistent
+shell state, blocking command outcomes, retained history, and machine-readable recovery hints.
+Humans keep normal access to the same live terminal: watch the agent work, take over an interactive
+prompt, hand back. Requires **tmux ≥ 3.2** at runtime (`brew install tmux` / `apt install tmux`).
 
 ## Why pairmux
 
+- **A real PTY.** Exec-style agent shell tools run commands without a terminal, so `python` and
+  `node` REPLs, `psql`, `ssh` password prompts, `npm init`, `gh auth login`, `docker exec -it`,
+  `git rebase -i`, pagers, and TUIs are not merely awkward there — they are impossible. pairmux
+  makes them drivable. This is a 0-to-1 capability, not an efficiency gain.
+- **Human handoff on credentials and judgment calls.** A recognized secret prompt never suggests
+  `send`; `wait --human --notify`, `attach`, and `note` turn "the agent hit a password prompt and
+  failed" into a resumable checkpoint.
+- **Persistent shell state.** `source venv/bin/activate`, `conda activate`, `export`, `nvm use`
+  happen once in a live shell instead of being re-composed into every command.
+- **Shared observation.** A human can attach and watch the agent drive the same live pane — and
+  take over mid-command. Only one `run` writer is allowed per terminal; a conflicting run returns
+  `E_BUSY`, and reads are lock-free.
 - **Actionable waits.** `run` blocks until a command completes, a recognized prompt appears, or
   its timeout expires. A completed run includes its exit code and duration; if no completion was
   observed by the deadline, the response reports `running` and does not kill the command.
-- **Captured history.** Managed terminals stream pane output into a per-terminal journal. Routine
-  reads stay bounded, while explicit `log` selectors retrieve a recorded command or selected
-  journal history. Truncated replies include the command that fetches the rest.
-- **Shared control.** Agents can inspect a terminal while a human watches or attaches to the same
-  tmux session. Only one `run` writer is allowed per terminal; a conflicting run returns
-  `E_BUSY`.
-- **Agent-readable replies.** `--json` emits a versioned `pairmux.v1` envelope with status,
-  shaped output, recovery hints, and ordered next steps.
+- **Captured history, agent-readable replies.** Journals retain everything; routine reads stay
+  bounded, explicit `log` selectors retrieve full history, and `--json` emits a versioned
+  `pairmux.v1` envelope with status, shaped output, recovery hints, and ordered next steps.
+
+## When to use it — and when not to
+
+| Workload | Reach for |
+| --- | --- |
+| Short one-shot commands (`ls`, `git status`, a quick `grep`) | your agent's built-in shell tool |
+| Long **non-interactive** command in a fresh env, no human needed | your harness's background execution |
+| Interactive programs (REPL, TUI, pager, `[y/N]`, `ssh`, `sudo`) | **pairmux** |
+| Shell state that must persist across commands (venv, exports) | **pairmux** |
+| Credential prompts, judgment calls, live human takeover | **pairmux** |
+| A dev server or `tail -f` that a human may also watch | **pairmux** |
+
+The first two rows are deliberate: modern agent harnesses already run long non-interactive
+commands well. pairmux earns its place where a terminal, its state, or a human is part of the
+workload.
 
 ## Install
 
@@ -79,9 +102,16 @@ sudo apt install ./downloaded-file.deb
 sudo dnf install ./downloaded-file.rpm
 ```
 
-These downloadable files are not an APT repository. A public pairmux APT repository is **not live
-yet**, so `sudo apt install pairmux` without a local `./file.deb` path is not currently a supported
-installation method.
+### APT repository (Debian/Ubuntu)
+
+A signed APT repository is published from every stable release, so `apt install pairmux`, upgrades,
+and older-version pins work without downloading files by hand, and the package declares its
+`tmux (>= 3.2)` dependency. Enroll the key and source using the verification snippet in the
+[pairmux-apt repository](https://github.com/treeleaves30760/pairmux-apt#install), then:
+
+```bash
+sudo apt update && sudo apt install pairmux
+```
 
 ### Build this checkout
 

@@ -9,7 +9,7 @@ import TabItem from '@theme/TabItem';
 
 # pairmux
 
-**Blocking, observable tmux terminals for AI agents — with live human handoff.**
+**Let AI agents drive interactive terminal programs — and hand off to a human when they can't.**
 
 Driving a raw terminal is hard for agents for three separate reasons:
 
@@ -80,10 +80,13 @@ sha256sum --ignore-missing -c checksums.txt
 sudo dnf install "./${PAIRMUX_PACKAGE}"
 ```
 
-:::caution No APT or Yum repository yet
-The package files are release downloads, not a signed package repository. `apt install pairmux`
-without a local `./file.deb` does not work yet, and these direct installs do not receive repository
-updates automatically.
+:::tip Signed APT repository available
+Debian/Ubuntu users can skip the manual downloads: a signed APT repository is rebuilt from every
+stable release. Enroll the key and source with the verification snippet in the
+[pairmux-apt repository](https://github.com/treeleaves30760/pairmux-apt#install), then
+`sudo apt update && sudo apt install pairmux` — upgrades arrive through `apt` normally. The direct
+`.deb`/`.rpm` downloads above remain available and do not receive automatic updates. There is no
+Yum repository yet.
 :::
 
 </TabItem>

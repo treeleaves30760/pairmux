@@ -19,12 +19,22 @@ pairmux run deploy "terraform apply"
 pairmux send deploy --text yes --enter
 ```
 
-pairmux recognizes `[y/N]`, `(yes/no)`, `password:`-style prompts, pagers (`--More--`, `(END)`, a
-bare `:`), and "press any key". It **never auto-answers** — it only reports the state, and you decide.
+pairmux recognizes `[y/N]`/`[y/N/a]`, `(yes/no)`, secret prompts (`password:`, `PIN:`, OTP/MFA and
+verification codes, API keys, and the standard localized sudo password prompts), pagers
+(`--More--`, `(END)`, a bare `:`), and "press any key". It **never auto-answers** — it only reports
+the state, and you decide.
+
+Recognition is **best-effort and biased toward English plus common locales**. A prompt outside the
+patterns (unusual wording, another locale, a full-screen dialog like pinentry) is a false negative:
+the terminal just stays `running`. When a command you KNOW needs credentials sits quiet at
+`running`, treat that as a secret prompt anyway — `peek --screen` to confirm what is on screen,
+then hand off. Setting `PAIRMUX_SECRET_PROMPT_RE` to an RE2 pattern extends (never replaces) the
+builtin secret recognition; `pairmux doctor` validates it.
 
 ## The never-guess-secrets rule
 
-When the prompt is for a **password, passphrase, or passcode**, pairmux classifies it as a secret and
+When the prompt is secret-shaped — a **password, passphrase, passcode, PIN, one-time or
+verification code, API key, or token** — pairmux classifies it as a secret and
 refuses to offer an answer. It points at a human handoff instead:
 
 ```json

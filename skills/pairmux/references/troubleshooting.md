@@ -113,6 +113,22 @@ pairmux log build --range 1:end    # every shaped line (can be large)
 skipped raw-byte prefix. Explicit `--cmd`, `--grep`, and `--range` selectors read the complete selected
 history and can return large results, so prefer a narrow regex or bounded range for dense logs.
 
+## Journal grew huge / state dir eating disk
+
+Journals are retained on `kill` so post-mortem `log` keeps working; the flip side is that a chatty
+dev server or `tail -f` grows its `raw.log` indefinitely, and dead terminals keep their history
+until you reclaim it. When a reply warns `journal is large (…MB)`:
+
+```bash
+pairmux kill chatty && pairmux new --name chatty   # rotate: old journal becomes chatty.prev
+pairmux prune chatty                                # reclaim the archived journal's disk
+pairmux prune --older-than 7d --dry-run             # sweep preview: all dead terminals + archives
+pairmux prune                                       # actually reclaim
+```
+
+Pruned history is unrecoverable — `log --cmd N` for anything you still need first. `pairmux doctor`
+shows total retained bytes and the largest terminals.
+
 ## Sentinel mode / `--cmd` terminals
 
 A terminal created with `--cmd`, an unknown interactive shell, or a supported shell whose OSC 133

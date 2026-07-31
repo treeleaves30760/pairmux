@@ -1,36 +1,48 @@
 ---
 name: pairmux
 description: >-
-  Drive long-running, interactive, or background terminal programs reliably from your shell tool.
-  Use pairmux whenever a command is slow (builds, tests, installs, migrations), interactive (a REPL,
-  a TUI, a pager, a [y/N] confirmation, or a password prompt), or long-lived (a dev server, a watch
-  task, tail -f logs) — or whenever a human may need to watch, attach, or take over the same live
-  terminal session. pairmux is a thin layer over tmux with blocking calls that return on requested
-  outcomes instead of sleep-and-guess timing, clean full output history with exit codes, and human
-  handoff for secrets. Keywords: tmux, terminal session, background process, dev
-  server, watch logs, REPL, interactive CLI, TUI, pager, password prompt, human takeover, long-running.
+  Drive interactive terminal programs your exec-style shell tool cannot: REPLs, TUIs, pagers,
+  ssh/sudo password prompts, docker exec -it, git rebase -i — real PTYs with persistent shell state
+  (venv, exports, nvm) that survives between commands. When a prompt needs a credential or a
+  judgment call, hand off live to a human who can watch, attach, take over the same terminal, and
+  hand back. Also covers long-lived processes (dev servers, watch tasks, tail -f logs) and slow
+  commands that must share that same live terminal — with blocking calls that return on requested
+  outcomes instead of sleep-and-guess timing, and clean full output history with exit codes.
+  Keywords: tmux, terminal session, PTY, interactive CLI, REPL, TUI, pager, password prompt, human
+  takeover, human-in-the-loop, persistent shell, dev server, watch logs, background process,
+  long-running.
 ---
 
 # pairmux — reliable terminals for agents
 
-`pairmux` runs commands inside real tmux panes and gives you a **blocking** CLI: `run` returns on
-completion, input, or timeout; `wait` returns when the condition you requested is met, the pane dies,
-or its timeout expires. You never guess how long to wait, and a human can watch or step into the same
-terminal. Add `--json` to any command for a machine-readable `pairmux.v1` envelope.
+`pairmux` runs commands inside real tmux panes — actual PTYs with persistent shell state — and gives
+you a **blocking** CLI: `run` returns on completion, input, or timeout; `wait` returns when the
+condition you requested is met, the pane dies, or its timeout expires. Interactive programs become
+drivable, a human can watch or step into the same terminal at any moment, and you never guess how
+long to wait. Add `--json` to any command for a machine-readable `pairmux.v1` envelope.
 
 ## When to use pairmux (and when not to)
 
-Use pairmux when timing, interactivity, longevity, or a human matters:
+Use pairmux when interactivity, a persistent live shell, a human, or longevity matters:
 
-- **Slow** commands — builds, test suites, `npm install`, migrations. Blocks until done; no `sleep`.
-- **Interactive** programs — REPLs, TUIs, pagers, `[y/N]` prompts, password prompts.
+- **Interactive** programs — REPLs, TUIs, pagers, `[y/N]` prompts, password prompts, `ssh`,
+  `git rebase -i`, `docker exec -it`, `npm init`. An exec-style shell tool has no PTY, so these
+  are impossible there, not merely awkward. This is pairmux's core job.
+- **Human-in-the-loop** — a secret you must not guess, a judgment call mid-command, or a human who
+  wants to watch the pane live, take it over, and hand it back.
+- **Persistent shell state** — `source venv/bin/activate`, `conda activate`, `export`, `nvm use`
+  done once in a live shell, instead of re-composed into every command.
 - **Long-lived** processes — dev servers, `watch`, `tail -f`. Start it, then observe read-only.
-- **Human-in-the-loop** — a secret you must not guess, or a human who wants to take over a pane.
-- **Shared observation** — several agents reading one terminal's log at once (reads are lock-free).
+- **Shared observation** — several agents reading one terminal's log at once (reads are lock-free),
+  or a human watching your work as it happens.
+- **Slow commands in that same live terminal** — a build or migration that needs the venv, the ssh
+  session, or a watching human. `run` blocks until done; no `sleep`.
 
 **Do NOT use pairmux for one-shot short commands.** `ls`, `cat`, `git status`, `mkdir`, a quick
-`grep` — just use your normal shell tool. pairmux earns its keep only when a command is slow,
-interactive, long-lived, or shared with a human.
+`grep` — just use your normal shell tool. And a long but **non-interactive** command that needs no
+live shell state and no human (a plain `make`, a test suite in a fresh env) is often served just as
+well by your harness's own background execution — reach for pairmux when the command is
+interactive, shares a terminal or its state, or may need a human to step in.
 
 ## The golden loop
 
@@ -56,10 +68,14 @@ interactive, long-lived, or shared with a human.
 2. **One command per terminal at a time.** A second `run` while one is still going returns
    `E_BUSY` ("a command is still running"). Open another terminal with `new` for parallel work.
 3. **Answer a prompt once.** Send the answer a single time; do not spam Enter.
-4. **Never type or guess a secret.** On a password/passphrase/passcode prompt, pairmux says
+4. **Never type or guess a secret.** On a secret-shaped prompt (password/passphrase/passcode, PIN,
+   OTP/MFA/verification codes, API keys, localized sudo prompts), pairmux says
    `do NOT guess or type secrets`. Hand off to a human: `pairmux wait <name> --human --notify`.
    If the shell/tool client interrupts before pairmux returns, immediately reissue that same wait;
    never shorten pairmux's 300s default (one valid explicit timeout of at least 300s is equivalent).
+   Recognition is best-effort (English + common locales): when a command you KNOW needs a
+   credential sits quiet at `running`, treat it as a secret prompt anyway — `peek --screen` to
+   confirm, then hand off. `PAIRMUX_SECRET_PROMPT_RE` extends recognition for unusual prompts.
 5. **Prefer reading the log over re-running.** The journal already has the full output —
    `pairmux log` is free and instant; re-running wastes time and can change state.
 6. **Treat `next` as contextual hints, not a script.** Read entries in order and obey safety/prose.
@@ -169,6 +185,7 @@ A human left a note — it rides along in `notes`; obey it:
 | `pairmux log <name> [--cmd N \| --grep RE \| --range A:B\|A:end]` | read full/filtered history from the journal |
 | `pairmux ls` | list terminals + status | 
 | `pairmux kill <name> \| --all` | kill terminal(s); journals are kept |
+| `pairmux prune [name] [--older-than 7d] [--dry-run]` | reclaim dead terminals' retained journals |
 | `pairmux note <name> "<text>"` · `attach [name]` · `watch` | human side-channel / take-over |
 
 ## Go deeper (references/)
