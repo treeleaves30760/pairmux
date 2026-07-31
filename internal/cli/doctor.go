@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -98,7 +99,50 @@ func (c *Ctx) checkStateDir() doctorCheck {
 	_ = os.Remove(probe)
 	ck.ok = true
 	ck.detail = "writable: " + dir
+	if usage, total := stateUsage(dir); usage != "" {
+		ck.detail += "; " + usage
+		if total > journalSizeGuard {
+			ck.fix = "reclaim dead-terminal disk with pairmux prune"
+		}
+	}
 	return ck
+}
+
+// stateUsage summarizes the bytes retained under the namespace dir — total
+// plus the largest few terminal directories — so a growing state root is
+// observable before the filesystem notices. Empty when nothing is stored.
+func stateUsage(dir string) (summary string, total int64) {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return "", 0
+	}
+	type dirUse struct {
+		name string
+		size int64
+	}
+	var uses []dirUse
+	for _, ent := range ents {
+		if !ent.IsDir() {
+			continue
+		}
+		size := dirSize(filepath.Join(dir, ent.Name()))
+		uses = append(uses, dirUse{ent.Name(), size})
+		total += size
+	}
+	if len(uses) == 0 {
+		return "", 0
+	}
+	sort.Slice(uses, func(i, k int) bool { return uses[i].size > uses[k].size })
+	top := uses
+	if len(top) > 3 {
+		top = top[:3]
+	}
+	parts := make([]string, 0, len(top))
+	for _, u := range top {
+		parts = append(parts, u.name+" "+humanBytes(u.size))
+	}
+	return fmt.Sprintf("journals %s across %d dirs (largest: %s)",
+		humanBytes(total), len(uses), strings.Join(parts, ", ")), total
 }
 
 // checkLiveProbe runs the isolated per-shell tier probe and summarizes the tiers

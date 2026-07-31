@@ -995,7 +995,11 @@ func (c *Ctx) cmdKill(args []string) int {
 	}
 	return c.emit(output.Envelope{
 		Status: "killed", Terminal: name,
-		Next: []string{"journal retained at " + term.Dir, "pairmux ls"},
+		Next: []string{
+			"journal retained at " + term.Dir,
+			fmt.Sprintf("pairmux prune %s reclaims its disk when the history is no longer needed", name),
+			"pairmux ls",
+		},
 	})
 }
 
@@ -1025,7 +1029,11 @@ func (c *Ctx) killAll() int {
 	sort.Strings(names)
 	return c.emit(output.Envelope{
 		Status: "killed", Output: strings.Join(names, "\n"),
-		Next: []string{"journals retained under " + c.namespaceDir(), "pairmux ls"},
+		Next: []string{
+			"journals retained under " + c.namespaceDir(),
+			"pairmux prune reclaims dead-terminal disk when the history is no longer needed",
+			"pairmux ls",
+		},
 	})
 }
 
@@ -1130,18 +1138,21 @@ func notesArrivedSince(j *journal.Journal, baseline int) []string {
 	return out
 }
 
-// journalSizeGuard is review item R3: past this raw.log size, run and peek
-// warn the agent that the journal needs rotating via kill + new.
+// journalSizeGuard is review item R3: past this raw.log size, run, peek and
+// wait warn the agent that the journal needs rotating via kill + new.
 const journalSizeGuard = 256 << 20
 
 // appendGuard appends the R3 large-journal warning to next when raw.log has
-// outgrown the guard threshold.
+// outgrown the guard threshold. The rotation it suggests archives the old
+// journal as "<name>.prev"; prune is what actually returns the disk.
 func appendGuard(next []string, j *journal.Journal, name string) []string {
 	size := j.Size()
 	if size <= journalSizeGuard {
 		return next
 	}
-	return append(next, fmt.Sprintf("journal is large (%dMB); consider pairmux kill %s + pairmux new", size>>20, name))
+	return append(next, fmt.Sprintf(
+		"journal is large (%dMB); rotate with pairmux kill %s + pairmux new, then pairmux prune %s to reclaim disk",
+		size>>20, name, name))
 }
 
 // cmdVersion prints the build version.

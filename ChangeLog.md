@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `pairmux prune [name] [--older-than 7d] [--dry-run]` reclaims retained journals: dead terminals'
+  state directories and `.prev` rotation archives (including orphaned ones), never a live
+  terminal's journal, and never a directory whose write lock is held. This is the documented exit
+  for `kill`'s retain-the-journal default; `kill` and the large-journal guard now teach it.
+- `doctor` reports the bytes retained under the state namespace with the largest terminal
+  directories, and suggests `prune` once the total passes the large-journal threshold.
+- The large-journal warning is now also appended to `wait` replies. Program terminals (dev servers,
+  `tail -f`) are driven by `send`/`wait`/`peek` and previously never saw the guard even though they
+  grow journals the fastest.
+
 ### Fixed
 
 - `run` now takes the command as exactly one argument, matching the MCP `pairmux_run` contract.

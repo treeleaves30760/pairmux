@@ -112,6 +112,10 @@ func (c *Ctx) cmdWait(args []string) int {
 		if len(extraNext) > 0 {
 			e.Next = append(append([]string{}, extraNext...), e.Next...)
 		}
+		// The R3 large-journal guard must be reachable from wait: a program
+		// terminal (dev server, tail -f) is driven by send/wait/peek and never
+		// sees run's guard, yet is exactly the workload that grows fastest.
+		e.Next = appendGuard(e.Next, j, name)
 		return c.emit(e)
 	}
 	peekHint := fmt.Sprintf("pairmux peek %s", name)

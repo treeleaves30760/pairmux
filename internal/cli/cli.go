@@ -66,6 +66,8 @@ func (c *Ctx) dispatch(rest []string) int {
 		return c.cmdLs(args)
 	case "kill":
 		return c.cmdKill(args)
+	case "prune":
+		return c.cmdPrune(args)
 	case "attach":
 		return c.cmdAttach(args)
 	case "watch":
@@ -199,6 +201,7 @@ agent commands:
   log   <name> [--cmd N|--grep RE|--range A:B|A:end] bounded tail or selection  e.g. pairmux log build --cmd 2
   ls                                               list terminals + status      e.g. pairmux ls
   kill  <name> | --all                             kill terminal(s), keep logs  e.g. pairmux kill build
+  prune [name] [--older-than D] [--dry-run]        reclaim dead terminals' logs e.g. pairmux prune --older-than 7d
 
 human commands:
   attach [name]            take over the tmux session        e.g. pairmux attach build

@@ -314,6 +314,59 @@ func TestDoctorZshHooks(t *testing.T) {
 	}
 }
 
+func TestPruneLifecycle(t *testing.T) {
+	e := newEnv(t, bashShell)
+	pmx1(t, e, "new", "--name", "keepme")
+	pmx1(t, e, "new", "--name", "byebye")
+	pmx(t, e, "run", "byebye", "echo prune-me")
+
+	// A live terminal with no archive refuses a named prune.
+	env, code := pmx(t, e, "prune", "byebye")
+	if code != 1 || env.OK || env.Error == nil || env.Error.Code != output.CodeBusy {
+		t.Fatalf("prune live: code=%d env=%+v, want E_BUSY", code, env)
+	}
+
+	// kill retains the journal; prune is the documented exit and removes it.
+	kenv := pmx1(t, e, "kill", "byebye")
+	if !nextContains(kenv.Next, "pairmux prune byebye") {
+		t.Fatalf("kill next = %v, want prune hint", kenv.Next)
+	}
+	dir := terminalStatePath(e, "byebye")
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("journal not retained after kill: %v", err)
+	}
+	env = pmx1(t, e, "prune", "byebye")
+	if env.Status != "pruned" {
+		t.Fatalf("prune envelope = %+v", env)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("prune left %s (err=%v)", dir, err)
+	}
+
+	// Rotation: kill + new archives the old journal as .prev; a named prune on
+	// the now-live terminal reclaims only the archive.
+	pmx(t, e, "run", "keepme", "echo history")
+	pmx1(t, e, "kill", "keepme")
+	pmx1(t, e, "new", "--name", "keepme")
+	prev := terminalStatePath(e, "keepme") + ".prev"
+	if _, err := os.Stat(prev); err != nil {
+		t.Fatalf("rotation did not archive: %v", err)
+	}
+	env = pmx1(t, e, "prune", "keepme")
+	if env.Status != "pruned" {
+		t.Fatalf("prune archive envelope = %+v", env)
+	}
+	if _, err := os.Stat(prev); !os.IsNotExist(err) {
+		t.Fatalf("prune left archive %s", prev)
+	}
+	if _, err := os.Stat(terminalStatePath(e, "keepme")); err != nil {
+		t.Fatalf("prune touched the live terminal's journal: %v", err)
+	}
+	if senv, _ := pmx(t, e, "run", "keepme", "echo still-alive"); senv.Status != "done" {
+		t.Fatalf("live terminal broken after prune: %+v", senv)
+	}
+}
+
 // --- helpers ---
 
 func notesOf(env output.Envelope, name string) int {
