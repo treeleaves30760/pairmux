@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/treeleaves30760/pairmux/internal/core"
+	"github.com/treeleaves30760/pairmux/internal/detect"
 	"github.com/treeleaves30760/pairmux/internal/shellhooks"
 )
 
@@ -44,5 +45,24 @@ func TestShellNamePreservesConfiguredPath(t *testing.T) {
 	t.Setenv("SHELL", "/opt/homebrew/bin/fish")
 	if got := shellName(); got != "/opt/homebrew/bin/fish" {
 		t.Fatalf("shellName() = %q, want configured path", got)
+	}
+}
+
+func TestCheckSecretPromptEnv(t *testing.T) {
+	t.Setenv(detect.SecretPromptEnv, "")
+	if _, present := checkSecretPromptEnv(); present {
+		t.Fatal("check must be absent when the variable is unset")
+	}
+
+	t.Setenv(detect.SecretPromptEnv, `hasłem.*:$`)
+	ck, present := checkSecretPromptEnv()
+	if !present || !ck.ok {
+		t.Fatalf("valid pattern: check = %+v, present = %v", ck, present)
+	}
+
+	t.Setenv(detect.SecretPromptEnv, `([unclosed`)
+	ck, present = checkSecretPromptEnv()
+	if !present || ck.ok || ck.fix == "" {
+		t.Fatalf("invalid pattern must fail with a fix: %+v", ck)
 	}
 }

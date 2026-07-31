@@ -20,6 +20,25 @@ func TestIsInteractivePrompt(t *testing.T) {
 		{"[sudo] password for treeleaves:", true},
 		{"Enter passphrase for key '/home/u/.ssh/id_ed25519':", true},
 		{"Passcode:", true},
+		{"Enter PEM pass phrase:", true},
+		// non-password secret prompts (smartcards, MFA, API credentials)
+		{"Enter PIN:", true},
+		{"PIN for token 'YubiKey':", true},
+		{"MFA Token:", true},
+		{"Verification code:", true},
+		{"2FA code:", true},
+		{"Enter your API key:", true},
+		{"Client secret:", true},
+		// localized sudo password prompts (the standard translations)
+		{"[sudo] treeleaves 的密碼：", true},
+		{"[sudo] treeleaves 的密码：", true},
+		{"[sudo] Passwort für treeleaves:", true},
+		{"[sudo] Mot de passe de treeleaves :", true},
+		{"[sudo] treeleaves のパスワード:", true},
+		{"Contraseña para treeleaves:", true},
+		{"Senha para treeleaves:", true},
+		{"treeleaves의 암호:", true},
+		{"Пароль для treeleaves:", true},
 		// confirms
 		{"Do you want to continue? [Y/n]", true},
 		{"Proceed [y/N]?", true},
@@ -27,6 +46,9 @@ func TestIsInteractivePrompt(t *testing.T) {
 		{"Overwrite? (y/n)", true},
 		{"Delete branch? (yes/no)", true},
 		{"Are you sure you want to continue connecting (yes/no)?", true},
+		// multi-option confirm variants (apt, pacman, interactive rebase tools)
+		{"Apply this hunk [y/N/a]?", true},
+		{"Continue? (y/N/q)", true},
 		// pagers
 		{"--More--(56%)", true},
 		{"--More--", true},
@@ -84,11 +106,20 @@ func TestLooksSecret(t *testing.T) {
 		{"[sudo] password for treeleaves:", true},
 		{"Enter passphrase for key '/x':", true},
 		{"Passcode:", true},
+		{"Enter PIN:", true},
+		{"MFA Token:", true},
+		{"Verification code:", true},
+		{"[sudo] treeleaves 的密碼：", true},
+		{"[sudo] Passwort für treeleaves:", true},
+		{"[sudo] Mot de passe de treeleaves :", true},
+		{"[sudo] treeleaves のパスワード:", true},
 		{"Do you want to continue? [Y/n]", false},
 		{"(END)", false},
 		{"Press any key to continue", false},
 		{"/usr/local/bin:", false},
 		{"wrong password for user", false},
+		{"token refresh failed, retrying", false},
+		{"Building module pin_layout:", false},
 		{"", false},
 	}
 	for _, tt := range tests {
@@ -97,6 +128,33 @@ func TestLooksSecret(t *testing.T) {
 				t.Fatalf("LooksSecret(%q) = %v, want %v", tt.prompt, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSecretPromptEnvExtension(t *testing.T) {
+	const custom = "Autoryzacja hasłem:" // a prompt no builtin pattern knows
+	if LooksSecret(custom) {
+		t.Fatalf("control failed: %q already matches builtin patterns", custom)
+	}
+
+	t.Setenv(SecretPromptEnv, `(?i)hasłem.*:\s*$`)
+	if !LooksSecret(custom) {
+		t.Fatalf("LooksSecret(%q) = false with matching %s", custom, SecretPromptEnv)
+	}
+	if !isInteractivePrompt(custom) {
+		t.Fatalf("isInteractivePrompt(%q) = false — the extension must also upgrade running to awaiting-input", custom)
+	}
+	if !LooksSecret("Password:") {
+		t.Fatal("extension must extend, not replace, the builtin patterns")
+	}
+
+	// An invalid pattern is ignored: the builtin floor stays active.
+	t.Setenv(SecretPromptEnv, `([unclosed`)
+	if LooksSecret(custom) {
+		t.Fatalf("invalid %s must be ignored", SecretPromptEnv)
+	}
+	if !LooksSecret("Password:") {
+		t.Fatal("builtin patterns must survive an invalid extension")
 	}
 }
 

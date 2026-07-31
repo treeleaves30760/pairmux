@@ -137,9 +137,17 @@ program for a completed command. `peek`, `log`, `ls`, and `wait` do not take the
 ## Interactive work and human handoff
 
 After 800 ms of output quiet, pairmux can recognize supported prompt shapes: confirmations,
-password/passphrase/passcode prompts, pager markers, press-key messages, and Python's `>>>`.
-Recognition is heuristic. pairmux never auto-answers, and a secret-shaped response recommends human
-handoff instead of suggesting `send`.
+secret prompts (password/passphrase/passcode, PIN, OTP/MFA/verification codes, API keys, and the
+standard sudo password translations for zh/de/fr/ja/es/pt/ko/ru), pager markers, press-key
+messages, and Python's `>>>`. pairmux never auto-answers, and a secret-shaped response recommends
+human handoff instead of suggesting `send`.
+
+**Recognition is best-effort and biased toward English plus those common locales.** A prompt the
+patterns miss — an unusual wording, another locale, or a full-screen dialog like pinentry — leaves
+the terminal `running` (a false negative, never an auto-answer). If a command you know needs
+credentials sits quiet at `running`, treat that as a handoff candidate: `peek --screen`, then
+`wait --human --notify`. Set `PAIRMUX_SECRET_PROMPT_RE` to an RE2 pattern to extend (never
+replace) the builtin secret recognition for your environment; `pairmux doctor` validates it.
 
 This safe demo creates its terminal first and uses a disposable input value. The simulated program
 turns terminal echo off before reading:

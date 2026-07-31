@@ -86,8 +86,10 @@ pairmux --json peek review
 
 ## Secret prompts
 
-For recognized password, passphrase, and passcode prompts, pairmux removes `send` from the suggested
-next steps and recommends handoff:
+For recognized secret prompts — password/passphrase/passcode, PIN, one-time and verification
+codes, API keys, tokens, and localized sudo password prompts — pairmux removes `send` from the
+suggested next steps and recommends handoff (recognition is best-effort; a known credential prompt
+sitting quiet at `running` deserves the same handoff even without the classification):
 
 ```json
 {"schema":"pairmux.v1","ok":true,"status":"awaiting-input","terminal":"login","mode":"hooks","output":"Password: ","next":["do NOT guess or type secrets","pairmux wait login --human --notify   # hand off to the human"]}
