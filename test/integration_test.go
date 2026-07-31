@@ -200,7 +200,7 @@ func TestRunExitCodes(t *testing.T) {
 		t.Fatalf("run false: %+v", env)
 	}
 
-	env, _ = pmx(t, e, "run", "t1", "echo", "marker42")
+	env, _ = pmx(t, e, "run", "t1", "echo marker42")
 	if !strings.Contains(env.Output, "marker42") {
 		t.Fatalf("run echo output = %q, want marker42", env.Output)
 	}
@@ -210,7 +210,7 @@ func TestRunTruncationAndLog(t *testing.T) {
 	e := newEnv(t, bashShell)
 	pmx(t, e, "new", "--name", "t1")
 
-	env, _ := pmx(t, e, "run", "t1", "seq", "1", "5000")
+	env, _ := pmx(t, e, "run", "t1", "seq 1 5000")
 	if env.Status != "done" {
 		t.Fatalf("run seq: %+v", env)
 	}
@@ -242,7 +242,7 @@ func TestTimeoutAndLazySettlement(t *testing.T) {
 	e := newEnv(t, bashShell)
 	pmx(t, e, "new", "--name", "t1")
 
-	env, code := pmx(t, e, "run", "t1", "sleep", "3", "--timeout", "1s")
+	env, code := pmx(t, e, "run", "t1", "sleep 3", "--timeout", "1s")
 	if code != 0 || env.Status != "running" {
 		t.Fatalf("run sleep timeout: code=%d env=%+v", code, env)
 	}
@@ -255,7 +255,7 @@ func TestTimeoutAndLazySettlement(t *testing.T) {
 	waitStatus(t, e, "t1", "idle", 8*time.Second)
 
 	// The next run settles the timed-out command (writes its cmd_end) then runs.
-	env, _ = pmx(t, e, "run", "t1", "echo", "settled")
+	env, _ = pmx(t, e, "run", "t1", "echo settled")
 	if env.Status != "done" || !strings.Contains(env.Output, "settled") {
 		t.Fatalf("settling run: %+v", env)
 	}
@@ -322,7 +322,7 @@ func TestLsLifecycle(t *testing.T) {
 		t.Fatalf("a status = %q, want idle", got)
 	}
 
-	pmx(t, e, "run", "a", "sleep", "3", "--timeout", "1s")
+	pmx(t, e, "run", "a", "sleep 3", "--timeout", "1s")
 	env, _ = pmx(t, e, "ls")
 	if statusOf(env, "a") != "running" {
 		t.Fatalf("a should be running: %+v", env.Terminals)
@@ -345,7 +345,7 @@ func TestSentinelMode(t *testing.T) {
 		t.Fatalf("dash should be sentinel mode: %+v", env)
 	}
 
-	env, _ = pmx(t, e, "run", "d1", "echo", "sentinelout")
+	env, _ = pmx(t, e, "run", "d1", "echo sentinelout")
 	if env.Status != "done" || env.ExitCode == nil || *env.ExitCode != 0 {
 		t.Fatalf("sentinel run: %+v", env)
 	}
@@ -380,7 +380,7 @@ func TestProgramTerminalLifecycleAndRefusesRun(t *testing.T) {
 		t.Fatalf("ls live program status = %q, want running", got)
 	}
 
-	env, code = pmx(t, e, "run", "prog", "echo", "x")
+	env, code = pmx(t, e, "run", "prog", "echo x")
 	if code != 1 || env.OK || env.Error == nil || env.Error.Code != output.CodeBadArgs {
 		t.Fatalf("run on program terminal: code=%d env=%+v", code, env)
 	}
@@ -402,7 +402,7 @@ func TestProgramTerminalLifecycleAndRefusesRun(t *testing.T) {
 func TestUnknownTerminalListsNames(t *testing.T) {
 	e := newEnv(t, bashShell)
 	pmx(t, e, "new", "--name", "known")
-	env, code := pmx(t, e, "run", "ghost", "echo", "hi")
+	env, code := pmx(t, e, "run", "ghost", "echo hi")
 	if code != 1 || env.Error == nil || env.Error.Code != output.CodeNoTerminal {
 		t.Fatalf("run ghost: code=%d env=%+v", code, env)
 	}

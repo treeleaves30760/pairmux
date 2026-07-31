@@ -140,9 +140,12 @@ pairmux --json new --name prog --cmd "cat"
 Send a command and **block until it completes, a quiet interactive prompt appears, or `--timeout` elapses**. Returns shaped output; a completed command also carries its exit code and duration. Takes the per-terminal writer lock.
 
 ```text
-pairmux run <name> <cmd...> [--timeout 60s] [--head 50] [--tail 200]
+pairmux run <name> "<cmd>" [--timeout 60s] [--head 50] [--tail 200]
 ```
 
+- The command is **one quoted argument**, matching the MCP tool contract. Passing multiple command
+  tokens is an `E_BAD_ARGS` error whose hint shows the correctly quoted form — quoting your own
+  shell consumed (`run t git commit -m "two words"`) can never be silently re-split.
 - `--timeout` — Go duration (e.g. `90s`, `5m`). Default `60s`. If the deadline arrives without completion or a recognized prompt, the reply is `status: running`, not an error.
 - `--head N` / `--tail N` — how many leading/trailing lines to keep (defaults 50 / 200). Middle lines are elided with a `truncated` pointer.
 

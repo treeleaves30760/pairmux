@@ -193,7 +193,7 @@ func TestLegacyDefaultLiveTerminalRemainsOperable(t *testing.T) {
 		t.Fatalf("simulate pre-namespace legacy layout: %v", err)
 	}
 
-	run, code := pmx(t, e, "run", "legacy", "echo", "legacy-ok")
+	run, code := pmx(t, e, "run", "legacy", "echo legacy-ok")
 	if code != 0 || run.Status != "done" || !strings.Contains(run.Output, "legacy-ok") {
 		t.Fatalf("run against live legacy state: code=%d env=%+v", code, run)
 	}
@@ -303,7 +303,7 @@ func TestConcurrentNewSameNameCreatesExactlyOnePane(t *testing.T) {
 func TestWaitIdleDoesNotTreatQuietPendingCommandAsIdle(t *testing.T) {
 	e := newEnv(t, bashShell)
 	pmx(t, e, "new", "--name", "quiet")
-	running, code := pmx(t, e, "run", "quiet", "sleep", "3", "--timeout", "200ms")
+	running, code := pmx(t, e, "run", "quiet", "sleep 3", "--timeout", "200ms")
 	if code != 0 || running.Status != "running" {
 		t.Fatalf("run quiet sleep: code=%d env=%+v", code, running)
 	}
