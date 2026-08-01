@@ -116,9 +116,20 @@ class VerifyReleaseTest(unittest.TestCase):
             root = Path(td)
             dist = self.make_fixture(root)
             entries = json.loads((dist / "artifacts.json").read_text(encoding="utf-8"))
-            entries.append({"type": "Homebrew Cask", "name": "pairmux.rb", "path": "outside"})
+            entries.append({"type": "SBOM", "name": "pairmux.spdx.json", "path": "outside"})
             (dist / "artifacts.json").write_text(json.dumps(entries), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "unexpected artifact types"):
+                verify_release.verify_release(dist, "v1.2.3", "abc123", root / "staged")
+
+    def test_rejects_duplicate_homebrew_cask(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            dist = self.make_fixture(root)
+            entries = json.loads((dist / "artifacts.json").read_text(encoding="utf-8"))
+            cask = next(entry for entry in entries if entry["type"] == "Homebrew Cask")
+            entries.append(dict(cask))
+            (dist / "artifacts.json").write_text(json.dumps(entries), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Homebrew Cask"):
                 verify_release.verify_release(dist, "v1.2.3", "abc123", root / "staged")
 
     def test_rejects_unexpected_archive_member(self):
