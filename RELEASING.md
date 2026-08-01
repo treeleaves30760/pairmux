@@ -71,6 +71,24 @@ stable release, together with an SBOM and build provenance, but they are
 deliberately decoupled from shipping the tap: the cask installs from the same
 checksummed tarball `install.sh` already uses.
 
+## Recovering a partially published release
+
+Wheels embed the Go binary whose build stamps `mod_timestamp` from the commit,
+so **artifacts are not reproducible across commits** and PyPI forbids filename
+reuse. Consequences, learned on v0.2.0:
+
+- Once the PyPI step has succeeded, **never delete/re-point the tag and rerun
+  the workflow** — the rerun rebuilds different bytes and dies at PyPI with
+  "File already exists". Complete the remaining steps manually instead:
+  undraft with `gh release edit vX.Y.Z --draft=false`, download the run's
+  `validated-homebrew-cask` artifact, verify its sha256 values against the
+  release's `checksums.txt`, and push it to the tap with the contents API
+  (same call as the workflow step).
+- Deleting a release's tag flips the published release back to **draft**;
+  restoring the tag does not un-draft it.
+- Smoke-test after recovery: `brew tap treeleaves30760/pairmux` and
+  `brew fetch --cask treeleaves30760/pairmux/pairmux` must verify checksums.
+
 ## APT repository
 
 The signed APT repository lives in
