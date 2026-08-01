@@ -22,7 +22,7 @@ TARGETS = (
     ("linux", "arm64"),
 )
 PACKAGE_FORMATS = ("deb", "rpm")
-ALLOWED_TYPES = {"Metadata", "Binary", "Archive", "Linux Package", "Checksum"}
+ALLOWED_TYPES = {"Metadata", "Binary", "Archive", "Linux Package", "Checksum", "Homebrew Cask"}
 
 
 def fail(message: str) -> None:
@@ -147,6 +147,10 @@ def verify_release(dist_dir: Path, tag: str, commit: str, out_dir: Path) -> List
                for kind in ALLOWED_TYPES}
     if len(grouped["Metadata"]) != 1 or len(grouped["Checksum"]) != 1:
         fail("expected exactly one Metadata and one Checksum artifact")
+    # The cask is not a staged release asset — the release workflow pushes it
+    # to the tap separately — but its presence is part of the exact inventory.
+    if len(grouped["Homebrew Cask"]) != 1:
+        fail("expected exactly one Homebrew Cask artifact")
     binaries = one_by_target(grouped["Binary"], "Binary")
     archives = one_by_target(grouped["Archive"], "Archive")
 

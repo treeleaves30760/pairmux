@@ -64,6 +64,11 @@ class VerifyReleaseTest(unittest.TestCase):
             for path in sorted(public)
         ), encoding="utf-8")
         entries.append({"type": "Checksum", "name": "checksums.txt", "path": str(checksums)})
+
+        cask = dist / "homebrew" / "Casks" / "pairmux.rb"
+        cask.parent.mkdir(parents=True)
+        cask.write_text('cask "pairmux" do\nend\n', encoding="utf-8")
+        entries.append({"type": "Homebrew Cask", "name": "pairmux.rb", "path": str(cask)})
         (dist / "metadata.json").write_text(json.dumps({
             "tag": tag, "version": version, "commit": commit,
         }), encoding="utf-8")
@@ -94,6 +99,16 @@ class VerifyReleaseTest(unittest.TestCase):
             rows = (dist / "checksums.txt").read_text(encoding="utf-8").splitlines()
             (dist / "checksums.txt").write_text("\n".join(rows[:-1]) + "\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "checksum filenames"):
+                verify_release.verify_release(dist, "v1.2.3", "abc123", root / "staged")
+
+    def test_rejects_missing_homebrew_cask(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            dist = self.make_fixture(root)
+            entries = json.loads((dist / "artifacts.json").read_text(encoding="utf-8"))
+            entries = [entry for entry in entries if entry["type"] != "Homebrew Cask"]
+            (dist / "artifacts.json").write_text(json.dumps(entries), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Homebrew Cask"):
                 verify_release.verify_release(dist, "v1.2.3", "abc123", root / "staged")
 
     def test_rejects_unexpected_publishable_type(self):
