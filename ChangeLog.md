@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-01
+
 ### Added
 
 - `pairmux prune [name] [--older-than 7d] [--dry-run]` reclaims retained journals: dead terminals'
@@ -147,6 +149,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stable `error.code` values (`E_NO_TERMINAL`, `E_EXISTS`, `E_BUSY`, `E_DEAD`, `E_BAD_ARGS`,
   `E_TMUX`, `E_INTERNAL`).
 
-[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/treeleaves30760/pairmux/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/treeleaves30760/pairmux/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/treeleaves30760/pairmux/releases/tag/v0.1.0
