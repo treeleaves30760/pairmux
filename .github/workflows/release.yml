@@ -279,10 +279,14 @@ jobs:
               exit 0
               ;;
           esac
-          test -n "$TAP_TOKEN"
-          cask=dist/homebrew/pairmux.rb
-          test -s "$cask"
-          grep -qF "download/$GITHUB_REF_NAME/" "$cask"
+          test -n "$TAP_TOKEN" || { echo "HOMEBREW_TAP_GITHUB_TOKEN is empty" >&2; exit 1; }
+          echo "downloaded cask artifact contents:"
+          find dist/homebrew -type f -print
+          cask=$(find dist/homebrew -name 'pairmux.rb' -type f | head -1)
+          test -n "$cask" || { echo "pairmux.rb not found in the artifact" >&2; exit 1; }
+          test -s "$cask" || { echo "$cask is empty" >&2; exit 1; }
+          echo "cask release URLs:"
+          grep -F "download/$GITHUB_REF_NAME/" "$cask"
           content=$(base64 < "$cask" | tr -d '\n')
           sha=$(
             GH_TOKEN="$TAP_TOKEN" gh api \
