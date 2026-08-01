@@ -61,6 +61,17 @@ Release artifacts target:
 | Linux | x86-64, ARM64/aarch64 | PyPI wheels use the `manylinux_2_17` / glibc 2.17+ tags |
 | Windows | No native artifact | Use a compatible Linux distribution inside WSL |
 
+### Homebrew (macOS and Linuxbrew)
+
+The tap cask installs pairmux **and its tmux dependency** in one command, and strips the
+quarantine attribute so the binary runs without a Gatekeeper prompt:
+
+```bash
+brew install --cask treeleaves30760/pairmux/pairmux
+```
+
+Available from v0.2.0; the cask is republished automatically with every stable release.
+
 ### PyPI
 
 Install the platform wheel with an isolated tool manager, or use `pip` inside a dedicated virtual

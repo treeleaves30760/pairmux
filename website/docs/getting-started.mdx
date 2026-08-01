@@ -37,6 +37,17 @@ the managed session so a human can collaborate in the same pane.
 ## Install
 
 <Tabs groupId="install">
+<TabItem value="brew" label="Homebrew">
+
+The tap cask installs pairmux **and its tmux dependency** in one command (macOS and Linuxbrew),
+and strips the quarantine attribute so the binary runs without a Gatekeeper prompt. Available from
+v0.2.0; republished automatically with every stable release:
+
+```bash
+brew install --cask treeleaves30760/pairmux/pairmux
+```
+
+</TabItem>
 <TabItem value="uv" label="uv / pipx" default>
 
 Platform wheels bundle the binary, so `uv` or `pipx` installs pairmux like any other tool:
