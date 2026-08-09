@@ -35,6 +35,13 @@
 
 set -eu
 
+# Pattern brackets match by locale collation, not bytes: under locales such as
+# zh_TW.UTF-8 a range like [!-~] excludes characters it plainly contains in
+# ASCII, so a valid token gets rejected. Same trap as
+# scripts/validate-commit-subjects.sh.
+LC_ALL=C
+export LC_ALL
+
 REPO=${PAIRMUX_REPO:-treeleaves30760/pairmux}
 TAP=${PAIRMUX_TAP_REPO:-treeleaves30760/homebrew-pairmux}
 SECRET=HOMEBREW_TAP_GITHUB_TOKEN
@@ -98,7 +105,7 @@ printf '\n' >&2
 
 [ -n "$TOKEN" ] || die "empty token — nothing stored (this is trap 1 above)"
 case $TOKEN in
-  *[!!-~]*) die "token contains whitespace or control characters; re-copy it" ;;
+  *[[:space:]]*) die "token contains whitespace; re-copy it without a line break" ;;
 esac
 
 echo "checking the token can read $CASK ..."
