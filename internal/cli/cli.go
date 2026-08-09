@@ -196,7 +196,7 @@ agent commands:
   new   [--name N] [--cwd D] [--cmd "..."]         create a terminal            e.g. pairmux new --name build
   run   <name> "<cmd>" [--timeout 60s] [--head N] [--tail N]  run and wait      e.g. pairmux run build "make -j4"
   peek  <name> [--screen | --tail N]               recent output + status       e.g. pairmux peek build
-  wait  <name> [--idle MS] [--pattern RE] [--human] [--notify] [--timeout D]  e.g. pairmux wait build --pattern "listening"
+  wait  <name> [--idle MS] [--pattern RE] [--done] [--human] [--notify] [--timeout D]  e.g. pairmux wait build --done
   send  <name> [--text S] [--key K] [--enter]      send input to a program      e.g. pairmux send build --text y --enter
   log   <name> [--cmd N|--grep RE|--range A:B|A:end] bounded tail or selection  e.g. pairmux log build --cmd 2
   ls                                               list terminals + status      e.g. pairmux ls

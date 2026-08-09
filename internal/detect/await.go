@@ -130,16 +130,29 @@ func Refine(j *journal.Journal, st core.Status, mode core.Mode) (core.Status, st
 	if !ok || time.Since(mt) < refineQuiet {
 		return st, ""
 	}
-	data, _, err := j.TailBytes(refineTail)
-	if err != nil || len(data) == 0 {
-		return st, ""
-	}
-	shaped := shape.StripANSI(shape.CollapseCR(data))
-	line := lastNonBlankLine(string(shaped))
-	if line == "" || !isInteractivePrompt(line) {
+	line, prompt := PromptPending(j)
+	if !prompt {
 		return st, ""
 	}
 	return core.StatusAwaitingInput, line
+}
+
+// PromptPending reports the journal's current last non-blank line and whether it
+// still looks like a program waiting for an answer. It is Refine without the
+// quiescence requirement, for a caller watching a prompt it already knows about:
+// such a caller does not need to be told a prompt exists, it needs to know
+// whether that prompt is still the last thing on screen *right now*, including
+// while output is flowing. Read-only and non-blocking.
+func PromptPending(j *journal.Journal) (string, bool) {
+	data, _, err := j.TailBytes(refineTail)
+	if err != nil || len(data) == 0 {
+		return "", false
+	}
+	line := lastNonBlankLine(string(shape.StripANSI(shape.CollapseCR(data))))
+	if line == "" {
+		return "", false
+	}
+	return line, isInteractivePrompt(line)
 }
 
 // lastNonBlankLine returns the trimmed final line of s that has any
@@ -190,10 +203,6 @@ func waitCompletionCorrelated(j *journal.Journal, from int64, timeout, poll time
 	var heldD *Mark
 	var graceUntil time.Time
 
-	done := func(m Mark) RunResult {
-		return RunResult{Outcome: OutcomeDone, ExitCode: m.ExitCode, MarkStart: m.Start, EndOffset: m.End}
-	}
-
 	for {
 		if size := j.Size(); size > off {
 			data, err := j.ReadRange(off, size)
@@ -214,7 +223,7 @@ func waitCompletionCorrelated(j *journal.Journal, from int64, timeout, poll time
 						}
 					case MarkD:
 						if seenC {
-							return done(m), nil
+							return doneResult(m), nil
 						}
 						if heldD == nil {
 							d := m
@@ -228,7 +237,7 @@ func waitCompletionCorrelated(j *journal.Journal, from int64, timeout, poll time
 
 		now := time.Now()
 		if heldD != nil && !now.Before(graceUntil) {
-			return done(*heldD), nil
+			return doneResult(*heldD), nil
 		}
 		if stopOnPrompt {
 			if status, prompt := Refine(j, core.StatusRunning, core.ModeHooks); status == core.StatusAwaitingInput {
@@ -240,7 +249,7 @@ func waitCompletionCorrelated(j *journal.Journal, from int64, timeout, poll time
 		}
 		if !now.Before(deadline) {
 			if heldD != nil {
-				return done(*heldD), nil
+				return doneResult(*heldD), nil
 			}
 			return RunResult{Outcome: OutcomeTimeout, ExitCode: -1, MarkStart: -1, EndOffset: off}, nil
 		}

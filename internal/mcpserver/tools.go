@@ -90,12 +90,13 @@ func tools() []tool {
 			definition: toolDefinition{
 				Name:        "pairmux_wait",
 				Title:       "Wait for terminal condition",
-				Description: "Block until the configured idle, output-pattern, or human-note condition is met, the terminal dies, or the timeout expires. Default and explicit idle waits also return when the program needs input. Setting notify may send a desktop notification.",
+				Description: "Block until the configured completion, idle, output-pattern, or human-handoff condition is met, the terminal dies, or the timeout expires. Default and explicit idle waits also return when the program needs input. Any number of agents may wait on one terminal at once, so done is a broadcast every subscriber wakes on. Setting notify may send a desktop notification.",
 				InputSchema: objectSchema(map[string]any{
 					"terminal": stringProperty("Existing pairmux terminal name."),
 					"idle_ms":  integerProperty("Required output-quiescence interval in milliseconds.", 1),
 					"pattern":  stringProperty("RE2 regular expression matched against new shaped output."),
-					"human":    booleanProperty("Wait for a human note."),
+					"human":    booleanProperty("Hand off to a human: wait for a note, or for the prompt the handoff was about to be answered. Withholds output, so a secret typed into the pane is never quoted back."),
+					"done":     booleanProperty("Wait for the running command to finish, or for the next one when the terminal is idle. Reports its exit code. Shell terminals only."),
 					"notify":   booleanProperty("Send a best-effort desktop notification."),
 					"timeout":  stringProperty("Overall deadline as a Go duration, for example 300s."),
 				}, "terminal"),
@@ -279,7 +280,7 @@ func buildPeek(a arguments) ([]string, error) {
 }
 
 func buildWait(a arguments) ([]string, error) {
-	if err := a.allow("terminal", "idle_ms", "pattern", "human", "notify", "timeout"); err != nil {
+	if err := a.allow("terminal", "idle_ms", "pattern", "human", "done", "notify", "timeout"); err != nil {
 		return nil, err
 	}
 	terminal, err := a.requiredString("terminal")
@@ -297,7 +298,7 @@ func buildWait(a arguments) ([]string, error) {
 	} else if present {
 		argv = append(argv, "--pattern", pattern)
 	}
-	for _, field := range []struct{ property, flag string }{{"human", "--human"}, {"notify", "--notify"}} {
+	for _, field := range []struct{ property, flag string }{{"human", "--human"}, {"done", "--done"}, {"notify", "--notify"}} {
 		if value, _, err := a.optionalBool(field.property); err != nil {
 			return nil, err
 		} else if value {
