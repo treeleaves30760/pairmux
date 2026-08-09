@@ -36,7 +36,14 @@ Linux packages, install script, and documentation site. The companion
    goreleaser release --snapshot --clean --skip=publish
    ```
 
-4. Verify the GitHub repository settings and PyPI credential preflight.
+4. Verify the GitHub repository settings and PyPI credential preflight. After
+   any rotation of `HOMEBREW_TAP_GITHUB_TOKEN`, run the **Tap credential**
+   workflow (`gh workflow run tap-credential.yml`): only Actions can read the
+   secret, so a value that was mistyped into `gh secret set` is invisible until
+   something uses it — and the release job uses it after PyPI. The workflow
+   proves read *and* write against the tap and removes its own probe file. The
+   release preflight repeats the read check for stable tags, so a broken token
+   now fails the run before anything is published.
 5. Create and push an annotated SemVer tag from `main`, for example
    `git tag -a v0.1.0 -m 'chore: release-v0-1-0'`.
 6. Watch the tag workflow. Confirm the draft release contains nine native
@@ -86,6 +93,15 @@ reuse. Consequences, learned on v0.2.0:
   (same call as the workflow step).
 - Deleting a release's tag flips the published release back to **draft**;
   restoring the tag does not un-draft it.
+- A failed publish job cannot simply be re-run: its preflight refuses a tag
+  whose release already exists and is no longer a draft. Complete by hand.
+- v0.3.0 hit exactly this with the tap token (`403 Resource not accessible by
+  personal access token`) *after* PyPI and the public release had both
+  succeeded. The manual completion above worked unchanged: download
+  `validated-homebrew-cask`, match its four sha256 values against the release's
+  `checksums.txt`, PUT it with the contents API, read back and byte-compare,
+  then `brew fetch --cask` to confirm. The preflight added afterwards is what
+  stops that ordering from recurring.
 - Smoke-test after recovery: `brew tap treeleaves30760/pairmux` and
   `brew fetch --cask treeleaves30760/pairmux/pairmux` must verify checksums.
 

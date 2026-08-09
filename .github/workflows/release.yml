@@ -140,10 +140,27 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          TAP_REPO: treeleaves30760/homebrew-pairmux
         run: |
           set -euo pipefail
           test -n "$GH_TOKEN"
           test -n "$UV_PUBLISH_TOKEN"
+          # The tap token is the last credential the job uses and the only one
+          # exercised after PyPI, which cannot be re-published for a tag. Prove
+          # it reaches the cask now, while failing still costs nothing: v0.3.0
+          # published to PyPI and went public before a 403 here stopped the tap
+          # push, leaving the release to be completed by hand.
+          if [[ "$GITHUB_REF_NAME" != *-* ]]; then
+            test -n "$TAP_TOKEN"
+            GH_TOKEN="$TAP_TOKEN" gh api \
+              "repos/$TAP_REPO/contents/Casks/pairmux.rb" --jq .sha >/dev/null || {
+              echo "HOMEBREW_TAP_GITHUB_TOKEN cannot read $TAP_REPO — check the secret's" >&2
+              echo "value, and that its fine-grained PAT grants Contents on that repo." >&2
+              echo "Run the tap-credential workflow for a full read/write check." >&2
+              exit 1
+            }
+          fi
           test "$(find dist/release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 9
           test "$(find dist/wheels -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')" -eq 4
           gh auth status
