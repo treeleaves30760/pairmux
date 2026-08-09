@@ -114,7 +114,7 @@ func TestTerminalIdleAfterQuietRequiresCompletedPendingCommand(t *testing.T) {
 		}
 	}
 	backdate()
-	if status, _, terminal := terminalStatusAfterQuiet(j, true, core.ModeHooks, false, time.Second); terminal || status != core.StatusRunning {
+	if status, _, terminal := terminalStatusAfterQuiet(j, true, core.ModeHooks, false, time.Second, ""); terminal || status != core.StatusRunning {
 		t.Fatal("quiet pending command reported idle without a completion mark")
 	}
 
@@ -130,7 +130,7 @@ func TestTerminalIdleAfterQuietRequiresCompletedPendingCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	backdate()
-	if status, _, terminal := terminalStatusAfterQuiet(j, true, core.ModeHooks, false, time.Second); !terminal || status != core.StatusIdle {
+	if status, _, terminal := terminalStatusAfterQuiet(j, true, core.ModeHooks, false, time.Second, ""); !terminal || status != core.StatusIdle {
 		t.Fatal("completed pending command should be idle after output quiesces")
 	}
 }
@@ -156,12 +156,12 @@ func TestTerminalStatusAfterQuietSurfacesPromptAndDeath(t *testing.T) {
 	}
 
 	j := newJournal(t, "Continue [y/N]? ")
-	if status, prompt, terminal := terminalStatusAfterQuiet(j, true, core.ModeHooks, false, time.Second); !terminal || status != core.StatusAwaitingInput || !strings.Contains(prompt, "[y/N]") {
+	if status, prompt, terminal := terminalStatusAfterQuiet(j, true, core.ModeHooks, false, time.Second, ""); !terminal || status != core.StatusAwaitingInput || !strings.Contains(prompt.Line, "[y/N]") {
 		t.Fatalf("prompt status = (%q, %q, %v), want awaiting-input", status, prompt, terminal)
 	}
 
 	j = newJournal(t, "quiet\n")
-	if status, _, terminal := terminalStatusAfterQuiet(j, false, core.ModeHooks, false, time.Second); !terminal || status != core.StatusDead {
+	if status, _, terminal := terminalStatusAfterQuiet(j, false, core.ModeHooks, false, time.Second, ""); !terminal || status != core.StatusDead {
 		t.Fatalf("dead status = (%q, %v), want dead", status, terminal)
 	}
 }
@@ -175,10 +175,10 @@ func TestProgramTerminalStatusStaysRunningUntilPaneDies(t *testing.T) {
 	if status := deriveTerminalStatus(j, true, core.ModeSentinel, true); status != core.StatusRunning {
 		t.Fatalf("live program status = %q, want running", status)
 	}
-	if status, _, terminal := terminalStatusAfterQuiet(j, true, core.ModeSentinel, true, time.Second); terminal || status != core.StatusRunning {
+	if status, _, terminal := terminalStatusAfterQuiet(j, true, core.ModeSentinel, true, time.Second, ""); terminal || status != core.StatusRunning {
 		t.Fatalf("quiet live program = (%q, %v), want non-terminal running", status, terminal)
 	}
-	if status, _, terminal := terminalStatusAfterQuiet(j, false, core.ModeSentinel, true, time.Second); !terminal || status != core.StatusDead {
+	if status, _, terminal := terminalStatusAfterQuiet(j, false, core.ModeSentinel, true, time.Second, ""); !terminal || status != core.StatusDead {
 		t.Fatalf("exited program = (%q, %v), want terminal dead", status, terminal)
 	}
 }

@@ -19,23 +19,30 @@ pairmux run deploy "terraform apply"
 pairmux send deploy --text yes --enter
 ```
 
-pairmux recognizes `[y/N]`/`[y/N/a]`, `(yes/no)`, secret prompts (`password:`, `PIN:`, OTP/MFA and
-verification codes, API keys, and the standard localized sudo password prompts), pagers
-(`--More--`, `(END)`, a bare `:`), and "press any key". It **never auto-answers** — it only reports
-the state, and you decide.
+pairmux decides this mostly from the **terminal itself**, not from the words on it:
 
-Recognition is **best-effort and biased toward English plus common locales**. A prompt outside the
-patterns (unusual wording, another locale, a full-screen dialog like pinentry) is a false negative:
-the terminal just stays `running`. When a command you KNOW needs credentials sits quiet at
-`running`, treat that as a secret prompt anyway — `peek --screen` to confirm what is on screen,
-then hand off. Setting `PAIRMUX_SECRET_PROMPT_RE` to an RE2 pattern extends (never replaces) the
-builtin secret recognition; `pairmux doctor` validates it.
+- **Echo off while a whole line is still being read is a credential prompt.** That is what
+  `getpass()` does, and sudo, ssh, git, gpg, pinentry and npm all do it. It is a fact about the
+  terminal, so it holds for any wording, any language, and any tool — including ones pairmux has
+  never heard of. These are classified secret and you are told not to answer.
+- **A recognized phrasing** — `[y/N]`, `(yes/no)`, `password:`, `PIN:`, OTP/MFA codes, API keys,
+  pagers (`--More--`, `(END)`, a bare `:`), "press any key" — classifies without waiting.
+- **Anything else that goes quiet mid-line** for ten seconds is reported too, marked as
+  unrecognized. That is how an unusual question still reaches you; it is also what a command that
+  printed `Building... ` and went to work looks like, so the reply tells you to look before you
+  answer, and offers `wait --done` in case it is simply still working.
+
+It **never auto-answers** — it reports the state, and you decide.
+
+`PAIRMUX_SECRET_PROMPT_RE` still extends the phrase list for a prompt that echoes what you type and
+is nonetheless sensitive; `pairmux doctor` validates it. It is rarely needed now: a prompt that
+hides your typing is already classified without it.
 
 ## The never-guess-secrets rule
 
-When the prompt is secret-shaped — a **password, passphrase, passcode, PIN, one-time or
-verification code, API key, or token** — pairmux classifies it as a secret and
-refuses to offer an answer. It points at a human handoff instead:
+When the terminal is hiding what gets typed, or the wording is secret-shaped — a **password,
+passphrase, passcode, PIN, one-time or verification code, API key, or token** — pairmux classifies
+it as a secret and refuses to offer an answer. It points at a human handoff instead:
 
 ```json
 {"schema":"pairmux.v1","ok":true,"status":"awaiting-input","terminal":"dbmigrate","mode":"hooks","output":"\nPassword: ","next":["do NOT guess or type secrets","pairmux wait dbmigrate --human --notify   # hand off to the human"]}

@@ -136,7 +136,7 @@ func (c *Ctx) cmdWait(args []string) int {
 	// why a cmd_start with no cmd_end is no proof a command is still running: one
 	// that finished during an earlier wait stays pending until the next run
 	// records its end. Derive the real status before trusting the event.
-	startStatus, _ := detect.Refine(j, deriveTerminalStatus(j, term.Alive, term.Mode, program), term.Mode)
+	startStatus, _ := detect.Classify(j, deriveTerminalStatus(j, term.Alive, term.Mode, program), term.Mode, term.Meta.Tty)
 	pending, hasPending, _ := j.PendingCmd()
 	inFlight := hasPending && (startStatus == core.StatusRunning || startStatus == core.StatusAwaitingInput)
 
@@ -287,7 +287,7 @@ func (c *Ctx) cmdWait(args []string) int {
 				}
 				return c.tmuxErr(err)
 			}
-			status, prompt, terminal := terminalStatusAfterQuiet(j, current.Alive, term.Mode, current.Meta.Shell == "", idleFor)
+			status, prompt, terminal := terminalStatusAfterQuiet(j, current.Alive, term.Mode, current.Meta.Shell == "", idleFor, term.Meta.Tty)
 			// awaiting-input is the reason a handoff exists, never its outcome:
 			// returning it to an agent that is already handing off only sends it
 			// round the same loop. --human waits for the prompt to be answered.
@@ -300,7 +300,7 @@ func (c *Ctx) cmdWait(args []string) int {
 				body := ""
 				switch status {
 				case core.StatusAwaitingInput:
-					body = prompt
+					body = prompt.Line
 				case core.StatusDead:
 					body = waitCurrentTail(j)
 				}
@@ -491,11 +491,11 @@ func journalQuiet(j *journal.Journal, idle time.Duration) bool {
 // terminal idleness. It completes the wait only for actionable terminal
 // states: true idle, awaiting input, or dead. A quiet running/unknown command
 // keeps waiting and can time out without suggesting another run.
-func terminalStatusAfterQuiet(j *journal.Journal, alive bool, mode core.Mode, program bool, idle time.Duration) (core.Status, string, bool) {
+func terminalStatusAfterQuiet(j *journal.Journal, alive bool, mode core.Mode, program bool, idle time.Duration, tty string) (core.Status, detect.Prompt, bool) {
 	if !journalQuiet(j, idle) {
-		return core.StatusUnknown, "", false
+		return core.StatusUnknown, detect.Prompt{}, false
 	}
-	status, prompt := detect.Refine(j, deriveTerminalStatus(j, alive, mode, program), mode)
+	status, prompt := detect.Classify(j, deriveTerminalStatus(j, alive, mode, program), mode, tty)
 	switch status {
 	case core.StatusIdle, core.StatusAwaitingInput, core.StatusDead:
 		return status, prompt, true

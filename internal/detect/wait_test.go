@@ -125,11 +125,11 @@ func TestWaitCommandReturnsQuietPromptBeforeTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := time.Now()
-	res, err := WaitCommand(j, 0, core.ModeHooks, 5*time.Second, 20*time.Millisecond)
+	res, err := WaitCommand(j, 0, core.ModeHooks, 5*time.Second, 20*time.Millisecond, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Outcome != OutcomeAwaitingInput || res.Prompt != "Continue [y/N]?" {
+	if res.Outcome != OutcomeAwaitingInput || res.Prompt.Line != "Continue [y/N]?" {
 		t.Fatalf("result = %+v, want awaiting-input prompt", res)
 	}
 	if elapsed := time.Since(started); elapsed > time.Second {

@@ -56,8 +56,14 @@ type Event struct {
 
 // Meta is meta.json for one terminal.
 type Meta struct {
-	Name      string    `json:"name"`
-	PaneID    string    `json:"pane_id"`
+	Name   string `json:"name"`
+	PaneID string `json:"pane_id"`
+	// Tty is the pane's terminal device, recorded once at creation because it
+	// never changes for the life of a pane. Prompt classification reads its line
+	// discipline; keeping it here means that costs no tmux call per poll, which
+	// matters when several agents watch one terminal. Empty for terminals
+	// created before this was recorded — classification then uses wording alone.
+	Tty       string    `json:"tty,omitempty"`
 	Shell     string    `json:"shell"`
 	Mode      Mode      `json:"mode"`
 	Socket    string    `json:"socket"`
