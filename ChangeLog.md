@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The release job validated every credential except the one it used last. The
+  Homebrew tap token was first exercised after PyPI — which cannot be
+  republished for a tag — and after the GitHub release went public, so v0.3.0's
+  `403 Resource not accessible by personal access token` could only surface in
+  the one position where recovery has to be manual. The preflight now proves
+  the tap token can reach the cask for stable tags, before anything publishes,
+  and a manual **Tap credential** workflow proves read *and* write after a
+  rotation: only Actions can read the secret, so a value mistyped into
+  `gh secret set` is otherwise invisible until a release depends on it.
+
 ## [0.3.0] - 2026-08-09
 
 ### Added
