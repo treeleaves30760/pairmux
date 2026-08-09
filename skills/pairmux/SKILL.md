@@ -79,9 +79,10 @@ interactive, shares a terminal or its state, or may need a human to step in.
    the shell/tool client interrupts before pairmux returns, immediately reissue that same wait;
    never shorten pairmux's 300s default (one valid explicit timeout of at least 300s is
    equivalent).
-   Recognition is best-effort (English + common locales): when a command you KNOW needs a
-   credential sits quiet at `running`, treat it as a secret prompt anyway — `peek --screen` to
-   confirm, then hand off. `PAIRMUX_SECRET_PROMPT_RE` extends recognition for unusual prompts.
+   This is read from the terminal, not the wording: a prompt that hides your typing is a secret
+   whatever language it is in and whichever tool asked. A prompt marked as unrecognized instead
+   (`quiet mid-line, but no prompt was recognised`) is a guess — `peek --screen` before answering,
+   and `wait --done` if it turns out to still be working.
 5. **Subscribe, don't poll.** To follow a terminal another agent (or a human) is driving,
    `pairmux wait <name> --done` blocks until its command finishes and reports the `exit_code`.
    `wait` takes no lock, so any number of agents can hold one on the same terminal and all of them

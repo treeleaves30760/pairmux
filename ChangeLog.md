@@ -7,7 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Prompt detection now reads the pane's terminal, not just the words on it. Echo suppressed while
+  the kernel is still assembling a line is exactly what `getpass()` does — and what sudo, ssh, git,
+  gpg, pinentry and npm therefore do — so a credential prompt is identified as one whatever
+  language it is written in and whichever tool asked, including tools no pattern covers. Of
+  eighteen real prompts, the pattern list recognised twelve; the ssh host-key question, terraform's
+  `Enter a value:`, `[yes/No]`, `Username:` and a type-the-name confirmation were all invisible,
+  which meant the terminal sat at `running` and a handoff over one could only end in a timeout.
+  Every one of them is now detected, and every echo-suppressed prompt is refused rather than
+  guessed at — the case where guessing wrong is worst is the one case that is now certain rather
+  than heuristic.
+
+  Wording remains a second source of evidence, and still promotes a prompt to secret for tools that
+  ask in plain sight. A terminal that only goes quiet mid-line is reported as a third, weaker kind:
+  it is how an unrecognised question surfaces at all, but it also describes a command that printed
+  `Building... ` and went to work, so it needs ten seconds of silence and its reply says to look
+  before answering and offers `--done` for carrying on. `run` is unaffected below that threshold,
+  and never kills anything either way.
+
+  The reading costs one ioctl on a device recorded at creation — no subprocess and no tmux
+  round-trip — because several agents watching one terminal each pay for every poll.
+
 ### Fixed
+
+- A program terminal could lose the first thing it printed. tmux starts a pane's command as soon as
+  the window exists, which is before `pipe-pane` can be attached, so a program whose opening act is
+  a prompt could print into a window nothing was recording and then sit there invisible for its
+  whole life. Linux lost that race routinely while macOS won it. The pane now holds on a FIFO until
+  the journal is capturing, turning the race into an ordering; the holding shell `exec`s the real
+  command, so what runs in the pane, what `pane_current_command` reports, and how the terminal dies
+  are all unchanged.
 
 - The release job validated every credential except the one it used last. The
   Homebrew tap token was first exercised after PyPI — which cannot be

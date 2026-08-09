@@ -158,7 +158,11 @@ Secret-shaped prompts — password/passphrase/passcode, PIN, OTP/MFA/verificatio
 tokens, and the standard sudo password translations for common locales — are classified as
 **secrets**. Instead of a "send this answer" hint, the reply says `do NOT guess or type secrets` and
 points at human handoff (`wait --human --notify`, which ends on a note or once the prompt is
-answered). Recognition is best-effort: a missed prompt
+answered). The secret verdict comes from the pane's line discipline — echo suppressed while the
+kernel still assembles a line is what `getpass()` does, so it identifies a credential prompt in any
+language and from any tool, including ones no pattern covers. Phrasing is a second source, and a
+terminal that merely goes quiet mid-line for ten seconds is reported as an unrecognized prompt so
+an unusual question still surfaces. Recognition of *wording* remains best-effort: a missed prompt
 leaves the terminal `running` (never an auto-answer), and `PAIRMUX_SECRET_PROMPT_RE` extends the
 patterns for your environment. See [human collaboration](./guides/human-collaboration.md).
 

@@ -138,24 +138,44 @@ func (c *Ctx) cmdNew(args []string) int {
 		return c.fail(output.CodeInternal, err.Error(), "")
 	}
 
-	paneID, err := c.Tmux.NewWindow(tmux.NewWindowReq{Name: name, Dir: cwd, Env: env, Argv: argv})
+	// A program terminal's command is held until the journal is capturing; see
+	// startGate. A shell needs no gate — it prints nothing before its rc files
+	// run, and hooks mode nudges a prompt cycle to cover the same gap.
+	var gate *startGate
+	if len(argv) > 0 {
+		if gate, err = newStartGate(j.Dir); err != nil {
+			return c.fail(output.CodeInternal, err.Error(), "")
+		}
+	}
+	paneID, err := c.Tmux.NewWindow(tmux.NewWindowReq{Name: name, Dir: cwd, Env: env, Argv: argv, Gate: gate.Path()})
 	if err != nil {
+		gate.abandon()
 		return c.tmuxErr(err)
 	}
 	keepPane := false
 	defer func() {
 		if !keepPane {
+			gate.abandon()
 			_ = c.Tmux.KillWindowOf(paneID)
 		}
 	}()
 	if err := c.Tmux.PipePaneAppend(paneID, j.RawPath()); err != nil {
 		return c.tmuxErr(err)
 	}
+	// Everything the program prints from here on is journalled.
+	if err := gate.release(); err != nil {
+		return c.fail(output.CodeInternal, err.Error(), "")
+	}
 	if err := c.Tmux.SetPaneOption(paneID, core.PaneOptName, name); err != nil {
 		return c.tmuxErr(err)
 	}
 
-	meta := core.Meta{Name: name, PaneID: paneID, Shell: metaShell, Mode: mode, Socket: c.Tmux.Socket, CreatedAt: time.Now().UTC()}
+	// The pane's terminal is asked for once, here: prompt classification reads
+	// its line discipline on every poll, and a tmux round-trip per poll per agent
+	// is exactly the cost this avoids. A failure is not fatal — classification
+	// falls back to reading the wording of the prompt, as it always did.
+	paneTTY, _ := c.Tmux.PaneTTY(paneID)
+	meta := core.Meta{Name: name, PaneID: paneID, Tty: paneTTY, Shell: metaShell, Mode: mode, Socket: c.Tmux.Socket, CreatedAt: time.Now().UTC()}
 	if err := j.WriteMeta(meta); err != nil {
 		return c.fail(output.CodeInternal, err.Error(), "")
 	}
@@ -339,7 +359,7 @@ func (c *Ctx) cmdRun(args []string) int {
 	// Lazy settlement: a prior run that timed out left its cmd_start unmatched.
 	// Settle it if it has since finished; refuse if it is genuinely still running.
 	if pending, ok, perr := j.PendingCmd(); perr == nil && ok {
-		res, _ := waitDone(j, pending.Offset, mode, 0)
+		res, _ := waitDone(j, pending.Offset, mode, 0, term.Meta.Tty)
 		if res.Outcome != detect.OutcomeDone {
 			return c.fail(output.CodeBusy, "a command is still running", fmt.Sprintf("pairmux peek %s", name))
 		}
@@ -378,7 +398,7 @@ func (c *Ctx) cmdRun(args []string) int {
 	}
 
 	start := time.Now()
-	res, err := waitDone(j, sendOffset, mode, timeout)
+	res, err := waitDone(j, sendOffset, mode, timeout, term.Meta.Tty)
 	if err != nil {
 		return c.fail(output.CodeInternal, "wait completion: "+err.Error(), "")
 	}
@@ -507,11 +527,11 @@ func quotedCommandHint(tokens []string) string {
 // spoof completion. bash 3.2 emits no C, which the correlated wait covers by
 // accepting a lone D after a short grace. Sentinel mode is unchanged. A zero
 // timeout degenerates to a single read-only scan (used for lazy settlement).
-func waitDone(j *journal.Journal, from int64, mode core.Mode, timeout time.Duration) (detect.RunResult, error) {
+func waitDone(j *journal.Journal, from int64, mode core.Mode, timeout time.Duration, tty string) (detect.RunResult, error) {
 	if mode == core.ModeHooks {
-		return detect.WaitCommandCorrelated(j, from, timeout, 0, true)
+		return detect.WaitCommandCorrelated(j, from, timeout, 0, true, tty)
 	}
-	return detect.WaitCommand(j, from, mode, timeout, 0)
+	return detect.WaitCommand(j, from, mode, timeout, 0, tty)
 }
 
 // deriveTerminalStatus adds terminal-kind context to the journal-derived
@@ -567,7 +587,7 @@ func (c *Ctx) cmdPeek(args []string) int {
 		return c.fail(output.CodeInternal, err.Error(), "")
 	}
 	status := deriveTerminalStatus(j, term.Alive, term.Mode, term.Meta.Shell == "")
-	status, prompt := detect.Refine(j, status, term.Mode)
+	status, prompt := detect.Classify(j, status, term.Mode, term.Meta.Tty)
 
 	var body string
 	var trunc *output.TruncInfo
@@ -615,17 +635,36 @@ func peekNext(name string, status core.Status) []string {
 	}
 }
 
-// awaitingNext returns the next steps for an awaiting-input terminal. A secret
-// prompt (password/passphrase/passcode class) must never tempt the agent into
-// typing or guessing a credential: the only offered path is human handoff.
-func awaitingNext(name, prompt string) []string {
-	if detect.LooksSecret(prompt) {
+// awaitingNext returns the next steps for an awaiting-input terminal.
+//
+// A secret prompt must never tempt the agent into typing or guessing a
+// credential, so the only path offered is human handoff. That verdict now comes
+// from the classification rather than from matching words, which is what makes
+// it hold for a locale or a tool the patterns have never seen.
+//
+// An inferred prompt gets a third answer: pairmux believes the terminal is
+// waiting but cannot say what for, so it asks the agent to look before it
+// types. Offering `send` on that evidence would invite an answer into a command
+// that was merely thinking.
+func awaitingNext(name string, p detect.Prompt) []string {
+	switch p.Kind {
+	case detect.KindSecret:
 		return []string{
 			"do NOT guess or type secrets",
 			fmt.Sprintf("pairmux wait %s --human --notify   # hand off to the human", name),
 		}
+	case detect.KindInferred:
+		// Inference, not recognition: nothing was killed and the command may
+		// simply be thinking, so look first, and carry on waiting if it is.
+		return []string{
+			"quiet mid-line, but no prompt was recognised — look before you answer",
+			fmt.Sprintf("pairmux peek %s --screen", name),
+			fmt.Sprintf("pairmux wait %s --done   # if it turns out to still be working", name),
+			fmt.Sprintf("pairmux send %s --text <answer> --enter", name),
+		}
+	default:
+		return []string{fmt.Sprintf("pairmux send %s --text <answer> --enter", name)}
 	}
-	return []string{fmt.Sprintf("pairmux send %s --text <answer> --enter", name)}
 }
 
 // cmdSend delivers input to a terminal (text, then keys, then Enter) without

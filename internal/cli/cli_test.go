@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/treeleaves30760/pairmux/internal/core"
+	"github.com/treeleaves30760/pairmux/internal/detect"
 	"github.com/treeleaves30760/pairmux/internal/journal"
 	"github.com/treeleaves30760/pairmux/internal/output"
 	"github.com/treeleaves30760/pairmux/internal/tmux"
@@ -343,13 +344,13 @@ func TestUnseenNotes(t *testing.T) {
 }
 
 func TestAwaitingNext(t *testing.T) {
-	next := awaitingNext("t1", "Continue [y/N]?")
+	next := awaitingNext("t1", detect.Prompt{Kind: detect.KindOpen, Line: "Continue [y/N]?"})
 	joined := strings.Join(next, " | ")
 	if !strings.Contains(joined, "pairmux send t1 --text") {
 		t.Errorf("plain prompt next = %v, want send hint", next)
 	}
 
-	next = awaitingNext("t1", "Password:")
+	next = awaitingNext("t1", detect.Prompt{Kind: detect.KindSecret, Line: "Password:"})
 	joined = strings.Join(next, " | ")
 	if !strings.Contains(joined, "do NOT guess") || !strings.Contains(joined, "wait t1 --human") {
 		t.Errorf("secret prompt next = %v", next)

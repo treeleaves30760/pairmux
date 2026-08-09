@@ -112,6 +112,15 @@ type NewWindowReq struct {
 	Dir  string            // cwd; "" inherits
 	Env  map[string]string // -e KEY=VAL for each entry
 	Argv []string          // command; empty runs the default shell
+	// Gate is a FIFO the pane blocks on before the command starts. tmux runs a
+	// pane's command the moment the window exists, which is before pipe-pane can
+	// be attached to it — anything printed in that window is never journalled,
+	// and a program whose first act is to prompt can therefore be invisible to
+	// pairmux entirely. Holding the pane on a read the caller releases after
+	// wiring the journal removes the race rather than narrowing it. Ignored when
+	// Argv is empty: a shell prints nothing until its rc files run, and hooks
+	// mode already nudges a prompt cycle to cover the same gap.
+	Gate string
 }
 
 // NewWindow creates a detached window in the pairmux session and returns its
@@ -126,6 +135,13 @@ func (c *Client) NewWindow(r NewWindowReq) (string, error) {
 	}
 	if len(r.Argv) > 0 {
 		args = append(args, "--")
+		if r.Gate != "" {
+			// exec so the pane's process really is the command: the holding shell
+			// must not survive to change what pane_current_command reports or to
+			// sit between the program and its exit status.
+			args = append(args, "sh", "-c",
+				`read -r _ <"$1" || :; shift; exec "$@"`, "sh", r.Gate)
+		}
 		args = append(args, r.Argv...)
 	}
 	out, err := c.run(args...)

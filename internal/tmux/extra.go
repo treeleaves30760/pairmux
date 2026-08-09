@@ -1,6 +1,10 @@
 package tmux
 
-import "github.com/treeleaves30760/pairmux/internal/core"
+import (
+	"strings"
+
+	"github.com/treeleaves30760/pairmux/internal/core"
+)
 
 // P2 additions to Client, kept out of tmux.go so the reviewed P1 surface stays
 // stable.
@@ -25,4 +29,17 @@ func (c *Client) HasSession() bool {
 func (c *Client) KillServer() error {
 	_, err := c.run("kill-server")
 	return err
+}
+
+// PaneTTY returns the terminal device backing a pane. A pane keeps the same
+// device for its whole life, so callers record this once rather than asking
+// again: prompt classification reads the device's line discipline, and paying a
+// tmux round-trip for it on every poll would scale with the number of agents
+// watching the terminal.
+func (c *Client) PaneTTY(paneID string) (string, error) {
+	out, err := c.run("display", "-p", "-t", paneID, "-F", "#{pane_tty}")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
 }
