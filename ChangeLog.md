@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-09
+
+### Added
+
+- `pairmux wait <name> --done` blocks until the terminal's running command finishes — or until the
+  next one does, if the terminal is idle right now — and reports its `exit_code`. `wait` takes no
+  lock and records nothing, so any number of agents can hold a `--done` wait on one terminal and
+  every one of them wakes on the same completion mark: a completion broadcast with nothing to
+  register with and no daemon involved. It also covers a command a human typed into the pane
+  directly. Shell terminals only; a `--cmd` program terminal emits no completion marks and gets
+  `E_BAD_ARGS` with a workable alternative.
+- `detect.CompletionWatcher`, a pollable form of the C-correlated completion detection `run`
+  already used. `wait` has to watch a completion alongside notes, patterns and quiescence, so it
+  drives the watcher from its own loop instead of blocking inside one.
+
+### Fixed
+
+- `wait --human` could only end in its own timeout. The handoff the docs teach — hit a secret
+  prompt, `wait --human --notify`, let a human type the password in the pane — resolved *only* on a
+  `pairmux note`, and a human who answers the prompt writes nothing to the journal: attaching
+  records no event, and typing into a pane is not one either. The command would finish and the
+  agent would keep blocking for the full 300s. `--human` now also resolves when the *human* is
+  finished: the prompt is answered and the terminal is visibly moving again (`status: running`,
+  whose `next` offers `--done` for following the command the rest of the way), or the command
+  finishes outright (`status: done` with its `exit_code`). Reporting resumption rather than
+  completion is the point — a password answered at second two can be followed by a five-minute
+  migration, and the agent is released at second two. A rejected answer that re-prompts keeps the
+  wait blocked, because the terminal is still awaiting input. A completion that landed before the
+  wait started resolves it immediately, the same way an unseen note already does — an agent that
+  hands off, does other work, and only then waits is not left blocking for a human who has gone.
+- Adding `--idle` to `wait --human` was not a workaround: `awaiting-input` counts as a terminal
+  state for an idle wait, so it returned instantly with the very prompt being handed off, and the
+  agent's only move was to hand off again. A prompt no longer resolves a `--human` wait at all.
+- A timed-out wait's retry hint dropped every condition flag: `wait <name> --human --notify` came
+  back suggesting a bare `wait <name> --timeout 2x`, which at the handoff prompt is an idle wait
+  that returns `awaiting-input` instantly — so an agent following its own `next` spun instead of
+  waiting. The hint now reproduces the wait exactly (`--idle`/`--pattern`/`--done`/`--human`/
+  `--notify`) with double the deadline, floored at 300s for a handoff so it cannot undercut the
+  skill's own rule, and a `--human` timeout leads with "the human has not answered yet — do NOT
+  type the secret".
+- A handoff is released by the human's answer, not by their keystrokes. Typed characters echo into
+  the journal one at a time, and an echoed answer stops the last line looking like a prompt well
+  before the human commits to it — so "output appeared past the prompt" alone reported a human
+  who was still deciding as a human who had finished. The line the prompt sat on must now be
+  terminated (the newline an Enter produces, echoed by the tty or written by the program) before
+  any verdict is reached, and the verdict is then held briefly so a rejected answer's re-prompt
+  wins over the echo that preceded it.
+- A resolved `--human` handoff returns no `output`. The span it would quote is the span a human was
+  summoned to type into, so a program that echoes what it should not — or a secret prompt the
+  heuristics never recognized — would have put the credential straight into the agent's context.
+  The agent gets the fact and the exit code, and `peek`s if it wants the output.
+
 ## [0.2.0] - 2026-08-01
 
 ### Added
@@ -149,7 +201,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stable `error.code` values (`E_NO_TERMINAL`, `E_EXISTS`, `E_BUSY`, `E_DEAD`, `E_BAD_ARGS`,
   `E_TMUX`, `E_INTERNAL`).
 
-[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/treeleaves30760/pairmux/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/treeleaves30760/pairmux/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/treeleaves30760/pairmux/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/treeleaves30760/pairmux/releases/tag/v0.1.0

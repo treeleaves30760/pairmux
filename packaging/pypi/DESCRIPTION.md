@@ -18,7 +18,7 @@ normal access to the same live terminal — watch, take over, hand back.
   there. pairmux makes them drivable.
 - **Human handoff on credentials and judgment calls.** A recognized secret prompt never suggests
   an answer; `wait --human --notify`, `attach`, and `note` turn a blocked credential prompt into a
-  resumable checkpoint.
+  resumable checkpoint — and the wait ends as soon as the human answers, note or no note.
 - **Persistent shell state.** `source venv/bin/activate`, `export`, and `nvm use` happen once in a
   live shell instead of being re-composed into every command.
 - **Actionable waits and captured history.** `run` blocks until completion, a recognized prompt,

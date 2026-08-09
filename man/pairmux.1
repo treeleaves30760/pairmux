@@ -59,15 +59,29 @@ failure: the reply tells the agent how to keep waiting.
 .BR peek " \fINAME\fR [\fB\-\-screen\fR | \fB\-\-tail\fR \fIN\fR]"
 Show recent output and current status immediately, without waiting.
 .TP
-.BR wait " \fINAME\fR [\fB\-\-idle\fR \fIMS\fR] [\fB\-\-pattern\fR \fIRE\fR] [\fB\-\-human\fR] [\fB\-\-notify\fR] [\fB\-\-timeout\fR \fIDUR\fR]"
+.BR wait " \fINAME\fR [\fB\-\-idle\fR \fIMS\fR] [\fB\-\-pattern\fR \fIRE\fR] [\fB\-\-done\fR] [\fB\-\-human\fR] [\fB\-\-notify\fR] [\fB\-\-timeout\fR \fIDUR\fR]"
 Block until a condition is met. The default idle condition waits for output
 silence, refreshes liveness and completion state, and returns only when the
 shell is truly idle; a quiet running command keeps waiting. A pattern examines
 only output appended after this wait starts, never existing journal content.
-The human condition resolves on a newly written note or immediately on an
-unseen note already waiting, returning its text in
-.IR output .
-Explicit conditions can be combined; the first condition satisfied wins.
+The done condition resolves when the running command finishes, or when the next
+one does if the terminal is idle, reporting its exit code; it needs a shell
+terminal. Because
+.B wait
+takes no lock and records nothing, any number of agents may hold a done wait on
+one terminal and all of them wake on the same completion.
+The human condition hands off to a person: it resolves on a newly written note
+(or immediately on an unseen note already waiting, returning its text in
+.IR output ),
+and also once the person is finished \(em the prompt is answered and the
+terminal is visibly moving again, or the command completes. Those two outcomes
+deliberately carry no
+.IR output ,
+because the span they would quote is the span the human typed into.
+Explicit conditions can be combined; the first condition satisfied wins. A
+timeout is an outcome rather than an error: its next steps repeat the same wait,
+condition flags included, with double the deadline and never under 300 seconds
+for a handoff.
 .TP
 .BR send " \fINAME\fR [\fB\-\-text\fR \fIS\fR] [\fB\-\-key\fR \fIK\fR] [\fB\-\-enter\fR]"
 Send raw input to an interactive program (REPL, TUI, or confirmation prompt).

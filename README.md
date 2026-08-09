@@ -21,7 +21,8 @@ prompt, hand back. Requires **tmux ≥ 3.2** at runtime (`brew install tmux` / `
   makes them drivable. This is a 0-to-1 capability, not an efficiency gain.
 - **Human handoff on credentials and judgment calls.** A recognized secret prompt never suggests
   `send`; `wait --human --notify`, `attach`, and `note` turn "the agent hit a password prompt and
-  failed" into a resumable checkpoint.
+  failed" into a resumable checkpoint. The wait ends the moment the human answers — a note is how
+  they say *what* they did, not a precondition for the agent to resume.
 - **Persistent shell state.** `source venv/bin/activate`, `conda activate`, `export`, `nvm use`
   happen once in a live shell instead of being re-composed into every command.
 - **Shared observation.** A human can attach and watch the agent drive the same live pane — and
@@ -198,7 +199,7 @@ turns terminal echo off before reading:
 pairmux --json new --name handoff
 pairmux --json run handoff "sh -c 'printf \"Password: \"; stty -echo; IFS= read -r secret; stty echo; printf \"\\ninput received\\n\"'"
 
-# Once run reports awaiting-input, wait for an explicit human note.
+# Once run reports awaiting-input, hand off and block.
 pairmux --json wait handoff --human --notify --timeout 5m
 ```
 
@@ -215,7 +216,13 @@ binding (default `Ctrl-b d`). Back in the second shell, leave the hand-back note
 pairmux --json note handoff "demo input completed"
 ```
 
-The wait in Terminal A then returns `human-done`. Clean up afterward with:
+The wait in Terminal A then returns `human-done` with that text. Had you skipped the note, the wait
+would still have returned — `--human` also ends the moment the prompt is answered and the terminal
+is moving again (`status: running`, with `wait --done` offered for following the rest), or when the
+command finishes outright (`status: done` with its `exit_code`). Neither carries `output`: the span
+they would quote is the span you typed into. If nobody answers, the wait times out with a `next`
+that repeats the same wait at a longer deadline rather than inviting the agent to act. Clean up
+afterward with:
 
 ```bash
 pairmux --json kill handoff
@@ -224,7 +231,8 @@ pairmux --json kill handoff
 `attach` needs a TTY and deliberately refuses to nest inside tmux. If you are already in tmux,
 detach to the outer shell first or use another terminal, then run `pairmux attach`. A tmux
 `switch-client` cannot cross from another server to pairmux's named socket. `note` does not detach a
-client or enforce exclusive control; it records a coordination event that releases `wait --human`.
+client or enforce exclusive control; it records a coordination event that releases `wait --human`
+and tells the agent *what* you did, which a bare answer in the pane cannot.
 
 `--notify` is best-effort and needs `osascript` on macOS or `notify-send` on Linux. Human
 handoff avoids routing input through the agent-facing `pairmux send` command, but pairmux cannot

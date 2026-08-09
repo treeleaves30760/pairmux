@@ -71,24 +71,34 @@ interactive, shares a terminal or its state, or may need a human to step in.
 4. **Never type or guess a secret.** On a secret-shaped prompt (password/passphrase/passcode, PIN,
    OTP/MFA/verification codes, API keys, localized sudo prompts), pairmux says
    `do NOT guess or type secrets`. Hand off to a human: `pairmux wait <name> --human --notify`.
-   If the shell/tool client interrupts before pairmux returns, immediately reissue that same wait;
-   never shorten pairmux's 300s default (one valid explicit timeout of at least 300s is equivalent).
+   That wait ends on a human `note` **or** on the human being finished — the prompt is answered and
+   the terminal is moving again (`running`; `wait --done` follows the rest), or the command
+   finished outright (`done` + `exit_code`). Treat either as "the human is done", and note that
+   `--human` returns no `output`, so the secret is never quoted back to you. A `timeout` means the
+   human has not come yet: **wait again** with the longer deadline in `next`, never act instead. If
+   the shell/tool client interrupts before pairmux returns, immediately reissue that same wait;
+   never shorten pairmux's 300s default (one valid explicit timeout of at least 300s is
+   equivalent).
    Recognition is best-effort (English + common locales): when a command you KNOW needs a
    credential sits quiet at `running`, treat it as a secret prompt anyway — `peek --screen` to
    confirm, then hand off. `PAIRMUX_SECRET_PROMPT_RE` extends recognition for unusual prompts.
-5. **Prefer reading the log over re-running.** The journal already has the full output —
+5. **Subscribe, don't poll.** To follow a terminal another agent (or a human) is driving,
+   `pairmux wait <name> --done` blocks until its command finishes and reports the `exit_code`.
+   `wait` takes no lock, so any number of agents can hold one on the same terminal and all of them
+   wake on the same completion.
+6. **Prefer reading the log over re-running.** The journal already has the full output —
    `pairmux log` is free and instant; re-running wastes time and can change state.
-6. **Treat `next` as contextual hints, not a script.** Read entries in order and obey safety/prose.
+7. **Treat `next` as contextual hints, not a script.** Read entries in order and obey safety/prose.
    Replace placeholders with real values; never execute prose or placeholder text literally. Run the
    first applicable command. Final replies may omit `next`. Read and obey human `notes`.
-7. **Prefer program terminals for known interactive entrypoints.** Start a REPL, TUI, or persistent
+8. **Prefer program terminals for known interactive entrypoints.** Start a REPL, TUI, or persistent
    server with `pairmux new --name <name> --cmd "<program>"`; then drive that live program with
    `send`/`peek`. Use `run` when the command needs an existing shell.
-8. **Recover hung commands in place.** When a task requires the same terminal/session, use
+9. **Recover hung commands in place.** When a task requires the same terminal/session, use
    `pairmux send <name> --key C-c`, then `pairmux wait <name> --idle 800`, then `run` the recovery
    command on that name. `kill` destroys the terminal; use it only as a last resort when a fresh
    terminal is explicitly acceptable.
-9. **Pattern waits observe future output only.** If readiness text may have appeared during `run` or
+10. **Pattern waits observe future output only.** If readiness text may have appeared during `run` or
    `new --cmd`, read that returned output or use `peek`/`log --grep`; never wait for a past line.
    Use `wait --pattern` only before an event you still expect to happen.
 
@@ -112,7 +122,10 @@ Terminal statuses (from `run`, `peek`, `wait`, `ls`):
 | `dead` | the pane is gone; journal is kept | `new` a fresh terminal |
 
 `run` also reports `done`/`running`. `wait` reports `idle`/`awaiting-input` for an idle wait,
-`pattern-found`, `human-done`, `dead`, or `timeout`, depending on the requested condition.
+`done` (with `exit_code`) for `--done`, `running` when a `--human` handoff is answered and the
+terminal resumes, `pattern-found`, `human-done`, `dead`, or `timeout`, depending on the requested
+condition. A `timeout` carries a `next` that repeats the same wait with a longer deadline — follow
+it rather than giving up or switching strategy.
 Errors set `ok:false` with a stable `error.code`: `E_NO_TERMINAL`, `E_EXISTS`, `E_BUSY`, `E_DEAD`,
 `E_BAD_ARGS`, `E_TMUX`, `E_INTERNAL`. The error's `hint`/`next` tells you how to recover.
 
