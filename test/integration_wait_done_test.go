@@ -266,7 +266,12 @@ func TestWaitHumanSeesACompletionItArrivedTooLateFor(t *testing.T) {
 func TestWaitHumanOnProgramTerminalEndsWhenThePromptClears(t *testing.T) {
 	e := newEnv(t, bashShell)
 	script := filepath.Join(t.TempDir(), "login.sh")
+	// The opening sleep keeps this test off a race it is not about: `new --cmd`
+	// starts the pane's program before wiring pipe-pane, so a prompt printed at
+	// startup can miss the journal entirely (hooks-mode terminals get a prompt
+	// nudge for the same reason; program terminals have no equivalent).
 	body := "#!/bin/sh\n" +
+		"sleep 1\n" +
 		"printf 'Password: '\nread -r p\necho\n" +
 		"if [ \"$p\" != right ]; then printf 'Sorry, try again.\\nPassword: '; read -r p; echo; fi\n" +
 		"echo accepted\nsleep 300\n"
