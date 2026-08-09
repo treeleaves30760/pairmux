@@ -190,3 +190,66 @@ func TestJournalQuiet(t *testing.T) {
 		}
 	})
 }
+
+// TestRetryHintKeepsConditions: the hint a timed-out wait hands back is the
+// command the agent is expected to run next, so it has to be the *same* wait.
+// Dropping --human silently downgraded the retry to an idle wait, which returns
+// the handoff prompt instantly — the agent's only move was to hand off again.
+func TestRetryHintKeepsConditions(t *testing.T) {
+	tests := []struct {
+		name     string
+		seen     map[string]bool
+		idle     string
+		pattern  string
+		human    bool
+		done     bool
+		notify   bool
+		timeout  time.Duration
+		wantHint string
+	}{
+		{
+			name: "handoff keeps human and notify and floors at 300s",
+			seen: map[string]bool{"human": true, "notify": true}, human: true, notify: true,
+			timeout: 3 * time.Second,
+			// --notify repeats deliberately: the human did not come, so ping again.
+			wantHint: "pairmux wait t1 --human --notify --timeout 5m0s",
+		},
+		{
+			name: "long handoff doubles past the floor",
+			seen: map[string]bool{"human": true}, human: true, timeout: 400 * time.Second,
+			wantHint: "pairmux wait t1 --human --timeout 13m20s",
+		},
+		{
+			name: "pattern is requoted so the hint is runnable",
+			seen: map[string]bool{"pattern": true}, pattern: "error|panic now",
+			timeout:  30 * time.Second,
+			wantHint: `pairmux wait t1 --pattern 'error|panic now' --timeout 1m0s`,
+		},
+		{
+			name: "subscription keeps done, and no floor applies",
+			seen: map[string]bool{"done": true}, done: true, timeout: 10 * time.Second,
+			wantHint: "pairmux wait t1 --done --timeout 20s",
+		},
+		{
+			name: "an unrequested idle is not invented",
+			seen: map[string]bool{}, timeout: 30 * time.Second,
+			wantHint: "pairmux wait t1 --timeout 1m0s",
+		},
+		{
+			name: "an explicit idle survives alongside its racing condition",
+			seen: map[string]bool{"idle": true, "pattern": true}, idle: "1500", pattern: "ready",
+			timeout:  30 * time.Second,
+			wantHint: "pairmux wait t1 --idle 1500 --pattern ready --timeout 1m0s",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := waitRetryHint("t1",
+				retryFlags(tc.seen, tc.idle, tc.pattern, tc.human, tc.done, tc.notify),
+				retryTimeout(tc.timeout, tc.human))
+			if got != tc.wantHint {
+				t.Fatalf("hint = %q, want %q", got, tc.wantHint)
+			}
+		})
+	}
+}

@@ -220,7 +220,7 @@ pairmux --json peek build
 Block until the terminal satisfies a condition. Read-only: records no events and takes no lock, so a human and an agent can both wait on the same terminal.
 
 ```text
-pairmux wait <name> [--idle MS] [--pattern RE] [--human] [--notify] [--timeout 300s]
+pairmux wait <name> [--idle MS] [--pattern RE] [--done] [--human] [--notify] [--timeout 300s]
 ```
 
 - `--idle MS` — after `MS` milliseconds of output silence (default 800ms), refresh state and resolve
@@ -228,10 +228,31 @@ pairmux wait <name> [--idle MS] [--pattern RE] [--human] [--notify] [--timeout 3
   panes return their real status.
 - `--pattern RE` — resolve when output appended **after this wait starts** matches the RE2 regex `RE`.
   Existing journal content never satisfies a new pattern wait.
-- `--human` — resolve when a human leaves a `note`, or immediately when an unseen note is already
-  waiting. The note text is returned in `output`, not `notes`.
+- `--done` — resolve with `status: done` and the `exit_code` when the running command finishes, or
+  when the next one does if the terminal is idle. Shell terminals only: a `--cmd` program terminal
+  emits no completion marks and returns `E_BAD_ARGS`.
+- `--human` — hand off to a human. Resolves on a `note` (or an unseen one already waiting, returned
+  in `output`), and on the human being finished: the prompt is answered and the terminal is visibly
+  moving again (`status: running`, whose `next` offers `--done` for following the rest), or the
+  command finished outright (`status: done` with its `exit_code`). A prompt never resolves a
+  `--human` wait, and a re-prompt after a rejected answer keeps it blocked. No `output` is returned
+  for those two outcomes — see the note below.
 - `--notify` — fire a desktop notification to summon a human (best-effort).
-- `--timeout` — overall deadline (default `300s`). First condition satisfied wins.
+- `--timeout` — overall deadline (default `300s`). First condition satisfied wins. A `timeout` is an
+  outcome, not an error: its `next` repeats the *same* wait — every condition flag preserved — with
+  double the deadline, floored at `300s` for a handoff, because a handoff is paced by a person.
+
+Because `wait` takes no lock and records nothing, any number of agents can hold a `--done` wait on
+one terminal and every one of them wakes on the same completion mark. That is the whole subscription
+mechanism — there is nothing to register with, and no daemon involved. It also covers a command a
+human typed into the pane directly.
+
+:::caution A resolved handoff returns no output
+`--human` exists because a human is typing something the agent must not see. The span the command
+occupied is exactly that span, so `wait --human` never quotes it back — it returns the fact and the
+exit code. Use `peek` or `log` if the output is needed. (`--done` is not a handoff and does return
+the tail, like `run`.)
+:::
 
 If the pane is already dead when `wait` starts, the command returns `E_DEAD`. The successful
 `status: dead` outcome means the pane disappeared while the wait was in progress.
@@ -264,6 +285,30 @@ pairmux --json wait dev --human
 
 ```json
 {"schema":"pairmux.v1","ok":true,"status":"human-done","terminal":"dev","mode":"hooks","output":"the token is fixed, go ahead","next":["pairmux peek dev"]}
+```
+
+Handoff resolved without a note — the human answered the prompt in the pane and the migration is
+running again. This says *execution resumed*, not *the command finished*: a password answered at
+second two can be followed by a five-minute migration, and the agent is released at second two.
+
+```json
+{"schema":"pairmux.v1","ok":true,"status":"running","terminal":"dbmigrate","mode":"hooks","next":["pairmux wait dbmigrate --done","pairmux peek dbmigrate"]}
+```
+
+Nobody has answered yet — not a failure, and not a cue to act:
+
+```json
+{"schema":"pairmux.v1","ok":true,"status":"timeout","terminal":"dbmigrate","mode":"hooks","next":["the human has not answered yet — do NOT type the secret","pairmux wait dbmigrate --human --notify --timeout 10m0s","pairmux peek dbmigrate"]}
+```
+
+Subscribed to a command another agent started:
+
+```bash
+pairmux --json wait build --done --timeout 600s
+```
+
+```json
+{"schema":"pairmux.v1","ok":true,"status":"done","terminal":"build","mode":"hooks","exit_code":0,"output":"\nBUILD SUCCESSFUL","next":["pairmux peek build"]}
 ```
 
 ### send
@@ -405,9 +450,9 @@ when the state root has outgrown the large-journal guard.
 Hand the human a live tmux client on the pairmux session, focusing the named window first. Replaces
 the pairmux process with tmux. Refuses when already inside tmux or when stdout is not a terminal. A
 human already in tmux must detach to an outer shell or use another terminal; `switch-client` cannot
-cross from another tmux server to pairmux's named socket. Attaching records no journal event and
-cannot by itself satisfy `wait --human`; the human leaves a `note` as the explicit, durable hand-back
-signal.
+cross from another tmux server to pairmux's named socket. Attaching records no journal event, so a
+`note` is the explicit, durable hand-back signal — though a `wait --human` also ends on its own once
+what the human was summoned for resolves (the command completes, or the prompt clears).
 
 ```text
 pairmux attach [name]
@@ -423,7 +468,7 @@ pairmux watch [--interval 2s]
 
 ### note
 
-Record a message for the agent driving a terminal. Unseen messages appear in the `notes` field of a subsequent `run` or `peek` envelope. `wait --human` instead resolves with the note text in `output`; an ordinary idle/pattern wait does not add a `notes` field. Native `attach` records nothing, so `note` is the explicit hand-back signal.
+Record a message for the agent driving a terminal. Unseen messages appear in the `notes` field of a subsequent `run` or `peek` envelope. `wait --human` instead resolves with the note text in `output`; an ordinary idle/pattern wait does not add a `notes` field. Native `attach` records nothing, so `note` is the explicit hand-back signal — the one way to tell the agent *what* you did rather than merely that it can carry on.
 
 ```text
 pairmux note <name> <text...>

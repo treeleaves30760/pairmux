@@ -18,6 +18,8 @@ than attach/detach itself, is the explicit hand-back signal.
   `switch-client` cannot cross to pairmux's separate named socket.
 - **`pairmux note <name> <text>`** — append a non-secret message. `run` and `peek` expose unseen notes
   in `notes`; `wait --human` returns one as `status: human-done` with the note text in `output`.
+- **Subscribe** — `wait --done` blocks until the terminal's command finishes and reports its
+  `exit_code`, whoever started it. Any number of agents can hold one at once.
 
 ```bash
 pairmux watch
@@ -62,8 +64,10 @@ pairmux --json wait review --human --notify --timeout 5m
 ```
 
 `--notify` uses `osascript` on macOS or `notify-send` on Linux and is best-effort. `wait --human`
-returns on a note, pane death, or the deadline; its default timeout is 300 seconds. On
-`status: timeout`, follow `next` and wait again instead of sleeping.
+returns on a note, on the handoff resolving without one (below), on pane death, or on the deadline;
+its default timeout is 300 seconds. A `status: timeout` means the human has not come yet: the `next`
+repeats that exact wait — conditions preserved, deadline doubled, never under 300 seconds — so
+follow it and keep waiting instead of sleeping or acting alone.
 
 **3. The human takes over, answers, detaches, and leaves a non-secret note:**
 
@@ -120,6 +124,25 @@ also carries the usual `pairmux.v1` fields and may include shell output):
 `ls` shows a `[notes:N]` badge for terminals with unseen notes, so a human can see what's waiting to be picked up.
 
 :::note
+### When the human leaves no note
+
+A human who answers a prompt and walks away records nothing at all — attaching is a live tmux
+operation, and typing into the pane is not an event. So `wait --human` also ends the moment the
+terminal is visibly moving again: `status: running`, whose `next` offers `wait --done` for following
+the command the rest of the way. The distinction is deliberate — a password answered at second two
+can be followed by a five-minute migration, and the agent is released at second two, not at minute
+five. When the command instead finishes without printing anything after the answer, or had already
+finished, the reply is `status: done` with its `exit_code`. A wrong password that re-prompts keeps
+the wait blocked — the terminal is still awaiting input.
+
+Waiting late is fine too: hand off, go do other work, and a completion that already landed returns
+from the next `wait --human` immediately. Like a note, it is not consumed by reading — until the
+agent's next `run` settles the command, another `wait --human` can return it again.
+
+Neither of those outcomes carries `output`. The span they would quote is the span the human typed
+into, and a handoff exists precisely so the agent never sees it; the agent gets the fact and the exit
+code, and `peek`s if it needs more. A `note` is still the only way to tell the agent *what* you did.
+
 `wait --human` also returns immediately if a note is already waiting and unseen. `peek` and `wait`
 are read-only, so neither consumes it: another `wait --human` can return the same note again. A later
 completed `run` records `cmd_end`; notes older than that event are then considered seen.

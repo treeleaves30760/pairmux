@@ -38,8 +38,8 @@ Environment: `PAIRMUX_SOCKET` sets the default tmux socket; `PAIRMUX_STATE_DIR` 
 **Statuses.** Terminal states: `idle`, `running`, `awaiting-input`, `dead`. Per-command action
 statuses: `created` (`new`), `done`/`running` (`run`), `sent` (`send`), `noted` (`note`),
 `killed` (`kill`), `ok` (`peek`/`log`/`ls`/`doctor`/`version`), and `wait`'s outcomes
-`idle` / `awaiting-input` / `pattern-found` / `human-done` / `dead` / `timeout` (which ones can
-resolve the call depends on the requested wait conditions).
+`idle` / `running` / `done` / `awaiting-input` / `pattern-found` / `human-done` / `dead` / `timeout`
+(which ones can resolve the call depends on the requested wait conditions).
 
 **Error codes** (envelope has `ok:false`, `status:"error"`, and an `error` object):
 
@@ -97,22 +97,39 @@ Truncated (a 300-line command, default head/tail):
 
 ### wait — block until a condition
 ```text
-pairmux wait <name> [--idle MS] [--pattern RE] [--human] [--notify] [--timeout 300s]
+pairmux wait <name> [--idle MS] [--pattern RE] [--done] [--human] [--notify] [--timeout 300s]
 ```
 - `--idle MS` — after `MS` ms of output silence, refresh terminal state and resolve only when it is
   `idle`, `awaiting-input`, or `dead` (default condition, 800ms). A quiet running command keeps waiting.
 - `--pattern RE` — resolve when **new** output (produced after the wait starts) matches the RE2 regex.
   It does **not** scan output already printed before the wait — see troubleshooting.
-- `--human` — resolve when a human leaves a `note` (or one is already waiting).
+- `--done` — resolve with `status:"done"` and the `exit_code` when the running command finishes, or
+  when the **next** one does if the terminal is idle. Shell terminals only (`E_BAD_ARGS` on a `--cmd`
+  terminal, which emits no completion marks). This is how you subscribe to a terminal another agent
+  is driving — you do not have to be the one who started the command.
+- `--human` — hand off to a human. Resolves on a `note` (or one already waiting), **and** on the
+  human finishing: as soon as the prompt is answered and the terminal is visibly moving again you
+  get `status:"running"` — *execution resumed*, not *the command finished*. Follow the rest with
+  `wait <name> --done`; the reply's `next` says so. A rejected answer that re-prompts keeps the wait
+  blocked. You also get `status:"done"` with the `exit_code` when the command finishes without
+  printing anything after the answer, or had already finished before you got around to waiting —
+  hand off, do other work, then wait, and an unseen completion returns immediately instead of
+  leaving you blocked for a human who has gone. Like notes, a completion is not consumed by reading:
+  a second `wait --human` can return it again until your next `run` settles it.
 - `--notify` — best-effort desktop notification to summon a human.
 - `--timeout` — overall deadline (default `300s`).
 
-With no condition flag, idle is armed by default. `--pattern` alone waits for a future pattern;
-`--human` alone waits for a note. A prompt does **not** end either of those condition-only waits.
-Combine `--pattern`, `--human`, and an explicit `--idle` to race requested conditions; the first one
-satisfied wins. A pane that dies while any wait is in flight ends it as `dead`. Timeout `next` entries
-are contextual inspection/retry hints; preserve the original condition flags when retrying the same
-wait.
+With no condition flag, idle is armed by default. `--pattern` alone waits for a future pattern.
+A prompt does **not** end a `--pattern`- or `--done`-only wait, and never ends a `--human` wait —
+`awaiting-input` is the reason you handed off, not an outcome. Combine `--pattern`, `--done`,
+`--human`, and an explicit `--idle` to race requested conditions; the first one satisfied wins. A
+pane that dies while any wait is in flight ends it as `dead`. **A `timeout` is not a failure**: the
+`next` repeats that exact wait — same condition flags — with double the deadline, and never under
+`300s` for a handoff. Run it and keep waiting.
+
+**`--human` never returns `output`.** You handed off precisely because a human is typing something
+you must not see; the span the command occupied is that span, so it is not quoted back. You get the
+fact and the exit code — `peek` if you need the output.
 
 Read-only: records nothing, takes no lock, so a human and an agent can both wait on one terminal.
 ```json
@@ -121,8 +138,20 @@ Read-only: records nothing, takes no lock, so a human and an agent can both wait
 ```json
 {"schema":"pairmux.v1","ok":true,"status":"human-done","terminal":"dev","mode":"hooks","output":"the token is fixed, go ahead","next":["pairmux peek dev"]}
 ```
+The handoff ended without a note — the human answered in the pane and the migration is running again:
 ```json
-{"schema":"pairmux.v1","ok":true,"status":"timeout","terminal":"api","mode":"hooks","next":["pairmux peek api","pairmux wait api --timeout 16s"]}
+{"schema":"pairmux.v1","ok":true,"status":"running","terminal":"dbmigrate","mode":"hooks","next":["pairmux wait dbmigrate --done","pairmux peek dbmigrate"]}
+```
+Subscribed with `--done` to a command another agent started:
+```json
+{"schema":"pairmux.v1","ok":true,"status":"done","terminal":"build","mode":"hooks","exit_code":0,"output":"…\nBUILD SUCCESSFUL","next":["pairmux peek build"]}
+```
+```json
+{"schema":"pairmux.v1","ok":true,"status":"timeout","terminal":"api","mode":"hooks","next":["pairmux peek api","pairmux wait api --pattern ready --timeout 16s"]}
+```
+A handoff nobody has answered yet — wait again, longer; do not act instead:
+```json
+{"schema":"pairmux.v1","ok":true,"status":"timeout","terminal":"dbmigrate","mode":"hooks","next":["the human has not answered yet — do NOT type the secret","pairmux wait dbmigrate --human --notify --timeout 10m0s","pairmux peek dbmigrate"]}
 ```
 
 ### peek — recent output + status, no blocking, no lock

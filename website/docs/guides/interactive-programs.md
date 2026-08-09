@@ -69,7 +69,8 @@ secret. Its `next` field deliberately omits a `send` command and points at human
 :::danger Never type or guess secrets
 This is an agent rule, not an input firewall: the CLI cannot prevent someone from manually invoking
 `send`. An agent must not invent a secret, recover one from output, put one in a CLI argument or note,
-or send it into the pane. Hand off with `pairmux wait <name> --human --notify`. The full flow is in
+or send it into the pane. Hand off with `pairmux wait <name> --human --notify`, which unblocks on a
+human note or on the handoff resolving by itself. The full flow is in
 [human collaboration](./human-collaboration.md).
 :::
 

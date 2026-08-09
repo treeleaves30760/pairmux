@@ -47,9 +47,13 @@ refuses to offer an answer. It points at a human handoff instead:
 pairmux wait dbmigrate --human --notify
 ```
 
-This blocks your tool call and pings the human's desktop. The full loop is in
+This blocks your tool call and pings the human's desktop. It resolves when the human leaves a note
+**or** when the human is simply finished — the prompt is answered and the terminal is moving again
+(`running`; follow the rest with `wait --done`), or the command finished outright (`done` +
+`exit_code`). A re-prompt after a wrong answer keeps it blocked, and a timeout just means the human
+has not come yet: wait again with the longer deadline the reply hands you. The full loop is in
 [collaboration.md](collaboration.md). The password is typed by the human, straight into the pane —
-you never see, echo, or log it.
+you never see, echo, or log it, and `--human` returns no `output` for exactly that reason.
 
 ## send: text vs keys
 

@@ -40,6 +40,91 @@ func completionKind(mode core.Mode) MarkKind {
 	return MarkD
 }
 
+// doneResult renders a completion mark as a finished RunResult.
+func doneResult(m Mark) RunResult {
+	return RunResult{Outcome: OutcomeDone, ExitCode: m.ExitCode, MarkStart: m.Start, EndOffset: m.End}
+}
+
+// CompletionWatcher reports a command's completion to a caller that cannot
+// block on it. WaitCompletion owns its own loop, which suits `run` (it has
+// nothing else to watch); `wait` must poll a completion alongside notes,
+// patterns and quiescence, so it drives a watcher from its own loop instead.
+//
+// State — the Scanner, the C-correlation flag, a held D — lives across polls,
+// so a mark split across two appends is still recognized and every byte is
+// scanned exactly once no matter how long the wait runs.
+//
+// Correlation matches hooks-mode `run` (see waitCompletionCorrelated): the
+// completion is the first D after the first C at/after the baseline, so a
+// command a human types into the same pane cannot spoof it. A D with no
+// preceding C is held for graceNoC and then accepted — that is how bash 3.2,
+// which emits no C at all, completes.
+type CompletionWatcher struct {
+	from     int64
+	off      int64
+	sc       *Scanner
+	want     MarkKind
+	requireC bool
+	seenC    bool
+	heldD    *Mark
+	graceEnd time.Time
+}
+
+// NewCompletionWatcher returns a watcher for a command whose output begins at
+// offset from. Hooks mode correlates on C; sentinel mode takes the first
+// sentinel mark, which carries no such ambiguity.
+func NewCompletionWatcher(from int64, mode core.Mode) *CompletionWatcher {
+	return &CompletionWatcher{
+		from: from, off: from, sc: NewScanner(from),
+		want: completionKind(mode), requireC: mode == core.ModeHooks,
+	}
+}
+
+// Poll consumes whatever raw.log has gained since the previous call and reports
+// the completion once it is established. done stays false while the command is
+// still running, including while a C-less D sits in its grace window.
+func (w *CompletionWatcher) Poll(j *journal.Journal) (res RunResult, done bool, err error) {
+	if size := j.Size(); size > w.off {
+		data, err := j.ReadRange(w.off, size)
+		if err != nil {
+			return RunResult{}, false, fmt.Errorf("detect: completion watcher: %w", err)
+		}
+		if len(data) > 0 {
+			w.off += int64(len(data))
+			for _, m := range w.sc.Feed(data) {
+				if m.Start < w.from {
+					continue
+				}
+				if !w.requireC {
+					if m.Kind == w.want {
+						return doneResult(m), true, nil
+					}
+					continue
+				}
+				switch m.Kind {
+				case MarkC:
+					if !w.seenC {
+						w.seenC = true
+						w.heldD = nil // a D before our C belonged to someone else
+					}
+				case MarkD:
+					if w.seenC {
+						return doneResult(m), true, nil
+					}
+					if w.heldD == nil {
+						d := m
+						w.heldD, w.graceEnd = &d, time.Now().Add(graceNoC)
+					}
+				}
+			}
+		}
+	}
+	if w.heldD != nil && !time.Now().Before(w.graceEnd) {
+		return doneResult(*w.heldD), true, nil
+	}
+	return RunResult{}, false, nil
+}
+
 // WaitCompletion polls raw.log for the completion mark of a command sent at
 // offset from. It keeps one persistent Scanner across polls so a mark split
 // across appends is still recognized. It returns on the first matching mark

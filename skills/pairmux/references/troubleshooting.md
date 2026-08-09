@@ -82,8 +82,14 @@ future readiness line. Use `run` for finite commands because hooks return precis
 `exit_code`.
 
 This idle/prompt behavior is armed only when idle is the default condition or `--idle` is explicit.
-`wait --pattern ...` and `wait --human` keep blocking at a prompt until their requested condition,
+`wait --pattern ...` and `wait --done` keep blocking at a prompt until their requested condition,
 pane death, or timeout. Add `--idle MS` when either condition should race idle/prompt detection.
+
+`wait --human` is the exception: a prompt never resolves it, with or without `--idle`. Handing off
+*because* of a prompt and then being handed that prompt straight back is a spin, so `--human` waits
+for the prompt to be **answered** — a human `note`, the terminal visibly moving again (`running`),
+or the command completing (`done`). If it times out, the human has not come yet: the `next` repeats
+the same wait with a longer deadline, and following it is the correct move.
 
 ## E_TMUX — tmux socket creation failed
 
