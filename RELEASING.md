@@ -36,14 +36,29 @@ Linux packages, install script, and documentation site. The companion
    goreleaser release --snapshot --clean --skip=publish
    ```
 
-4. Verify the GitHub repository settings and PyPI credential preflight. After
-   any rotation of `HOMEBREW_TAP_GITHUB_TOKEN`, run the **Tap credential**
-   workflow (`gh workflow run tap-credential.yml`): only Actions can read the
-   secret, so a value that was mistyped into `gh secret set` is invisible until
-   something uses it — and the release job uses it after PyPI. The workflow
-   proves read *and* write against the tap and removes its own probe file. The
-   release preflight repeats the read check for stable tags, so a broken token
-   now fails the run before anything is published.
+4. Verify the GitHub repository settings and PyPI credential preflight.
+
+### Rotating `HOMEBREW_TAP_GITHUB_TOKEN`
+
+Run `scripts/set-tap-token.sh`. Do not do this by hand: the procedure has two
+traps that both fail *silently*, and v0.3.0 hit both.
+
+- A token handed between commands in an environment variable is lost whenever
+  each command runs in its own shell — an agent's shell-out, a new tab, a `!`
+  prefix. It then reads as empty rather than unset.
+- `gh` treats an empty `GH_TOKEN` as "none supplied" and falls back to the
+  ambient login, so the verification kept passing against a different
+  credential entirely, and `gh secret set` stored an empty secret.
+
+The script runs the whole thing in one process: it proves the token can read
+**and write** the tap before storing it (read access alone is not enough — a
+`Contents: Read` token passes a read check and still cannot push the cask),
+stores it over stdin so it never reaches argv, then dispatches the **Tap
+credential** workflow, because only Actions can see what was actually stored.
+That workflow (`gh workflow run tap-credential.yml`) is also the standalone
+check to run any time; it removes the probe file it writes. The release
+preflight repeats the read check for stable tags, so a broken token fails the
+run before anything is published rather than after PyPI.
 5. Create and push an annotated SemVer tag from `main`, for example
    `git tag -a v0.1.0 -m 'chore: release-v0-1-0'`.
 6. Watch the tag workflow. Confirm the draft release contains nine native
