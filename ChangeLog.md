@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-10
+
 ### Changed
 
 - Prompt detection now reads the pane's terminal, not just the words on it. Echo suppressed while
@@ -244,7 +246,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stable `error.code` values (`E_NO_TERMINAL`, `E_EXISTS`, `E_BUSY`, `E_DEAD`, `E_BAD_ARGS`,
   `E_TMUX`, `E_INTERNAL`).
 
-[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/treeleaves30760/pairmux/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/treeleaves30760/pairmux/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/treeleaves30760/pairmux/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/treeleaves30760/pairmux/compare/v0.1.0...v0.1.1
