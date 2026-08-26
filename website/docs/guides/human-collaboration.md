@@ -144,8 +144,13 @@ into, and a handoff exists precisely so the agent never sees it; the agent gets 
 code, and `peek`s if it needs more. A `note` is still the only way to tell the agent *what* you did.
 
 `wait --human` also returns immediately if a note is already waiting and unseen. `peek` and `wait`
-are read-only, so neither consumes it: another `wait --human` can return the same note again. A later
-completed `run` records `cmd_end`; notes older than that event are then considered seen.
+are read-only, so neither consumes it: another `wait --human` can return the same note again. What
+marks a note answered is the agent acting on the terminal — a completed `run`, or a `send`. Both are
+recorded, and notes older than the latest of them are then considered seen.
+
+`send` counts because a terminal holding a long-lived program never completes a command at all. If
+only `cmd_end` closed a note, a loop of "instruct the program, wait for its reply" would get the
+first note back instantly on every wait after the first, and never block.
 :::
 
 Ordinary `wait --idle` and `wait --pattern` do not copy notes into `notes`. Use `peek`/`run` to read

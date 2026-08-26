@@ -52,6 +52,20 @@ workload.
 
 ## Install
 
+```bash
+curl -fsSL https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.sh | sh
+```
+
+```powershell
+irm https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.ps1 | iex
+```
+
+The first detects your OS and architecture, verifies the release archive's SHA-256 against the
+published `checksums.txt`, and installs to `~/.local/bin` without sudo. The second is the Windows
+entry point: tmux has no Windows build, so it installs into WSL rather than pretending otherwise —
+see [Windows](#windows) below. Package managers are covered further down, and are the better choice
+if you want upgrades handled for you.
+
 pairmux requires **tmux 3.2 or newer** at runtime.
 
 Release artifacts target:
@@ -60,7 +74,7 @@ Release artifacts target:
 | --- | --- | --- |
 | macOS 12+ | x86-64, ARM64 | None for the installed binary |
 | Linux | x86-64, ARM64/aarch64 | PyPI wheels use the `manylinux_2_17` / glibc 2.17+ tags |
-| Windows | No native artifact | Use a compatible Linux distribution inside WSL |
+| Windows | No native artifact | Runs inside WSL; see [Windows](#windows) |
 
 ### Homebrew (macOS and Linuxbrew)
 
@@ -90,15 +104,33 @@ the installed `pairmux` executable contains no Python code and needs no Go toolc
 
 ### Checksummed release archive
 
-The installer selects the latest matching GitHub release archive, verifies its SHA-256 checksum,
-and installs the binary under `~/.local/bin` by default:
+The one-liner at the top of this section selects the latest matching GitHub release archive,
+verifies its SHA-256 checksum, and installs the binary under `~/.local/bin`. Downloaded and run as a
+file it also takes options:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.sh | sh
+curl -fsSLO https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.sh
+sh install.sh --version v0.5.0 --dry-run
 ```
 
 Use `PAIRMUX_INSTALL_DIR` to choose another directory. Specific versions are available from
 [GitHub Releases](https://github.com/treeleaves30760/pairmux/releases).
+
+### Windows
+
+tmux does not run on Windows, so neither does pairmux — there is no native Windows artifact. The
+supported arrangement is pairmux inside WSL, driving terminals there, which is what the PowerShell
+one-liner sets up: it finds WSL, checks it has a distribution, and runs the POSIX installer inside
+it. Configure it through the environment, since a piped script takes no arguments:
+
+```powershell
+$env:PAIRMUX_VERSION   = 'v0.5.0'   # optional: a specific release
+$env:PAIRMUX_WSL_DISTRO = 'Ubuntu'  # optional: a distribution other than the default
+irm https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.ps1 | iex
+```
+
+pairmux then lives inside the distribution: run it as `wsl -- pairmux version`, or from a shell in
+that distribution. Install tmux there too (`sudo apt install tmux`) if it is not already present.
 
 ### Direct `.deb` and `.rpm` packages
 
