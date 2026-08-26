@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,7 +21,7 @@ func TestWaitUsageErrors(t *testing.T) {
 		args []string
 	}{
 		{"no args", nil},
-		{"extra positional", []string{"t", "extra"}},
+		{"only separators", []string{",", " , "}},
 		{"bad idle", []string{"t", "--idle", "abc"}},
 		{"zero idle", []string{"t", "--idle", "0"}},
 		{"bad timeout", []string{"t", "--timeout", "xyz"}},
@@ -32,6 +34,54 @@ func TestWaitUsageErrors(t *testing.T) {
 			c := newTestCtx(&buf, true)
 			if rc := c.cmdWait(tt.args); rc != 2 {
 				t.Fatalf("rc = %d, want 2 (usage); output %s", rc, buf.String())
+			}
+		})
+	}
+}
+
+// TestWaitNames pins the fan-out argument grammar: spaces and commas both
+// separate, duplicates collapse (arming one terminal twice would poll it twice
+// a tick for no gain), and nothing at all is a usage error rather than a wait
+// on everything.
+func TestWaitRejectsBadNameAmongSeveral(t *testing.T) {
+	var buf bytes.Buffer
+	c := newTestCtx(&buf, true)
+	// One bad name aborts the whole wait rather than being skipped: a caller
+	// that mistyped one of five terminals is not waiting on what it thinks.
+	if rc := c.cmdWait([]string{"a,NOT-A-NAME"}); rc != 1 {
+		t.Fatalf("rc = %d, want 1; output %s", rc, buf.String())
+	}
+	if !strings.Contains(buf.String(), "NOT-A-NAME") {
+		t.Fatalf("error should name the offending terminal: %s", buf.String())
+	}
+}
+
+func TestWaitNames(t *testing.T) {
+	tests := []struct {
+		name    string
+		pos     []string
+		want    []string
+		wantErr bool
+	}{
+		{"one name", []string{"a"}, []string{"a"}, false},
+		{"spaces separate", []string{"a", "b", "c"}, []string{"a", "b", "c"}, false},
+		{"commas separate", []string{"a,b,c"}, []string{"a", "b", "c"}, false},
+		{"both at once", []string{"a,b", "c"}, []string{"a", "b", "c"}, false},
+		{"order is preserved", []string{"c,a", "b"}, []string{"c", "a", "b"}, false},
+		{"duplicates collapse", []string{"a,b,a", "b"}, []string{"a", "b"}, false},
+		{"padding is trimmed", []string{" a , b "}, []string{"a", "b"}, false},
+		{"empty fields are skipped", []string{"a,,b,"}, []string{"a", "b"}, false},
+		{"nothing at all", nil, nil, true},
+		{"only separators", []string{",", " "}, nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := waitNames(tt.pos)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("waitNames = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -115,6 +165,7 @@ func TestLatestUnseenNote(t *testing.T) {
 	}
 	end := func(sec int) core.Event { return core.Event{TS: at(sec), Type: core.EvCmdEnd, CmdID: 1} }
 	start := func(sec int) core.Event { return core.Event{TS: at(sec), Type: core.EvCmdStart, CmdID: 1} }
+	sent := func(sec int) core.Event { return core.Event{TS: at(sec), Type: core.EvSent, Text: "text+enter"} }
 
 	tests := []struct {
 		name    string
@@ -133,6 +184,16 @@ func TestLatestUnseenNote(t *testing.T) {
 		{"zero-TS note with no end counts", []core.Event{{Type: core.EvNote, Text: "z"}}, "z", true},
 		{"zero-TS note with an end is seen", []core.Event{{Type: core.EvNote, Text: "z"}, end(1)}, "", false},
 		{"non-note events only", []core.Event{start(1), end(2)}, "", false},
+		// A terminal running a long-lived program never completes a command, so
+		// send is the only thing that can mark a note answered. Without these the
+		// second --human wait of any driving loop returns the first note again,
+		// instantly, for the life of the terminal.
+		{"note consumed by a later send", []core.Event{note(1, "old"), sent(2)}, "", false},
+		{"note after the last send", []core.Event{sent(1), note(2, "fresh")}, "fresh", true},
+		{"send and cmd_end: the later one wins", []core.Event{end(1), note(2, "mid"), sent(3)}, "", false},
+		{"cmd_end after send does not un-consume", []core.Event{sent(1), note(2, "kept"), end(1)}, "kept", true},
+		{"note at exactly the send TS is seen", []core.Event{note(2, "tied"), sent(2)}, "", false},
+		{"repeated sends leave later notes alone", []core.Event{sent(1), sent(2), note(3, "n"), sent(4)}, "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -203,6 +264,7 @@ func TestRetryHintKeepsConditions(t *testing.T) {
 		pattern  string
 		human    bool
 		done     bool
+		note     bool
 		notify   bool
 		timeout  time.Duration
 		wantHint string
@@ -241,11 +303,16 @@ func TestRetryHintKeepsConditions(t *testing.T) {
 			timeout:  30 * time.Second,
 			wantHint: "pairmux wait t1 --idle 1500 --pattern ready --timeout 1m0s",
 		},
+		{
+			name: "a note wait retries as a note wait",
+			seen: map[string]bool{"note": true}, note: true, timeout: 30 * time.Second,
+			wantHint: "pairmux wait t1 --note --timeout 1m0s",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := waitRetryHint("t1",
-				retryFlags(tc.seen, tc.idle, tc.pattern, tc.human, tc.done, tc.notify),
+			got := waitRetryHint([]string{"t1"},
+				retryFlags(tc.seen, tc.idle, tc.pattern, tc.human, tc.done, tc.note, tc.notify),
 				retryTimeout(tc.timeout, tc.human))
 			if got != tc.wantHint {
 				t.Fatalf("hint = %q, want %q", got, tc.wantHint)

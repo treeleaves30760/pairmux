@@ -26,10 +26,11 @@ import (
 )
 
 const (
-	rawName   = "raw.log"
-	indexName = "index.jsonl"
-	metaName  = "meta.json"
-	lockName  = "write.lock"
+	rawName      = "raw.log"
+	indexName    = "index.jsonl"
+	metaName     = "meta.json"
+	lockName     = "write.lock"
+	sendLockName = "send.lock"
 
 	// maxEventLine bounds a single index.jsonl line so a corrupt/huge line
 	// cannot exhaust memory while scanning.
@@ -55,9 +56,10 @@ func Open(dir string) (*Journal, error) {
 // RawPath is the absolute path of the raw.log byte stream.
 func (j *Journal) RawPath() string { return filepath.Join(j.Dir, rawName) }
 
-func (j *Journal) indexPath() string { return filepath.Join(j.Dir, indexName) }
-func (j *Journal) metaPath() string  { return filepath.Join(j.Dir, metaName) }
-func (j *Journal) lockPath() string  { return filepath.Join(j.Dir, lockName) }
+func (j *Journal) indexPath() string    { return filepath.Join(j.Dir, indexName) }
+func (j *Journal) metaPath() string     { return filepath.Join(j.Dir, metaName) }
+func (j *Journal) lockPath() string     { return filepath.Join(j.Dir, lockName) }
+func (j *Journal) sendLockPath() string { return filepath.Join(j.Dir, sendLockName) }
 
 // Size reports the current length of raw.log, or 0 when it is missing.
 func (j *Journal) Size() int64 {
@@ -331,4 +333,78 @@ func LockHolder(dir string) (pid int, ok bool) {
 		return 0, false
 	}
 	return pid, true
+}
+
+// sendLockWait bounds how long AcquireSendLock will keep trying. A send is a
+// handful of tmux calls, so a holder that has not finished in this long is
+// wedged rather than busy, and reporting that beats blocking a caller forever.
+// A var so the contention test does not have to spend it.
+var sendLockWait = 2 * time.Second
+
+// sendLockPoll is the retry interval inside sendLockWait. flock has no timed
+// form, so the wait is a bounded retry of the non-blocking one.
+const sendLockPoll = 10 * time.Millisecond
+
+// AcquireSendLock serializes input delivery to one terminal.
+//
+// This is deliberately NOT the write lock. The write lock says "a command is
+// running here", which is exactly when an interactive answer most needs to get
+// through — send has to work against a held write lock or a handoff could never
+// be answered. What send must not do is interleave with another send: two
+// writers pushing keystrokes at one pane produce a line that is neither's, and
+// an agent driving another agent's terminal UI while a human types into the
+// same pane is now an ordinary situation rather than a pathological one.
+//
+// It waits rather than failing fast, because the thing it waits for is always
+// short. A caller that cannot get it inside sendLockWait gets ErrLocked and the
+// holder's pid.
+func (j *Journal) AcquireSendLock() (release func(), err error) {
+	f, err := os.OpenFile(j.sendLockPath(), os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("journal: open send.lock: %w", err)
+	}
+	deadline := time.Now().Add(sendLockWait)
+	for {
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+			f.Close()
+			return nil, fmt.Errorf("journal: flock send.lock: %w", err)
+		}
+		if !time.Now().Before(deadline) {
+			f.Close()
+			if pid, ok := sendLockHolder(j.Dir); ok {
+				return nil, fmt.Errorf("journal: send.lock held by pid %d: %w", pid, ErrLocked)
+			}
+			return nil, ErrLocked
+		}
+		time.Sleep(sendLockPoll)
+	}
+
+	if err := f.Truncate(0); err == nil {
+		_, _ = f.WriteAt([]byte(strconv.Itoa(os.Getpid())), 0)
+	}
+	var once bool
+	release = func() {
+		if once {
+			return
+		}
+		once = true
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}
+	return release, nil
+}
+
+// sendLockHolder reads the pid recorded in a terminal's send.lock, for the
+// error message only. Like LockHolder it never touches the flock.
+func sendLockHolder(dir string) (pid int, ok bool) {
+	b, err := os.ReadFile(filepath.Join(dir, sendLockName))
+	if err != nil {
+		return 0, false
+	}
+	pid, err = strconv.Atoi(strings.TrimSpace(string(b)))
+	return pid, err == nil && pid > 0
 }

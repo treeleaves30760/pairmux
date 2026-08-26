@@ -90,9 +90,10 @@ func tools() []tool {
 			definition: toolDefinition{
 				Name:        "pairmux_wait",
 				Title:       "Wait for terminal condition",
-				Description: "Block until the configured completion, idle, output-pattern, or human-handoff condition is met, the terminal dies, or the timeout expires. Default and explicit idle waits also return when the program needs input. Any number of agents may wait on one terminal at once, so done is a broadcast every subscriber wakes on. Setting notify may send a desktop notification.",
+				Description: "Block until the configured completion, idle, output-pattern, note, or human-handoff condition is met, a terminal dies, or the timeout expires. Give several terminals to wait on all of them at once: the first to satisfy a condition ends the wait and the result names it. Default and explicit idle waits also return when the program needs input. Any number of agents may wait on one terminal at once, so done is a broadcast every subscriber wakes on. Setting notify may send a desktop notification.",
 				InputSchema: objectSchema(map[string]any{
-					"terminal": stringProperty("Existing pairmux terminal name."),
+					"terminal": stringProperty("Existing pairmux terminal name. Several may be given separated by commas, in which case the wait ends on whichever satisfies a condition first."),
+					"note":     booleanProperty("Wait for a note event on the terminal and nothing else. This is the signal a program in the pane leaves with `pairmux note` — an agent's own stop hook, or a human — so it is the way to wait for another agent's turn to end without guessing from the screen."),
 					"idle_ms":  integerProperty("Required output-quiescence interval in milliseconds.", 1),
 					"pattern":  stringProperty("RE2 regular expression matched against new shaped output."),
 					"human":    booleanProperty("Hand off to a human: wait for a note, or for the prompt the handoff was about to be answered. Withholds output, so a secret typed into the pane is never quoted back."),
@@ -280,7 +281,7 @@ func buildPeek(a arguments) ([]string, error) {
 }
 
 func buildWait(a arguments) ([]string, error) {
-	if err := a.allow("terminal", "idle_ms", "pattern", "human", "done", "notify", "timeout"); err != nil {
+	if err := a.allow("terminal", "idle_ms", "pattern", "note", "human", "done", "notify", "timeout"); err != nil {
 		return nil, err
 	}
 	terminal, err := a.requiredString("terminal")
@@ -298,7 +299,7 @@ func buildWait(a arguments) ([]string, error) {
 	} else if present {
 		argv = append(argv, "--pattern", pattern)
 	}
-	for _, field := range []struct{ property, flag string }{{"human", "--human"}, {"done", "--done"}, {"notify", "--notify"}} {
+	for _, field := range []struct{ property, flag string }{{"note", "--note"}, {"human", "--human"}, {"done", "--done"}, {"notify", "--notify"}} {
 		if value, _, err := a.optionalBool(field.property); err != nil {
 			return nil, err
 		} else if value {

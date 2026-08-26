@@ -38,6 +38,17 @@ func (s TTYState) Secret() bool { return s.Known && s.Canonical && !s.Echo }
 // the last line means nothing.
 func (s TTYState) LineOriented() bool { return s.Known && s.Canonical }
 
+// RawInput reports that a program has taken the keyboard for itself: it turned
+// ICANON off, which is how a pager, an editor, a full-screen TUI or another
+// agent's terminal UI arranges to see keystrokes as they are struck.
+//
+// On its own this says nothing about *when* such a program wants a keystroke —
+// that is why LineOriented exists and why the text heuristics stay in charge
+// here. What it does establish is intent: a program in this mode reads the
+// terminal, so if it is also running no code at all (see FgWait) there is
+// nothing left for it to be doing but waiting on the keyboard.
+func (s TTYState) RawInput() bool { return s.Known && !s.Canonical }
+
 // ReadTTYState reads the discipline of the terminal at path. It never writes,
 // never becomes the controlling terminal, and opens non-blocking, so polling it
 // while a program waits on that terminal cannot disturb the program — verified

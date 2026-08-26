@@ -85,6 +85,9 @@ interactive, shares a terminal or its state, or may need a human to step in.
    and `wait --done` if it turns out to still be working.
 5. **Subscribe, don't poll.** To follow a terminal another agent (or a human) is driving,
    `pairmux wait <name> --done` blocks until its command finishes and reports the `exit_code`.
+   Name several terminals (`wait a,b,c`) to block on all of them and return on the first to fire.
+   For a terminal holding a long-lived program — another agent's UI — there is no completion mark:
+   have the pane signal with `pairmux note "$PAIRMUX_NAME" "..."` and block on `wait <name> --note`.
    `wait` takes no lock, so any number of agents can hold one on the same terminal and all of them
    wake on the same completion.
 6. **Prefer reading the log over re-running.** The journal already has the full output —

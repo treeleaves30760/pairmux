@@ -45,6 +45,7 @@ type TerminalRow struct {
 	LockHolder   int    `json:"lock_holder,omitempty"`   // pid holding the write lock
 	Notes        int    `json:"notes,omitempty"`         // count of unseen human notes
 	LastActivity string `json:"last_activity,omitempty"` // RFC3339 or ""
+	ChildSocket  string `json:"child_socket,omitempty"`  // endpoint of this terminal's own nested layer, when it has one
 }
 
 // ErrInfo is the error detail for a failed command.
@@ -251,6 +252,9 @@ func writeTerminals(b *strings.Builder, rows []TerminalRow) {
 		}
 		if r.Notes != 0 {
 			cmd += fmt.Sprintf("  [notes:%d]", r.Notes)
+		}
+		if r.ChildSocket != "" {
+			cmd += "  [layer:" + r.ChildSocket + "]"
 		}
 		if r.LastActivity != "" {
 			cmd = cmd + "  (" + r.LastActivity + ")"

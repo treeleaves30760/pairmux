@@ -42,6 +42,12 @@ const (
 	EvCmdStart EventType = "cmd_start"
 	EvCmdEnd   EventType = "cmd_end"
 	EvNote     EventType = "note"
+	// EvSent records that input was delivered to a terminal with `send`. It
+	// carries no content — what was typed may be a credential, and the event
+	// log outlives the screen. Its only job is to mark the moment the agent
+	// acted, which is what tells a later wait that the note it was answering
+	// has been dealt with.
+	EvSent EventType = "sent"
 )
 
 // Event is one line of index.jsonl.

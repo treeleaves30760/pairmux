@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/treeleaves30760/pairmux/internal/core"
@@ -24,8 +25,10 @@ func (c *Client) HasSession() bool {
 	return err == nil
 }
 
-// KillServer kills the tmux server on this client's socket. Intended only for
-// doctor's cleanup of throwaway sockets — never the shared pairmux socket.
+// KillServer kills the tmux server on this client's socket. Two callers only:
+// doctor's cleanup of throwaway sockets, and the teardown of a nested layer's
+// endpoint, which belongs to exactly one terminal and dies with it. Never the
+// endpoint the caller is itself working on.
 func (c *Client) KillServer() error {
 	_, err := c.run("kill-server")
 	return err
@@ -42,4 +45,28 @@ func (c *Client) PaneTTY(paneID string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// PaneAudience reports whether a human is currently watching a pane: how many
+// clients are attached to its session, and whether its window is the one they
+// are looking at.
+//
+// It is one display call, not two, because send pays for it on every delivery.
+// The question matters because no lock pairmux can take reaches a human at a
+// keyboard: their keystrokes go straight to the pane, so the most an agent can
+// be told is that it is sharing the input line with someone.
+func (c *Client) PaneAudience(paneID string) (attached int, active bool, err error) {
+	out, err := c.run("display", "-p", "-t", paneID, "-F", "#{session_attached} #{window_active}")
+	if err != nil {
+		return 0, false, err
+	}
+	fields := strings.Fields(strings.TrimSpace(out))
+	if len(fields) != 2 {
+		return 0, false, nil
+	}
+	n, err := strconv.Atoi(fields[0])
+	if err != nil {
+		return 0, false, nil
+	}
+	return n, fields[1] == "1", nil
 }

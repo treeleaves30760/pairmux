@@ -271,3 +271,21 @@ func TestJSONIncludesOmittedBytes(t *testing.T) {
 		t.Fatalf("omitted byte count missing from JSON: %s", buf.String())
 	}
 }
+
+// TestTerminalRowLayerBadge pins that a terminal driving a nested layer says so
+// in the listing: a human looking for the agents an agent is running has no
+// other way to discover that the layer exists, or which endpoint reaches it.
+func TestTerminalRowLayerBadge(t *testing.T) {
+	var b strings.Builder
+	writeTerminals(&b, []TerminalRow{
+		{Name: "solo", Status: "idle", Mode: "hooks"},
+		{Name: "boss", Status: "idle", Mode: "hooks", ChildSocket: "pairmux-boss"},
+	})
+	out := b.String()
+	if !strings.Contains(out, "[layer:pairmux-boss]") {
+		t.Errorf("listing = %q, want a layer badge", out)
+	}
+	if strings.Count(out, "[layer:") != 1 {
+		t.Errorf("listing = %q, want exactly one layer badge", out)
+	}
+}

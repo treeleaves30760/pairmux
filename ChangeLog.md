@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-26
+
+This release is about one workload: an agent driving other agents, with a human able to step into
+any of them. Every change below came out of running that end to end against real Claude Code and
+Codex terminals and fixing what broke.
+
+### Added
+
+- **A terminal that holds the keyboard is now recognised as waiting for input.** A pager, an editor,
+  an ssh session at a remote prompt, another agent's terminal UI — all of them turn `ICANON` off and
+  then say whatever their author chose, which left them invisible to both the line-discipline check
+  and the pattern list. `ICANON` off is itself a declaration that the program reads keystrokes, so a
+  program that has claimed the keyboard, printed nothing, and is running no code at all has nothing
+  left to be doing but waiting on it. Whether it is running is asked of the kernel — `KERN_PROC_TTY`
+  plus Mach task info on macOS, `/proc` on Linux — never of the screen. Measured against the
+  previous release: a raw-mode prompt in an invented script went from a 15s timeout reported as
+  `running` to `awaiting-input` in 2.5s, vim from invisible to 2.3s, and Claude Code's own trust
+  prompt and input box to 2.5s and 1.4s.
+
+  It is reported as an inference, not a recognition, because "running nothing" is not "blocked on a
+  read": a TUI waiting on the network looks identical. The reply says so and offers `peek --screen`
+  first.
+
+- **`wait` accepts several terminals** (`pairmux wait a,b,c` or `pairmux wait a b c`) and ends on the
+  first to satisfy a condition, naming it in the reply. Waiting on five sub-agents was five processes
+  polling five deadlines, none of which could wake the others.
+
+- **`wait --note`** resolves on a note event and nothing else. A shell terminal completes commands and
+  `--done` can wait for the mark; a terminal holding an agent's UI never completes anything, so the
+  only honest turn boundary is one the pane itself declares. Have it call
+  `pairmux note "$PAIRMUX_NAME" "..."` from a stop hook and the wait ends exactly there, with no
+  screen-reading and no heuristics. `--human` keeps its handoff extras; `--note` is the primitive
+  underneath, without `--human`'s habit of returning early on a terminal already sitting at a prompt.
+
+- **Nested layers.** Each pane is now handed its own tmux endpoint, so a pairmux run inside a pairmux
+  terminal builds its own layer. Everything pairmux scopes is already keyed by socket, so this
+  separates the session, the state directory, the name grammar and the write locks in one move:
+  three layers can now each have a terminal called `build`. `ls` marks a terminal driving a layer
+  with `[layer:SOCKET]` and spells out the command to descend into it.
+
+### Changed
+
+- **`kill` tears down the nested layers a terminal was driving**, deepest first, and reports which
+  endpoints went with it. Each layer is its own tmux server, so a grandchild does not die with its
+  parent's; left behind, a sub-agent keeps running and keeps spending, unlisted at every layer anyone
+  would think to look at.
+
+- **`send` takes a short lock of its own.** Not the write lock — that means "a command is running
+  here", which is exactly when an interactive answer most needs to get through — but one that stops
+  two senders interleaving keystrokes into a line belonging to neither. No lock reaches a human at a
+  keyboard, so when one is attached and watching that window, `send` now says you are sharing its
+  input line.
+
+- **A terminal that has been quiet mid-line but is burning CPU is no longer called a question.** The
+  weakest inference now asks the kernel before it speaks: `printf 'Building... '` followed by real
+  work used to be reported as `awaiting-input` after ten seconds.
+
+- **`awaiting-input` on a terminal held by a full-screen program no longer suggests `--done`.** There
+  is no command underneath it to complete, so that hint blocked until the program itself exited —
+  for an agent's UI, never. It now points at `--screen` and `--pattern`.
+
+### Fixed
+
+- **`wait --human` replayed the same note forever on a terminal driven by `send`.** A note counted as
+  answered only once a command completed, and a terminal holding a long-lived program completes
+  none, so every wait after the first returned the first note instantly and an agent looping on
+  "instruct the sub-agent, wait for its reply" never blocked at all. Delivering input now counts as
+  answering it, which is what it always meant.
+
+
 ## [0.4.0] - 2026-08-10
 
 ### Changed
@@ -246,7 +316,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stable `error.code` values (`E_NO_TERMINAL`, `E_EXISTS`, `E_BUSY`, `E_DEAD`, `E_BAD_ARGS`,
   `E_TMUX`, `E_INTERNAL`).
 
-[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/treeleaves30760/pairmux/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/treeleaves30760/pairmux/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/treeleaves30760/pairmux/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/treeleaves30760/pairmux/compare/v0.1.1...v0.2.0

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/treeleaves30760/pairmux/internal/core"
@@ -217,5 +218,68 @@ func TestBaseDirPrecedence(t *testing.T) {
 	t.Setenv("PAIRMUX_STATE_DIR", "")
 	if got := BaseDir(); got != filepath.Join("/xdg", "pairmux") {
 		t.Errorf("BaseDir with XDG_STATE_HOME = %q", got)
+	}
+}
+
+// TestChildSocket pins the naming that separates one nesting layer from the
+// next: readable while it fits, unique and stable when it does not, and always
+// something tmux will accept — a name tmux rejects would take the whole child
+// layer down with it.
+func TestChildSocket(t *testing.T) {
+	long := strings.Repeat("a", 32) // the longest legal terminal name
+
+	tests := []struct {
+		name           string
+		parent, term   string
+		want           string // "" means: assert the shape, not the exact value
+		wantHashSuffix bool
+	}{
+		{"readable at the first layer", "pairmux", "build", "pairmux-build", false},
+		{"an empty parent means the default endpoint", "", "build", core.DefaultSocket + "-build", false},
+		{"readable at the second layer", "pairmux-build", "test", "pairmux-build-test", false},
+		{"a long name still fits once", "pairmux", long, "pairmux-" + long, false},
+		{"deep nesting falls back to a digest", "pairmux-" + long, long, "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ChildSocket(tt.parent, tt.term)
+			if !tmux.ValidSocketName(got) {
+				t.Fatalf("ChildSocket = %q, which tmux would reject", got)
+			}
+			if tt.want != "" && got != tt.want {
+				t.Fatalf("ChildSocket = %q, want %q", got, tt.want)
+			}
+			if tt.wantHashSuffix {
+				if len(got) != maxSocketName {
+					t.Fatalf("truncated name is %d chars, want the full %d", len(got), maxSocketName)
+				}
+				if again := ChildSocket(tt.parent, tt.term); again != got {
+					t.Fatalf("not stable across calls: %q then %q", got, again)
+				}
+			}
+		})
+	}
+
+	// Two different terminals under one parent must never share an endpoint,
+	// including once truncation is in play — that would merge their registries.
+	parent := "pairmux-" + long
+	a, b := ChildSocket(parent, long), ChildSocket(parent, strings.Repeat("b", 32))
+	if a == b {
+		t.Fatalf("distinct terminals collided on %q", a)
+	}
+}
+
+// TestChildSocketSeparatesNamespaces is the property the whole feature exists
+// for: the same terminal name under two different parents resolves to two
+// different state directories.
+func TestChildSocketSeparatesNamespaces(t *testing.T) {
+	root := t.TempDir()
+	one := SocketDir(root, ChildSocket("pairmux", "agent1"))
+	two := SocketDir(root, ChildSocket("pairmux", "agent2"))
+	if one == two {
+		t.Fatalf("two layers share the namespace %q", one)
+	}
+	if SocketDir(root, "pairmux") == one {
+		t.Fatal("a child layer shares its parent's namespace")
 	}
 }

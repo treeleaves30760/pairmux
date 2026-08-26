@@ -386,3 +386,41 @@ func isDir(path string) bool {
 	fi, err := os.Stat(path)
 	return err == nil && fi.IsDir()
 }
+
+// maxSocketName is tmux.ValidSocketName's length ceiling, restated here because
+// ChildSocket has to fit inside it rather than just be rejected by it.
+const maxSocketName = 64
+
+// ChildSocket names the tmux endpoint a terminal's own nested pairmux should
+// use, derived from the endpoint that owns it and the terminal's name.
+//
+// Nesting is what an agent that drives other agents needs and what a single
+// endpoint cannot give it. Everything pairmux scopes — the tmux session, the
+// state directory, the name grammar, the write locks — is already keyed by
+// socket (see EndpointDir), so handing a pane its own socket separates a whole
+// layer with no new concept: names cannot collide across layers, `ls` at one
+// layer lists that layer, and killing a parent cannot reach into a child's
+// registry by accident. Without it every layer creates windows in the one
+// session, where the second `build` terminal anyone opens collides with the
+// first.
+//
+// The readable form is parent-name, which is also how a human reads the
+// hierarchy back off `ls`. Only when that would exceed what tmux accepts does
+// it fall back to a truncated form plus a digest of the full name, which stays
+// unique and stays stable across invocations.
+func ChildSocket(parent, name string) string {
+	if parent == "" {
+		parent = core.DefaultSocket
+	}
+	full := parent + "-" + name
+	if len(full) <= maxSocketName && tmux.ValidSocketName(full) {
+		return full
+	}
+	sum := sha256.Sum256([]byte(full))
+	suffix := fmt.Sprintf("-%x", sum[:4])
+	head := full
+	if n := maxSocketName - len(suffix); n < len(head) {
+		head = head[:n]
+	}
+	return head + suffix
+}
