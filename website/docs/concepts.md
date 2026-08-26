@@ -73,6 +73,7 @@ When a terminal is created, pairmux attaches `tmux pipe-pane` to stream the pane
     <terminal>/
       raw.log       # pipe-pane raw bytes (mode 0600)
       index.jsonl   # {ts, type, cmd_id, offset, exit_code?, text?} — one event per line
+                    # type: created | cmd_start | cmd_end | note | sent
       meta.json     # name, pane id, shell, mode, socket
 ```
 
@@ -86,6 +87,11 @@ The journal is what makes three otherwise-hard problems easy:
 - **Multi-agent reads are lock-free.** Reading a file needs no coordination, so any number of agents can watch the same terminal (for example, several agents tailing one dev-server's log).
 
 `run` captures a command's output by recording the journal byte-offset when it sends the command (`cmd_start`) and the offset of the completion mark (`cmd_end`), then shaping the bytes between them.
+
+`sent` records that `send` delivered input, and deliberately records only its shape (`text+enter`)
+and never its content — a human answering a handoff types the credential through `send`, and this
+file outlives the screen. It exists so a note can be marked answered on a terminal that completes
+no commands: see [human collaboration](./guides/human-collaboration.md).
 
 ## The blocking CLI as the "poke"
 

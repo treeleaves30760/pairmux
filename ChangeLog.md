@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-26
+
+### Added
+
+- **A one-line installer at the top of the README**, for both platforms it can serve:
+
+  ```
+  curl -fsSL https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.sh | sh
+  irm  https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.ps1 | iex
+  ```
+
+  The POSIX one is the installer that already shipped, promoted out of the last subsection of the
+  install chapter into the first thing anyone reads. The PowerShell one is new and does not pretend
+  to install a Windows binary: tmux has no Windows build, so it finds WSL, checks it has a
+  distribution and something to download with, and runs the POSIX installer inside it — refusing
+  with the command that fixes it rather than half-installing. Configure it through
+  `PAIRMUX_VERSION` / `PAIRMUX_WSL_DISTRO` / `PAIRMUX_INSTALL_DIR`, since a piped script takes no
+  arguments.
+
+  Both are checked in CI now: the PowerShell one is parsed and analysed on every push, because a
+  syntax error in a script people run as `irm ... | iex` is a syntax error in their terminal.
+
+### Changed
+
+- **The `pairmux.v1` journal gained an event type in 0.5.0 without the release saying so.**
+  `index.jsonl` now also carries `sent`, recorded when `send` delivers input. Anything parsing that
+  file against a closed set of `created | cmd_start | cmd_end | note` should accept it. It stores
+  only the shape of a send (`text+enter`) and never its content — a human answering a handoff types
+  the credential through `send`, and that file outlives the screen. The journal layout in the
+  concepts documentation now lists the full vocabulary.
+
+### Fixed
+
+- **Documentation still said a note is marked seen only by a completed `run`.** Since 0.5.0 a `send`
+  marks it seen too, which is the whole reason a driving loop over a long-lived program terminates;
+  the human-collaboration guide described the old rule and would have led anyone reasoning from it
+  to the wrong conclusion about why their wait returned.
+
+
 ## [0.5.0] - 2026-08-26
 
 This release is about one workload: an agent driving other agents, with a human able to step into
@@ -316,7 +355,8 @@ Codex terminals and fixing what broke.
   stable `error.code` values (`E_NO_TERMINAL`, `E_EXISTS`, `E_BUSY`, `E_DEAD`, `E_BAD_ARGS`,
   `E_TMUX`, `E_INTERNAL`).
 
-[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/treeleaves30760/pairmux/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/treeleaves30760/pairmux/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/treeleaves30760/pairmux/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/treeleaves30760/pairmux/compare/v0.2.0...v0.3.0

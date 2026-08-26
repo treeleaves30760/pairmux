@@ -123,6 +123,21 @@ curl -fsSL https://raw.githubusercontent.com/treeleaves30760/pairmux/main/instal
 ```
 
 </TabItem>
+<TabItem value="windows" label="Windows (WSL)">
+
+tmux does not run on Windows, so neither does pairmux — there is no native Windows artifact. The
+supported arrangement is pairmux inside WSL. This finds WSL, checks it has a distribution, and runs
+the POSIX installer inside it rather than pretending a Windows install is possible:
+
+```powershell
+irm https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.ps1 | iex
+```
+
+A piped script takes no arguments, so configure it through the environment — `PAIRMUX_VERSION`,
+`PAIRMUX_WSL_DISTRO`, `PAIRMUX_INSTALL_DIR`. pairmux then lives inside the distribution: run it as
+`wsl -- pairmux version`, and install tmux there too if it is not already present.
+
+</TabItem>
 </Tabs>
 
 Homebrew distribution is deferred until release binaries are signed, notarized, and verified through

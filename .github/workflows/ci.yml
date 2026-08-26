@@ -54,6 +54,33 @@ jobs:
           shellcheck install.sh scripts/*.sh
           ./scripts/test-install.sh
 
+      - name: Lint the Windows installer
+        shell: pwsh
+        run: |
+          # install.ps1 is normally run as `irm ... | iex`, so a syntax error in
+          # it is a syntax error in someone's terminal. Parse it and analyse it
+          # here; the ubuntu runner ships pwsh already.
+          $errors = $null
+          $tokens = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$PWD/install.ps1", [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors) {
+            $errors | ForEach-Object {
+              Write-Host "install.ps1:$($_.Extent.StartLineNumber): $($_.Message)"
+            }
+            exit 1
+          }
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+          # PSAvoidUsingWriteHost is excluded on purpose: for an installer run
+          # through a pipe, the console is the output (see install.ps1).
+          $findings = Invoke-ScriptAnalyzer -Path "$PWD/install.ps1" `
+            -Severity Error,Warning -ExcludeRule PSAvoidUsingWriteHost
+          if ($findings) {
+            $findings | Format-Table -AutoSize | Out-String -Width 160 | Write-Host
+            exit 1
+          }
+          Write-Host "install.ps1 parses clean with no analyzer findings"
+
   # Fast feedback: static analysis + unit tests, no tmux required.
   unit:
     strategy:
