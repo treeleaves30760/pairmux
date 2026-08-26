@@ -33,7 +33,12 @@ jobs:
           cache: npm
           cache-dependency-path: website/package-lock.json
       - run: npm ci
-      - run: npm audit --audit-level=moderate
+      # Not `npm audit --audit-level=moderate`: that gate went red on an
+      # advisory with no published fix, and since it runs before the build it
+      # took every documentation deploy down with it. `npm run audit` fails the
+      # same way on anything actionable, but accepts a short list of reviewed
+      # exceptions and re-checks on every run that they are still unfixable.
+      - run: npm run audit
       - run: npm run typecheck
       - run: npm run build
       # Docusaurus emits the static site to website/build by default.
