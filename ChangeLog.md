@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The documentation site had not deployed since 2026-08-01.** The Docs workflow ran
+  `npm audit --audit-level=moderate` ahead of the build, a transitive dependency picked up an
+  advisory with no published fix, and because the audit gates the build every deploy stopped with
+  it — so 0.4.0, 0.5.0 and 0.5.1 never reached the site. Everything with a fixed version is now
+  pinned through `overrides`, and the gate is a script that still fails on anything actionable but
+  accepts a short list of reviewed exceptions, re-checking on every run that each one is still
+  genuinely unfixable and still reported. An exception that cannot expire is what turns one stuck
+  advisory into a month of silent non-deployment.
+
 ## [0.5.1] - 2026-08-26
 
 ### Added
