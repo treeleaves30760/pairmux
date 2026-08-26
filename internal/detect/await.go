@@ -27,6 +27,18 @@ const (
 	// accepted as the completion anyway (bash 3.2 hooks emit D but never C).
 	graceNoC = 250 * time.Millisecond
 
+	// rawQuiet gates the raw-mode branch: a program that took the keyboard for
+	// itself (ICANON off), printed nothing for this long, and is running no code
+	// is judged to be waiting on a keystroke. It is far shorter than inferQuiet
+	// because the evidence is far better — intent from the discipline, idleness
+	// from the kernel, rather than the shape of a line — but not as short as
+	// refineQuiet, because a TUI that redraws on a timer is silent between
+	// redraws and should not be called a question in that gap. Two seconds sits
+	// above every redraw cadence in normal use and still beats running out a 60s
+	// command timeout by a wide margin. The verdict is KindInferred either way,
+	// so an agent that acts on it has been told to look first.
+	rawQuiet = 2 * time.Second
+
 	// inferQuiet gates the weakest evidence: a line-oriented terminal sitting on
 	// an unterminated line that no pattern recognises. That shape also describes
 	// a command which printed "Building... " and went away to work, so silence
@@ -63,6 +75,12 @@ const (
 type Prompt struct {
 	Kind PromptKind
 	Line string // the shaped prompt line; empty when only the terminal spoke
+	// Raw records that a program is holding the keyboard (ICANON off) rather
+	// than a shell command having printed a question. It does not change how
+	// much is known — that is Kind's job — but it changes what an agent can do
+	// next, because such a terminal has no completion to wait for: the program
+	// occupying it is not a command that is going to finish.
+	Raw bool
 }
 
 // Secret reports whether an agent must refuse to answer.
@@ -180,16 +198,30 @@ func Refine(j *journal.Journal, st core.Status, mode core.Mode) (core.Status, st
 //  2. The wording of the last line. Recognised prompts keep working exactly as
 //     before, and still promote to KindSecret for tools that ask for a
 //     credential in plain sight without touching echo.
-//  3. Silence on an unterminated line. Weakest, because a command that printed
+//  3. A raw-mode program that is running no code. ICANON off is a declaration
+//     that the program reads keystrokes itself (see TTYState.RawInput), and the
+//     kernel can say whether it is computing (see FgWait). A program that has
+//     claimed the keyboard, printed nothing, and is off the CPU has nothing
+//     left to be doing but waiting on it. This is the case wording alone could
+//     never reach: a pager, an editor, an ssh session at a remote prompt, or
+//     another agent's terminal UI, none of which is obliged to phrase anything
+//     recognisably. It is KindInferred rather than KindOpen because "parked" is
+//     not "blocked on a read" — a TUI waiting on the network looks the same —
+//     and because raw mode hides whether an answer would be echoed.
+//  4. Silence on an unterminated line. Weakest, because a command that printed
 //     a partial line and went to work looks identical, so it needs inferQuiet
 //     rather than refineQuiet of silence and is reported as KindInferred for
 //     the caller to hedge on. It is what lets an unrecognised question — a
 //     terraform "Enter a value:", an ssh host-key prompt — end a handoff at all
-//     instead of running out the clock.
+//     instead of running out the clock. The kernel now vetoes the worst of its
+//     false positives: a terminal with a thread on the CPU is working, whatever
+//     its last line looks like.
 //
-// Cheap and non-blocking: an mtime check, a bounded tail read, and at most one
-// ioctl. Read-only, so any number of agents may call it on one terminal at
-// once. mode is accepted for signature stability; the rules do not vary by it.
+// Cheap and non-blocking: an mtime check, a bounded tail read, at most one
+// ioctl, and — only once the first two layers have declined — one pass over the
+// terminal's own processes. Read-only, so any number of agents may call it on
+// one terminal at once. mode is accepted for signature stability; the rules do
+// not vary by it.
 func Classify(j *journal.Journal, st core.Status, mode core.Mode, tty string) (core.Status, Prompt) {
 	if st != core.StatusRunning {
 		return st, Prompt{}
@@ -204,22 +236,38 @@ func Classify(j *journal.Journal, st core.Status, mode core.Mode, tty string) (c
 	}
 
 	line, recognized := PromptPending(j)
-	p := classify(ReadTTYState(tty), line, recognized, quiet, unterminatedTail(j))
+	p := classify(ReadTTYState(tty), line, recognized, quiet, unterminatedTail(j), onceFgWait(tty))
 	if !p.Waiting() {
 		return st, Prompt{}
 	}
 	return core.StatusAwaitingInput, p
 }
 
+// onceFgWait defers reading the terminal's processes until a branch actually
+// needs it — the first two never do — and memoizes the answer, so the two that
+// may both consult it cannot disagree about a terminal that changed in between.
+func onceFgWait(tty string) func() FgWait {
+	var (
+		val  FgWait
+		done bool
+	)
+	return func() FgWait {
+		if !done {
+			val, done = ReadFgWait(tty), true
+		}
+		return val
+	}
+}
+
 // classify is the decision itself, separated from gathering its inputs so every
 // branch is reachable from a test without a live terminal.
 //
 // A raw-mode program — a pager, a TUI, or a shell's own line editor — makes the
-// discipline uninformative: it reads keystrokes itself, so echo says nothing
-// about whether it wants one. Wording is all there is in that case, which is
-// why the recognised-pattern branch sits between the two terminal-state ones
-// rather than after them.
-func classify(disc TTYState, line string, recognized bool, quiet time.Duration, unterminated bool) Prompt {
+// *discipline* uninformative about timing: it reads keystrokes itself, so echo
+// says nothing about whether it wants one right now. Wording is all that is
+// left to identify a prompt as a prompt, which is why the recognised-pattern
+// branch sits above both idleness branches rather than after them.
+func classify(disc TTYState, line string, recognized bool, quiet time.Duration, unterminated bool, fg func() FgWait) Prompt {
 	switch {
 	case disc.Secret():
 		return Prompt{Kind: KindSecret, Line: line}
@@ -229,7 +277,9 @@ func classify(disc TTYState, line string, recognized bool, quiet time.Duration, 
 			kind = KindSecret
 		}
 		return Prompt{Kind: kind, Line: line}
-	case disc.LineOriented() && quiet >= inferQuiet && unterminated:
+	case disc.RawInput() && quiet >= rawQuiet && fg() == FgParked:
+		return Prompt{Kind: KindInferred, Line: line, Raw: true}
+	case disc.LineOriented() && quiet >= inferQuiet && unterminated && fg() != FgWorking:
 		return Prompt{Kind: KindInferred, Line: line}
 	}
 	return Prompt{}

@@ -335,11 +335,53 @@ func TestUnseenNotes(t *testing.T) {
 			ev(core.EvCmdEnd, 1, ""), ev(core.EvNote, 2, "mid"),
 			ev(core.EvCmdEnd, 3, ""), ev(core.EvNote, 4, "late"),
 		}, []string{"late"}},
+		// send answers a note as surely as a completed command does, and on a
+		// terminal held by a long-lived program it is the only thing that can.
+		{"send consumes notes", []core.Event{
+			ev(core.EvNote, 1, "old"), ev(core.EvSent, 2, "text+enter"),
+		}, nil},
+		{"notes after a send are unseen", []core.Event{
+			ev(core.EvSent, 1, "enter"), ev(core.EvNote, 2, "fresh"),
+		}, []string{"fresh"}},
+		{"the later of send and end wins", []core.Event{
+			ev(core.EvSent, 1, "enter"), ev(core.EvNote, 2, "mid"), ev(core.EvCmdEnd, 3, ""),
+		}, nil},
 	}
 	for _, tt := range tests {
 		if got := unseenNotes(tt.evs); !reflect.DeepEqual(got, tt.want) {
 			t.Errorf("%s: unseenNotes = %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+// TestSentParts pins that the EvSent event describes the shape of a send and
+// never its content: a human answering a handoff types the credential through
+// send, and events.jsonl outlives the screen.
+func TestSentParts(t *testing.T) {
+	tests := []struct {
+		name  string
+		text  bool
+		keys  []string
+		enter bool
+		want  string
+	}{
+		{"nothing", false, nil, false, ""},
+		{"text only", true, nil, false, "text"},
+		{"keys only", false, []string{"C-c"}, false, "keys"},
+		{"enter only", false, nil, true, "enter"},
+		{"the usual answer", true, nil, true, "text+enter"},
+		{"all three", true, []string{"Down"}, true, "text+keys+enter"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sentParts(tt.text, tt.keys, tt.enter)
+			if got != tt.want {
+				t.Fatalf("sentParts = %q, want %q", got, tt.want)
+			}
+			if strings.Contains(got, "hunter2") {
+				t.Fatal("sentParts must never carry content")
+			}
+		})
 	}
 }
 
@@ -357,6 +399,28 @@ func TestAwaitingNext(t *testing.T) {
 	}
 	if strings.Contains(joined, "--text") {
 		t.Errorf("secret prompt must not suggest typing: %v", next)
+	}
+
+	// A line-oriented guess still has a command underneath it, so --done is the
+	// right way to carry on waiting.
+	next = awaitingNext("t1", detect.Prompt{Kind: detect.KindInferred, Line: "Building... "})
+	joined = strings.Join(next, " | ")
+	if !strings.Contains(joined, "wait t1 --done") {
+		t.Errorf("inferred prompt next = %v, want a --done hint", next)
+	}
+
+	// A raw-mode guess has no command underneath it: --done would block until
+	// the program holding the terminal exits, which for an agent UI is never.
+	next = awaitingNext("t1", detect.Prompt{Kind: detect.KindInferred, Line: "", Raw: true})
+	joined = strings.Join(next, " | ")
+	if strings.Contains(joined, "--done") {
+		t.Errorf("raw prompt must not suggest --done, it would hang: %v", next)
+	}
+	if !strings.Contains(joined, "peek t1 --screen") {
+		t.Errorf("raw prompt next = %v, want a --screen hint", next)
+	}
+	if !strings.Contains(joined, "wait t1 --pattern") {
+		t.Errorf("raw prompt next = %v, want a --pattern hint to carry on waiting", next)
 	}
 }
 
@@ -651,5 +715,18 @@ func TestSendKeyHints(t *testing.T) {
 	}
 	if !strings.Contains(e.Error.Hint, "C-a..C-z") {
 		t.Errorf("multi-char hint = %q, want the C-a..C-z examples", e.Error.Hint)
+	}
+}
+
+// TestLayersNext pins how a cascading kill reports itself. A kill that quietly
+// destroyed a tree of sub-agents would be worse than one that leaked them.
+func TestLayersNext(t *testing.T) {
+	if got := layersNext(nil); got != "" {
+		t.Errorf("layersNext(nil) = %q, want empty", got)
+	}
+	got := layersNext([]string{"pairmux-boss-a", "pairmux-boss"})
+	if !strings.Contains(got, "2 nested layer(s)") ||
+		!strings.Contains(got, "pairmux-boss-a") || !strings.Contains(got, "pairmux-boss") {
+		t.Errorf("layersNext = %q, want a count and both endpoints", got)
 	}
 }

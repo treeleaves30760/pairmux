@@ -35,38 +35,82 @@ const (
 	handoffRetryFloor = 300 * time.Second
 )
 
-// cmdWait blocks until a terminal satisfies a condition: the running command
-// finishing (--done), new output matching --pattern, a new human note event
-// (--human), or quiescence (--idle MS, the default). It is read-only — it
-// records no events and takes no lock — so a human and any number of agents can
-// wait on the same terminal at once, which is what makes --done a broadcast:
-// every subscriber wakes on the one completion mark.
+// waitTarget is one terminal's share of a wait: the baselines it was armed
+// with, and the per-condition state that has to survive between polls. One is
+// built per name so a wait over several terminals is genuinely one wait rather
+// than a race between several — the conditions are evaluated against each
+// terminal independently and the first to fire ends it for all of them.
+type waitTarget struct {
+	name string
+	term *state.Terminal
+	j    *journal.Journal
+
+	baseSize   int64
+	baseEvents int
+
+	// completion: --done, and --human's fallback for a prompt whose program
+	// says nothing after it is answered.
+	completion      *detect.CompletionWatcher
+	completionFrom  int64
+	completionEcho  string
+	completionFull  string
+	completionStart time.Time
+
+	// answered: --human's primary signal, that the prompt is no longer on screen.
+	watchAnswered   bool
+	answerScan      int64
+	answerSubmitted bool
+	answeredAt      time.Time
+
+	lastStateCheck time.Time
+	peekHint       string
+}
+
+// cmdWait blocks until one of its terminals satisfies a condition: the running
+// command finishing (--done), new output matching --pattern, a new note event
+// (--note, or --human with its handoff extras), or quiescence (--idle MS, the
+// default). It is read-only — it records no events and takes no lock — so a
+// human and any number of agents can wait on the same terminal at once, which
+// is what makes --done a broadcast: every subscriber wakes on the one
+// completion mark.
+//
+// Several names may be given, separated by spaces or commas. The wait then ends
+// on the first terminal to satisfy a condition and the envelope names it. This
+// is the join an agent driving a fleet of terminals needs: without it, waiting
+// on five sub-agents means five processes polling five deadlines, and whichever
+// one finishes first cannot wake the others.
+//
+// --note is the note condition on its own. --human is the handoff composite:
+// notes, plus the prompt being answered, plus the command completing — three
+// signals because a human at a keyboard may leave any one of them behind. An
+// agent waiting for another agent's turn to end wants only the first, and wants
+// it without --human's habit of returning early on a terminal that was already
+// sitting at a prompt when the wait was armed.
 func (c *Ctx) cmdWait(args []string) int {
-	const usageLine = `pairmux wait <name> [--idle MS] [--pattern RE] [--human] [--done] [--notify] [--timeout 300s]`
+	const usageLine = `pairmux wait <name>[,<name>...] [--idle MS] [--pattern RE] [--note] [--human] [--done] [--notify] [--timeout 300s]`
 
 	var idleS, patternS, timeoutS string
-	var human, notifyHuman, doneFlag bool
+	var human, notifyHuman, doneFlag, noteFlag bool
 	seen := map[string]bool{}
 	pos, err := parseFlags(args, flagSpec{
-		bools: map[string]*bool{"human": &human, "notify": &notifyHuman, "done": &doneFlag},
+		bools: map[string]*bool{"human": &human, "notify": &notifyHuman, "done": &doneFlag, "note": &noteFlag},
 		vals:  map[string]*string{"idle": &idleS, "pattern": &patternS, "timeout": &timeoutS},
 		seen:  seen,
 	})
 	if err != nil {
 		return c.usage(usageLine, err.Error())
 	}
-	if len(pos) == 0 {
-		return c.usage(usageLine, "pairmux ls")
-	}
-	if len(pos) > 1 {
-		return c.usage(usageLine, "unexpected argument "+pos[1])
+	names, err := waitNames(pos)
+	if err != nil {
+		return c.usage(usageLine, err.Error())
 	}
 	if rc, rejected := c.rejectInvalidSocket(); rejected {
 		return rc
 	}
-	name := pos[0]
-	if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
-		return rc
+	for _, name := range names {
+		if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
+			return rc
+		}
 	}
 
 	idleMS := 800
@@ -90,44 +134,160 @@ func (c *Ctx) cmdWait(args []string) int {
 		re, err := regexp.Compile(patternS)
 		if err != nil {
 			return c.fail(output.CodeBadArgs, "bad --pattern: "+err.Error(),
-				`RE2 syntax, e.g. pairmux wait `+name+` --pattern "error|panic"`)
+				`RE2 syntax, e.g. pairmux wait `+names[0]+` --pattern "error|panic"`)
 		}
 		patternRE = re
 	}
-	// Idle is the default condition; an explicit --idle arms it alongside
-	// --pattern/--human/--done. First condition satisfied wins. --done must not
-	// inherit it: a subscriber asking for the next completion would otherwise
-	// return instantly on the idle terminal it is subscribing to.
-	waitIdle := (!seen["pattern"] && !seen["human"] && !seen["done"]) || seen["idle"]
+	// Idle is the default condition; an explicit --idle arms it alongside the
+	// others. First condition satisfied wins. --done must not inherit it: a
+	// subscriber asking for the next completion would otherwise return instantly
+	// on the idle terminal it is subscribing to. Nor must --note, whose whole
+	// point is to block until something signals.
+	waitIdle := (!seen["pattern"] && !seen["human"] && !seen["done"] && !seen["note"]) || seen["idle"]
+	// The note condition itself. --human arms it too, alongside its extras.
+	waitNote := human || noteFlag
 
+	targets := make([]*waitTarget, 0, len(names))
+	for _, name := range names {
+		t, rc, failed := c.armWaitTarget(name, human, doneFlag, noteFlag)
+		if failed {
+			return rc
+		}
+		targets = append(targets, t)
+	}
+
+	var extraNext []string
+	finish := func(t *waitTarget, e output.Envelope) int {
+		e.Terminal = t.name
+		e.Mode = string(t.term.Mode)
+		if len(extraNext) > 0 {
+			e.Next = append(append([]string{}, extraNext...), e.Next...)
+		}
+		// The R3 large-journal guard must be reachable from wait: a program
+		// terminal (dev server, tail -f) is driven by send/wait/peek and never
+		// sees run's guard, yet is exactly the workload that grows fastest.
+		e.Next = appendGuard(e.Next, t.j, t.name)
+		return c.emit(e)
+	}
+	// A wait that times out has not failed — the agent is meant to wait again, and
+	// the hint it follows must be the *same* wait with a longer deadline. Rebuild
+	// it from the parsed flags: a hint that dropped --human turned the retry into
+	// a plain idle wait, which at the handoff prompt returns instantly and puts
+	// the agent straight back where it started.
+	retryHint := waitRetryHint(names, retryFlags(seen, idleS, patternS, human, doneFlag, noteFlag, notifyHuman),
+		retryTimeout(timeout, human))
+
+	// A note the human already left — and no command or send has consumed —
+	// satisfies the note condition immediately: the natural ordering is "the
+	// other side signals, THEN the agent waits", so an unseen pre-existing note
+	// must not be ignored. Checked before --notify fires so a human whose note is
+	// already waiting is not re-pinged.
+	if waitNote {
+		for _, t := range targets {
+			if evs, err := t.j.Events(); err == nil {
+				if note, ok := latestUnseenNote(evs); ok {
+					return finish(t, noteEnvelope(t, note, human))
+				}
+			}
+		}
+	}
+
+	if notifyHuman {
+		if err := notify.Notify("pairmux", fmt.Sprintf("terminal %s needs your attention", strings.Join(names, ", "))); err != nil {
+			extraNext = append(extraNext, "notification failed — check the terminal manually")
+		}
+	}
+
+	idleFor := time.Duration(idleMS) * time.Millisecond
+	deadline := time.Now().Add(timeout)
+	for {
+		for _, t := range targets {
+			env, done, rc, failed := c.pollWaitTarget(t, waitPollSpec{
+				patternRE: patternRE,
+				waitNote:  waitNote,
+				human:     human,
+				waitIdle:  waitIdle,
+				idleFor:   idleFor,
+			})
+			if failed {
+				return rc
+			}
+			if done {
+				return finish(t, env)
+			}
+		}
+		if !time.Now().Before(deadline) {
+			next := []string{targets[0].peekHint, retryHint}
+			if human {
+				// A handoff that times out means the human has not come yet — the one
+				// thing the agent must not conclude is that it should act instead.
+				next = []string{"the human has not answered yet — do NOT type the secret", retryHint, targets[0].peekHint}
+			}
+			return finish(targets[0], output.Envelope{Status: "timeout", Next: next})
+		}
+		time.Sleep(waitPoll)
+	}
+}
+
+// waitNames splits the positional arguments into terminal names, accepting both
+// separators an agent is likely to reach for ("wait a b c" and "wait a,b,c").
+// Duplicates are dropped rather than rejected: waiting on one terminal twice is
+// harmless, but arming two targets on it would poll it twice per tick. Pure:
+// unit-tested directly.
+func waitNames(pos []string) ([]string, error) {
+	seen := map[string]bool{}
+	var names []string
+	for _, arg := range pos {
+		for _, n := range strings.Split(arg, ",") {
+			n = strings.TrimSpace(n)
+			if n == "" {
+				continue
+			}
+			if seen[n] {
+				continue
+			}
+			seen[n] = true
+			names = append(names, n)
+		}
+	}
+	if len(names) == 0 {
+		return nil, errors.New("pairmux ls")
+	}
+	return names, nil
+}
+
+// armWaitTarget resolves one terminal and records the baselines its conditions
+// are measured against. failed reports that the whole wait must abort with rc:
+// a name that does not resolve is the caller's mistake, not a condition that
+// might yet come true on the others.
+func (c *Ctx) armWaitTarget(name string, human, doneFlag, noteFlag bool) (t *waitTarget, rc int, failed bool) {
 	term, err := state.ResolveAt(c.Tmux, c.StateDir, name)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
-			return c.noTerminal(name)
+			return nil, c.noTerminal(name), true
 		}
-		return c.tmuxErr(err)
+		return nil, c.tmuxErr(err), true
 	}
 	if !term.Alive {
-		return c.fail(output.CodeDead, fmt.Sprintf("terminal %q is dead", name), "pairmux new")
+		return nil, c.fail(output.CodeDead, fmt.Sprintf("terminal %q is dead", name), "pairmux new"), true
 	}
 	program := term.Meta.Shell == ""
 	if doneFlag && program {
-		return c.fail(output.CodeBadArgs, "this terminal runs a program, not a shell",
-			fmt.Sprintf("--done needs shell completion marks; use pairmux wait %s --pattern RE or --idle 800", name))
+		return nil, c.fail(output.CodeBadArgs, "this terminal runs a program, not a shell",
+			fmt.Sprintf("--done needs shell completion marks; use pairmux wait %s --pattern RE or --idle 800", name)), true
 	}
 	j, err := journal.Open(term.Dir)
 	if err != nil {
-		return c.fail(output.CodeInternal, err.Error(), "")
+		return nil, c.fail(output.CodeInternal, err.Error(), ""), true
 	}
 
-	// Baselines: only bytes and events that arrive after wait starts count as
-	// new for the polled conditions.
-	baseSize := j.Size()
-	baseEvents := 0
-	var startEvs []core.Event
+	t = &waitTarget{
+		name: name, term: term, j: j,
+		baseSize: j.Size(),
+		peekHint: fmt.Sprintf("pairmux peek %s", name),
+	}
 	if evs, err := j.Events(); err == nil {
-		startEvs = evs
-		baseEvents = len(evs)
+		t.baseEvents = len(evs)
 	}
 
 	// Completion baseline. Nothing writes cmd_end while wait blocks — settlement
@@ -147,25 +307,23 @@ func (c *Ctx) cmdWait(args []string) int {
 	// agent is blocked on that command, and a human who answers the prompt in the
 	// pane leaves no note and no event behind, so the completion mark is the only
 	// evidence there is. An already-present one is evidence the agent has not seen
-	// yet — the pre-existing-note rule below says such a signal resolves the wait
+	// yet — the pre-existing-note rule says such a signal resolves the wait
 	// rather than being ignored, and an agent that hands off, does other work, and
 	// only then waits would otherwise be back to blocking for nothing.
+	//
+	// --note arms neither. It is the plain "something signalled" wait, and a
+	// completion it did not ask about is not that signal.
 	watchPending := inFlight || (human && hasPending)
-
-	var completion *detect.CompletionWatcher
-	var completionFrom int64
-	var completionEcho, completionFull string
-	var completionStart time.Time
 	if doneFlag || (human && hasPending) {
-		completionFrom, completionFull = baseSize, fmt.Sprintf("pairmux log %s --range 1:end", name)
+		t.completionFrom, t.completionFull = t.baseSize, fmt.Sprintf("pairmux log %s --range 1:end", name)
 		if watchPending {
-			completionFrom, completionEcho, completionStart = pending.Offset, pending.Text, pending.TS
-			completionFull = fmt.Sprintf("pairmux log %s --cmd %d", name, pending.CmdID)
+			t.completionFrom, t.completionEcho, t.completionStart = pending.Offset, pending.Text, pending.TS
+			t.completionFull = fmt.Sprintf("pairmux log %s --cmd %d", name, pending.CmdID)
 			if term.Mode == core.ModeSentinel {
-				completionEcho += shellhooks.SentinelSuffix(term.Meta.Shell)
+				t.completionEcho += shellhooks.SentinelSuffix(term.Meta.Shell)
 			}
 		}
-		completion = detect.NewCompletionWatcher(completionFrom, term.Mode)
+		t.completion = detect.NewCompletionWatcher(t.completionFrom, term.Mode)
 	}
 
 	// What a handoff is actually waiting for is the human finishing, not the
@@ -175,156 +333,136 @@ func (c *Ctx) cmdWait(args []string) int {
 	// prompt and the last line is no longer prompt-shaped. Completion stays armed
 	// underneath for the cases this cannot see (a program that prints nothing
 	// after the answer, or a command that had already finished).
-	watchAnswered := human && startStatus == core.StatusAwaitingInput
+	t.watchAnswered = human && startStatus == core.StatusAwaitingInput
+	t.answerScan = t.baseSize
+	return t, 0, false
+}
 
-	var extraNext []string
-	finish := func(e output.Envelope) int {
-		e.Terminal = name
-		e.Mode = string(term.Mode)
-		if len(extraNext) > 0 {
-			e.Next = append(append([]string{}, extraNext...), e.Next...)
+// waitPollSpec is the set of conditions armed for this wait, shared by every
+// target. Per-terminal state lives on waitTarget instead.
+type waitPollSpec struct {
+	patternRE *regexp.Regexp
+	waitNote  bool
+	human     bool
+	waitIdle  bool
+	idleFor   time.Duration
+}
+
+// pollWaitTarget evaluates one tick of every armed condition against one
+// terminal. done reports that the wait is over and env is its result; failed
+// reports an error that must abort the whole wait with rc.
+func (c *Ctx) pollWaitTarget(t *waitTarget, spec waitPollSpec) (env output.Envelope, done bool, rc int, failed bool) {
+	if spec.patternRE != nil {
+		if data, err := t.j.ReadRange(t.baseSize, -1); err == nil && len(data) > 0 {
+			if hit, ok := matchShapedPattern(data, spec.patternRE); ok {
+				return output.Envelope{Status: "pattern-found", Output: hit, Next: []string{t.peekHint}}, true, 0, false
+			}
 		}
-		// The R3 large-journal guard must be reachable from wait: a program
-		// terminal (dev server, tail -f) is driven by send/wait/peek and never
-		// sees run's guard, yet is exactly the workload that grows fastest.
-		e.Next = appendGuard(e.Next, j, name)
-		return c.emit(e)
 	}
-	peekHint := fmt.Sprintf("pairmux peek %s", name)
-	// A wait that times out has not failed — the agent is meant to wait again, and
-	// the hint it follows must be the *same* wait with a longer deadline. Rebuild
-	// it from the parsed flags: a hint that dropped --human turned the retry into
-	// a plain idle wait, which at the handoff prompt returns instantly and puts
-	// the agent straight back where it started.
-	retryHint := waitRetryHint(name, retryFlags(seen, idleS, patternS, human, doneFlag, notifyHuman),
-		retryTimeout(timeout, human))
+	if spec.waitNote {
+		if evs, err := t.j.Events(); err == nil {
+			if note, ok := newNote(evs, t.baseEvents); ok {
+				return noteEnvelope(t, note, spec.human), true, 0, false
+			}
+		}
+	}
+	if t.completion != nil {
+		res, hit, err := t.completion.Poll(t.j)
+		if err != nil {
+			return output.Envelope{}, false, c.fail(output.CodeInternal, err.Error(), ""), true
+		}
+		if hit {
+			return completionEnvelope(t.j, res, t.completionFrom, t.completionEcho, t.completionFull,
+				t.completionStart, t.peekHint, !spec.human), true, 0, false
+		}
+	}
+	// Keystrokes echo into the journal one at a time, so "output appeared" on
+	// its own reads a human halfway through typing as a human who has finished.
+	// What separates the two is the newline their Enter produces — either echoed
+	// by the tty or written by the program as it accepts the line — so the line
+	// the prompt sat on must be terminated before any verdict is possible.
+	if t.watchAnswered && !t.answerSubmitted {
+		if size := t.j.Size(); size > t.answerScan {
+			if data, err := t.j.ReadRange(t.answerScan, size); err == nil && len(data) > 0 {
+				t.answerScan += int64(len(data))
+				t.answerSubmitted = bytes.IndexByte(data, '\n') >= 0
+			}
+		}
+	}
+	if t.watchAnswered && t.answerSubmitted {
+		if _, stillPrompting := detect.PromptPending(t.j); stillPrompting {
+			// Either the prompt is still the last thing on screen, or the program
+			// rejected the answer and asked again. Both mean the human is not done.
+			t.answeredAt = time.Time{}
+		} else {
+			if t.answeredAt.IsZero() {
+				t.answeredAt = time.Now()
+			}
+			// Hold the verdict briefly: a rejected answer echoes first and the
+			// re-prompt lands a moment later, and reporting "moving again" in that
+			// gap would send the agent back round the handoff for nothing.
+			if time.Since(t.answeredAt) >= answeredSettle {
+				return c.answeredEnvelope(t)
+			}
+		}
+	}
 
-	// A note the human already left — and no command has consumed — satisfies
-	// --human immediately: the natural ordering is "human notes, THEN the agent
-	// waits", so an unseen pre-existing note must not be ignored. Checked before
-	// --notify fires so a human whose note is already waiting is not re-pinged.
+	stateCheckDue := spec.waitIdle || time.Since(t.lastStateCheck) >= time.Second
+	if stateCheckDue && journalQuiet(t.j, spec.idleFor) {
+		t.lastStateCheck = time.Now()
+		// Liveness can change while wait blocks. Refresh it only once output
+		// is quiet, then distinguish true idle from a quiet running command,
+		// an input prompt, or a pane that died during the wait.
+		current, err := state.ResolveAt(c.Tmux, c.StateDir, t.name)
+		if err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				return output.Envelope{Status: string(core.StatusDead), Output: waitCurrentTail(t.j), Next: []string{
+					fmt.Sprintf("pairmux log %s", t.name), "pairmux new",
+				}}, true, 0, false
+			}
+			return output.Envelope{}, false, c.tmuxErr(err), true
+		}
+		status, prompt, terminal := terminalStatusAfterQuiet(t.j, current.Alive, t.term.Mode,
+			current.Meta.Shell == "", spec.idleFor, t.term.Meta.Tty)
+		// awaiting-input is the reason a handoff exists, never its outcome:
+		// returning it to an agent that is already handing off only sends it
+		// round the same loop. --human waits for the prompt to be answered.
+		if handoffPrompt := spec.human && status == core.StatusAwaitingInput; terminal &&
+			(spec.waitIdle || status == core.StatusDead) && !handoffPrompt {
+			next := peekNext(t.name, status)
+			if status == core.StatusAwaitingInput {
+				next = awaitingNext(t.name, prompt)
+			}
+			body := ""
+			switch status {
+			case core.StatusAwaitingInput:
+				body = prompt.Line
+			case core.StatusDead:
+				body = waitCurrentTail(t.j)
+			}
+			return output.Envelope{Status: string(status), Output: body, Next: next}, true, 0, false
+		}
+	}
+	return output.Envelope{}, false, 0, false
+}
+
+// noteEnvelope renders the note condition firing. --human calls it "human-done"
+// because that is what it has meant since handoffs existed; --note on its own
+// reports what actually happened, which need not have been a human at all — a
+// sub-agent's own stop hook leaves notes through the same command.
+func noteEnvelope(t *waitTarget, note string, human bool) output.Envelope {
+	status := "note"
 	if human {
-		if note, ok := latestUnseenNote(startEvs); ok {
-			return finish(output.Envelope{Status: "human-done", Output: note, Next: []string{peekHint}})
-		}
+		status = "human-done"
 	}
-
-	if notifyHuman {
-		if err := notify.Notify("pairmux", fmt.Sprintf("terminal %s needs your attention", name)); err != nil {
-			extraNext = append(extraNext, "notification failed — check the terminal manually")
-		}
-	}
-	deadline := time.Now().Add(timeout)
-	var lastStateCheck, answeredAt time.Time
-	answerScan, answerSubmitted := baseSize, false
-	for {
-		if patternRE != nil {
-			if data, err := j.ReadRange(baseSize, -1); err == nil && len(data) > 0 {
-				if hit, ok := matchShapedPattern(data, patternRE); ok {
-					return finish(output.Envelope{Status: "pattern-found", Output: hit, Next: []string{peekHint}})
-				}
-			}
-		}
-		if human {
-			if evs, err := j.Events(); err == nil {
-				if note, ok := newNote(evs, baseEvents); ok {
-					return finish(output.Envelope{Status: "human-done", Output: note, Next: []string{peekHint}})
-				}
-			}
-		}
-		if completion != nil {
-			res, done, err := completion.Poll(j)
-			if err != nil {
-				return c.fail(output.CodeInternal, err.Error(), "")
-			}
-			if done {
-				return finish(completionEnvelope(j, res, completionFrom, completionEcho, completionFull, completionStart, peekHint, !human))
-			}
-		}
-		// Keystrokes echo into the journal one at a time, so "output appeared" on
-		// its own reads a human halfway through typing as a human who has finished.
-		// What separates the two is the newline their Enter produces — either echoed
-		// by the tty or written by the program as it accepts the line — so the line
-		// the prompt sat on must be terminated before any verdict is possible.
-		if watchAnswered && !answerSubmitted {
-			if size := j.Size(); size > answerScan {
-				if data, err := j.ReadRange(answerScan, size); err == nil && len(data) > 0 {
-					answerScan += int64(len(data))
-					answerSubmitted = bytes.IndexByte(data, '\n') >= 0
-				}
-			}
-		}
-		if watchAnswered && answerSubmitted {
-			if _, stillPrompting := detect.PromptPending(j); stillPrompting {
-				// Either the prompt is still the last thing on screen, or the program
-				// rejected the answer and asked again. Both mean the human is not done.
-				answeredAt = time.Time{}
-			} else {
-				if answeredAt.IsZero() {
-					answeredAt = time.Now()
-				}
-				// Hold the verdict briefly: a rejected answer echoes first and the
-				// re-prompt lands a moment later, and reporting "moving again" in that
-				// gap would send the agent back round the handoff for nothing.
-				if time.Since(answeredAt) >= answeredSettle {
-					return c.finishAnswered(finish, name, j, term.Mode, program)
-				}
-			}
-		}
-		idleFor := time.Duration(idleMS) * time.Millisecond
-		stateCheckDue := waitIdle || time.Since(lastStateCheck) >= time.Second
-		if stateCheckDue && journalQuiet(j, idleFor) {
-			lastStateCheck = time.Now()
-			// Liveness can change while wait blocks. Refresh it only once output
-			// is quiet, then distinguish true idle from a quiet running command,
-			// an input prompt, or a pane that died during the wait.
-			current, err := state.ResolveAt(c.Tmux, c.StateDir, name)
-			if err != nil {
-				if errors.Is(err, state.ErrNotFound) {
-					return finish(output.Envelope{Status: string(core.StatusDead), Output: waitCurrentTail(j), Next: []string{
-						fmt.Sprintf("pairmux log %s", name), "pairmux new",
-					}})
-				}
-				return c.tmuxErr(err)
-			}
-			status, prompt, terminal := terminalStatusAfterQuiet(j, current.Alive, term.Mode, current.Meta.Shell == "", idleFor, term.Meta.Tty)
-			// awaiting-input is the reason a handoff exists, never its outcome:
-			// returning it to an agent that is already handing off only sends it
-			// round the same loop. --human waits for the prompt to be answered.
-			if handoffPrompt := human && status == core.StatusAwaitingInput; terminal &&
-				(waitIdle || status == core.StatusDead) && !handoffPrompt {
-				next := peekNext(name, status)
-				if status == core.StatusAwaitingInput {
-					next = awaitingNext(name, prompt)
-				}
-				body := ""
-				switch status {
-				case core.StatusAwaitingInput:
-					body = prompt.Line
-				case core.StatusDead:
-					body = waitCurrentTail(j)
-				}
-				return finish(output.Envelope{Status: string(status), Output: body, Next: next})
-			}
-		}
-		if !time.Now().Before(deadline) {
-			next := []string{peekHint, retryHint}
-			if human {
-				// A handoff that times out means the human has not come yet — the one
-				// thing the agent must not conclude is that it should act instead.
-				next = []string{"the human has not answered yet — do NOT type the secret", retryHint, peekHint}
-			}
-			return finish(output.Envelope{Status: "timeout", Next: next})
-		}
-		time.Sleep(waitPoll)
-	}
+	return output.Envelope{Status: status, Output: note, Next: []string{t.peekHint}}
 }
 
 // retryFlags rebuilds the condition flags of the wait being retried, in the
 // order the usage line lists them. Only conditions the caller actually asked for
 // are reproduced — an unrequested --idle would arm a condition the original wait
 // did not have. Pure: unit-tested directly.
-func retryFlags(seen map[string]bool, idleS, patternS string, human, done, notify bool) []string {
+func retryFlags(seen map[string]bool, idleS, patternS string, human, done, note, notify bool) []string {
 	var flags []string
 	if seen["idle"] {
 		flags = append(flags, "--idle", idleS)
@@ -334,6 +472,9 @@ func retryFlags(seen map[string]bool, idleS, patternS string, human, done, notif
 	}
 	if done {
 		flags = append(flags, "--done")
+	}
+	if note {
+		flags = append(flags, "--note")
 	}
 	if human {
 		flags = append(flags, "--human")
@@ -355,39 +496,39 @@ func retryTimeout(timeout time.Duration, human bool) time.Duration {
 }
 
 // waitRetryHint renders the retry as a runnable command. Pure: unit-tested directly.
-func waitRetryHint(name string, flags []string, timeout time.Duration) string {
-	parts := append([]string{"pairmux", "wait", name}, flags...)
+func waitRetryHint(names []string, flags []string, timeout time.Duration) string {
+	parts := append([]string{"pairmux", "wait", strings.Join(names, " ")}, flags...)
 	parts = append(parts, "--timeout", timeout.String())
 	return strings.Join(parts, " ")
 }
 
-// finishAnswered reports a handoff whose prompt has been answered: the terminal
-// is moving again, which is the news the agent was blocked for. It re-resolves
-// liveness because output stopping and the pane dying look identical from the
-// journal, and it teaches --done — "running" is an invitation to keep following
-// the command, not a dead end. Like every resolved handoff it carries no output
-// (see completionEnvelope), except for a dead pane, where the agent needs the
-// tail to work out what happened at all.
-func (c *Ctx) finishAnswered(finish func(output.Envelope) int, name string, j *journal.Journal, mode core.Mode, program bool) int {
+// answeredEnvelope reports a handoff whose prompt has been answered: the
+// terminal is moving again, which is the news the agent was blocked for. It
+// re-resolves liveness because output stopping and the pane dying look
+// identical from the journal, and it teaches --done — "running" is an
+// invitation to keep following the command, not a dead end. Like every resolved
+// handoff it carries no output (see completionEnvelope), except for a dead
+// pane, where the agent needs the tail to work out what happened at all.
+func (c *Ctx) answeredEnvelope(t *waitTarget) (output.Envelope, bool, int, bool) {
 	alive := true
-	if current, err := state.ResolveAt(c.Tmux, c.StateDir, name); err != nil {
+	if current, err := state.ResolveAt(c.Tmux, c.StateDir, t.name); err != nil {
 		if !errors.Is(err, state.ErrNotFound) {
-			return c.tmuxErr(err)
+			return output.Envelope{}, false, c.tmuxErr(err), true
 		}
 		alive = false
 	} else {
 		alive = current.Alive
 	}
-	status := deriveTerminalStatus(j, alive, mode, program)
-	next := peekNext(name, status)
+	status := deriveTerminalStatus(t.j, alive, t.term.Mode, t.term.Meta.Shell == "")
+	next := peekNext(t.name, status)
 	body := ""
 	switch status {
 	case core.StatusRunning:
-		next = append([]string{fmt.Sprintf("pairmux wait %s --done", name)}, next...)
+		next = append([]string{fmt.Sprintf("pairmux wait %s --done", t.name)}, next...)
 	case core.StatusDead:
-		body = waitCurrentTail(j)
+		body = waitCurrentTail(t.j)
 	}
-	return finish(output.Envelope{Status: string(status), Output: body, Next: next})
+	return output.Envelope{Status: string(status), Output: body, Next: next}, true, 0, false
 }
 
 // completionEnvelope renders a command that finished while wait was blocked. It
@@ -439,21 +580,31 @@ func matchShapedPattern(raw []byte, re *regexp.Regexp) (string, bool) {
 	return "", false
 }
 
-// latestUnseenNote returns the newest EvNote not yet consumed by a command:
-// notes with TS after the last EvCmdEnd, or every note when no command has
-// ended. This replicates commands.go's unseenNotes definition (kept local per
-// the wave split — wait.go must not couple to commands.go), reduced to the
-// latest text. Pure: unit-tested directly.
+// latestUnseenNote returns the newest EvNote the agent has not yet answered:
+// notes with TS after the last EvCmdEnd or EvSent, or every note when it has
+// done neither. This replicates commands.go's unseenNotes definition (kept
+// local per the wave split — wait.go must not couple to commands.go), reduced
+// to the latest text.
+//
+// EvSent is what makes a repeated --human wait terminate. A terminal running a
+// long-lived program is driven by send and completes no commands, so before
+// send counted as an answer the pre-existing-note rule below re-delivered the
+// same note on every wait, instantly, forever — an agent looping on "prompt the
+// sub-agent, wait for its reply" never blocked at all. Pure: unit-tested
+// directly.
 func latestUnseenNote(evs []core.Event) (string, bool) {
-	var lastEnd time.Time
+	var acted time.Time
 	for _, ev := range evs {
-		if ev.Type == core.EvCmdEnd {
-			lastEnd = ev.TS
+		switch ev.Type {
+		case core.EvCmdEnd, core.EvSent:
+			if ev.TS.After(acted) {
+				acted = ev.TS
+			}
 		}
 	}
 	text, found := "", false
 	for _, ev := range evs {
-		if ev.Type == core.EvNote && (lastEnd.IsZero() || ev.TS.After(lastEnd)) {
+		if ev.Type == core.EvNote && (acted.IsZero() || ev.TS.After(acted)) {
 			text, found = ev.Text, true // keep scanning: the latest note wins
 		}
 	}

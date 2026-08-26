@@ -52,9 +52,10 @@ func TestReadTTYStateOnNonTerminals(t *testing.T) {
 }
 
 // TestClassifyLayers walks the evidence ladder. The cases that matter most are
-// the ones where the terminal and the wording disagree: a credential prompt
-// nobody has a pattern for must still be refused, and a raw-mode program must
-// not have its echo state read as a password prompt.
+// the ones where the layers disagree: a credential prompt nobody has a pattern
+// for must still be refused, a raw-mode program must not have its echo state
+// read as a password prompt, and a terminal with a thread on the CPU must not
+// be called a question however its last line looks.
 func TestClassifyLayers(t *testing.T) {
 	const (
 		secretWord = "Password:"
@@ -73,24 +74,41 @@ func TestClassifyLayers(t *testing.T) {
 		recognized   bool
 		quiet        time.Duration
 		unterminated bool
+		fg           FgWait
 		want         PromptKind
 	}{
-		{"echo off settles a prompt no pattern knows", getpass, unknown, false, refineQuiet, true, KindSecret},
-		{"echo off outranks open-looking wording", getpass, openWord, true, refineQuiet, true, KindSecret},
-		{"recognised secret wording without the terminal", unreadable, secretWord, true, refineQuiet, true, KindSecret},
-		{"recognised open prompt stays answerable", plainRead, openWord, true, refineQuiet, true, KindOpen},
-		{"unrecognised wording, silent long enough", plainRead, unknown, false, inferQuiet, true, KindInferred},
-		{"the same, not yet silent enough", plainRead, unknown, false, inferQuiet - time.Millisecond, true, KindNone},
-		{"a finished line is not a question", plainRead, "", false, inferQuiet, false, KindNone},
+		{"echo off settles a prompt no pattern knows", getpass, unknown, false, refineQuiet, true, FgParked, KindSecret},
+		{"echo off outranks open-looking wording", getpass, openWord, true, refineQuiet, true, FgParked, KindSecret},
+		// The discipline is definitive, so it holds even against the kernel:
+		// a getpass whose program has a thread spinning is still a getpass.
+		{"echo off outranks a working terminal", getpass, unknown, false, refineQuiet, true, FgWorking, KindSecret},
+		{"recognised secret wording without the terminal", unreadable, secretWord, true, refineQuiet, true, FgUnknown, KindSecret},
+		{"recognised open prompt stays answerable", plainRead, openWord, true, refineQuiet, true, FgParked, KindOpen},
+		{"unrecognised wording, silent long enough", plainRead, unknown, false, inferQuiet, true, FgUnknown, KindInferred},
+		{"the same, not yet silent enough", plainRead, unknown, false, inferQuiet - time.Millisecond, true, FgUnknown, KindNone},
+		{"a finished line is not a question", plainRead, "", false, inferQuiet, false, FgUnknown, KindNone},
+		// The kernel vetoes the weakest branch's worst false positive: a command
+		// that printed "Building... " and went to work looks exactly like a
+		// question until you ask whether it is running anything.
+		{"a working terminal is not asking, whatever it printed", plainRead, unknown, false, inferQuiet, true, FgWorking, KindNone},
+		{"a parked terminal still infers", plainRead, unknown, false, inferQuiet, true, FgParked, KindInferred},
 		// A pager sits in raw mode with (END) on screen: the terminal cannot
-		// speak for it, so the pattern must, and inference must not fire.
-		{"raw mode defers to the pattern", rawMode, "file (END)", true, refineQuiet, true, KindOpen},
-		{"raw mode never infers", rawMode, unknown, false, inferQuiet, true, KindNone},
-		{"unreadable terminal never infers", unreadable, unknown, false, inferQuiet, true, KindNone},
+		// speak for its timing, so the pattern answers first and immediately.
+		{"raw mode defers to the pattern", rawMode, "file (END)", true, refineQuiet, true, FgParked, KindOpen},
+		// Raw mode plus idleness is the case wording could never reach: a TUI,
+		// an editor, an ssh session at a remote prompt, another agent's UI.
+		{"raw mode infers once the program stops running", rawMode, unknown, false, rawQuiet, true, FgParked, KindInferred},
+		{"raw mode infers with no prompt line at all", rawMode, "", false, rawQuiet, false, FgParked, KindInferred},
+		{"raw mode waits out rawQuiet first", rawMode, unknown, false, rawQuiet - time.Millisecond, true, FgParked, KindNone},
+		{"a busy TUI is not a question", rawMode, unknown, false, rawQuiet, true, FgWorking, KindNone},
+		// Without the kernel there is nothing to promote raw mode with, so the
+		// behaviour is exactly what it was before FgWait existed.
+		{"raw mode never infers unasked", rawMode, unknown, false, inferQuiet, true, FgUnknown, KindNone},
+		{"unreadable terminal never infers", unreadable, unknown, false, inferQuiet, true, FgParked, KindNone},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := classify(tc.disc, tc.line, tc.recognized, tc.quiet, tc.unterminated)
+			got := classify(tc.disc, tc.line, tc.recognized, tc.quiet, tc.unterminated, func() FgWait { return tc.fg })
 			if got.Kind != tc.want {
 				t.Fatalf("kind = %v, want %v", got.Kind, tc.want)
 			}
@@ -101,6 +119,51 @@ func TestClassifyLayers(t *testing.T) {
 				t.Fatalf("Secret() = %v for kind %v", got.Secret(), got.Kind)
 			}
 		})
+	}
+}
+
+// TestClassifyDefersProcessScan pins the cost: the two layers that can decide
+// from the terminal alone must never pay for a walk of its processes, and the
+// two that can consult it must agree on one reading rather than taking two.
+func TestClassifyDefersProcessScan(t *testing.T) {
+	getpass := TTYState{Canonical: true, Known: true}
+	plainRead := TTYState{Echo: true, Canonical: true, Known: true}
+	rawMode := TTYState{Known: true}
+
+	tests := []struct {
+		name       string
+		disc       TTYState
+		recognized bool
+		wantCalls  int
+	}{
+		{"the discipline settles it alone", getpass, false, 0},
+		{"the pattern settles it alone", plainRead, true, 0},
+		{"raw mode asks once", rawMode, false, 1},
+		{"a declined raw branch does not ask twice", plainRead, false, 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			classify(tc.disc, "Widget:", tc.recognized, inferQuiet, true, func() FgWait {
+				calls++
+				return FgUnknown
+			})
+			if calls != tc.wantCalls {
+				t.Fatalf("fg consulted %d times, want %d", calls, tc.wantCalls)
+			}
+		})
+	}
+}
+
+// TestOnceFgWaitMemoizes pins that the memo, not the caller, is what keeps two
+// branches from reading a moving terminal twice.
+func TestOnceFgWaitMemoizes(t *testing.T) {
+	fg := onceFgWait("") // an empty path always answers FgUnknown
+	first := fg()
+	for i := 0; i < 3; i++ {
+		if got := fg(); got != first {
+			t.Fatalf("call %d = %v, want the memoized %v", i+2, got, first)
+		}
 	}
 }
 

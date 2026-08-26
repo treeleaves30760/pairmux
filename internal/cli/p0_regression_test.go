@@ -157,7 +157,7 @@ func TestTerminalStatusAfterQuietSurfacesPromptAndDeath(t *testing.T) {
 
 	j := newJournal(t, "Continue [y/N]? ")
 	if status, prompt, terminal := terminalStatusAfterQuiet(j, true, core.ModeHooks, false, time.Second, ""); !terminal || status != core.StatusAwaitingInput || !strings.Contains(prompt.Line, "[y/N]") {
-		t.Fatalf("prompt status = (%q, %q, %v), want awaiting-input", status, prompt, terminal)
+		t.Fatalf("prompt status = (%q, %+v, %v), want awaiting-input", status, prompt, terminal)
 	}
 
 	j = newJournal(t, "quiet\n")

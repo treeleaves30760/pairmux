@@ -113,11 +113,22 @@ func (c *Ctx) cmdNew(args []string) int {
 	// latter give skills/checkers a stable locator without reimplementing the
 	// endpoint hash. Prepare's own env wins on conflict (ruling: its entries
 	// take precedence).
+	//
+	// The endpoint a pane is given is its OWN, not the one that created it.
+	// Anything it runs that is itself pairmux — an agent driving further agents
+	// — then builds its layer under a socket of its own, which is the whole of
+	// what separates one layer from the next (see state.ChildSocket); without
+	// it every layer opens windows in the one session and the second `build`
+	// terminal anyone creates collides with the first. The state root is pinned
+	// beside it so a child resolves the same tree no matter what the tmux server
+	// happened to inherit when it started.
 	env := map[string]string{
 		"PAIRMUX":                 "1",
 		"PAIRMUX_NAME":            name,
+		"PAIRMUX_STATE_DIR":       c.StateDir,
 		"PAIRMUX_STATE_NAMESPACE": c.namespaceDir(),
 		"PAIRMUX_TERMINAL_DIR":    dir,
+		"PAIRMUX_SOCKET":          state.ChildSocket(c.Tmux.Socket, name),
 	}
 	for k, v := range prepEnv {
 		env[k] = v
@@ -654,6 +665,21 @@ func awaitingNext(name string, p detect.Prompt) []string {
 			fmt.Sprintf("pairmux wait %s --human --notify   # hand off to the human", name),
 		}
 	case detect.KindInferred:
+		if p.Raw {
+			// A program holds the keyboard: a pager, an editor, another agent's
+			// terminal UI. Two things that are true of the line-oriented case are
+			// false here. Its screen is a rendering, not a stream, so only --screen
+			// shows what is actually on it. And there is no command to complete, so
+			// --done would block until the *program itself exits* — for a terminal
+			// UI that is never, which turns the one hint an unsure agent is most
+			// likely to follow into a hang. Wait for something nameable instead.
+			return []string{
+				"a full-screen program holds this terminal — look at the screen, not the stream",
+				fmt.Sprintf("pairmux peek %s --screen", name),
+				fmt.Sprintf("pairmux wait %s --pattern RE   # if it turns out to still be working", name),
+				fmt.Sprintf("pairmux send %s --text <answer> --enter", name),
+			}
+		}
 		// Inference, not recognition: nothing was killed and the command may
 		// simply be thinking, so look first, and carry on waiting if it is.
 		return []string{
@@ -719,6 +745,17 @@ func (c *Ctx) cmdSend(args []string) int {
 	}
 	running := deriveTerminalStatus(j, term.Alive, term.Mode, term.Meta.Shell == "") == core.StatusRunning
 
+	// Serialize against other senders only (see AcquireSendLock): a send must
+	// still get through a held write lock, or a handoff prompt could never be
+	// answered, but two senders interleaving keystrokes produce a line that is
+	// neither of theirs.
+	releaseSend, err := j.AcquireSendLock()
+	if err != nil {
+		return c.fail(output.CodeBusy, "another send is in flight: "+err.Error(),
+			fmt.Sprintf("retry, or pairmux peek %s to see what landed", name))
+	}
+	defer releaseSend()
+
 	if seen["text"] {
 		if err := c.Tmux.SendLiteral(term.PaneID, text); err != nil {
 			return c.tmuxErr(err)
@@ -735,9 +772,23 @@ func (c *Ctx) cmdSend(args []string) int {
 		}
 	}
 
+	// Record that the agent acted, without recording what it typed. This is what
+	// closes a note: a terminal driven by send alone — a full-screen program, an
+	// agent's own terminal UI — never completes a command, so cmd_end can never
+	// arrive to mark the note answered, and every later wait would hand back the
+	// same stale note forever. See sentParts for why the content is not stored.
+	_ = j.AppendEvent(core.Event{Type: core.EvSent, Text: sentParts(seen["text"], keys, enter)})
+
 	next := []string{fmt.Sprintf("pairmux peek %s", name)}
 	if running {
 		next = append([]string{"a command is running; sent input goes to it"}, next...)
+	}
+	// The send lock reaches other pairmux processes, not a person at a keyboard:
+	// their keystrokes go straight to the pane. When one is watching this very
+	// window, say so — sharing an input line is the one collision that cannot be
+	// prevented, only noticed.
+	if n, active, err := c.Tmux.PaneAudience(term.PaneID); err == nil && n > 0 && active {
+		next = append([]string{"a human is attached to this window — you are sharing its input line"}, next...)
 	}
 	return c.emit(output.Envelope{Status: "sent", Terminal: name, Mode: string(term.Mode), Next: next})
 }
@@ -969,9 +1020,17 @@ func (c *Ctx) cmdLs(args []string) int {
 		if mt, ok := j.LastModified(); ok {
 			row.LastActivity = mt.UTC().Format(time.RFC3339)
 		}
+		row.ChildSocket = c.liveChildLayer(t.Name)
 		rows = append(rows, row)
 	}
-	return c.emit(output.Envelope{Status: "ok", Terminals: rows})
+	var next []string
+	for _, r := range rows {
+		if r.ChildSocket != "" {
+			next = append(next, "pairmux --socket "+r.ChildSocket+" ls   # the terminals "+r.Name+" is driving")
+			break
+		}
+	}
+	return c.emit(output.Envelope{Status: "ok", Terminals: rows, Next: next})
 }
 
 // lockHolderPID reports the pid actually holding a terminal's write lock, 0
@@ -1026,20 +1085,25 @@ func (c *Ctx) cmdKill(args []string) int {
 		}
 		return c.tmuxErr(err)
 	}
+	// Descend before killing the pane: once the window is gone the terminal is
+	// unresolvable, and its layer would be orphaned with nothing left pointing
+	// at it.
+	layers := c.killLayers(c.Tmux.Socket, name, 0)
 	if term.Alive && term.PaneID != "" {
 		_ = c.Tmux.KillWindowOf(term.PaneID) // ignore: pane may already be gone
 	}
 	if j, err := journal.Open(term.Dir); err == nil {
 		_ = j.AppendEvent(core.Event{Type: core.EvNote, Text: "killed"})
 	}
-	return c.emit(output.Envelope{
-		Status: "killed", Terminal: name,
-		Next: []string{
-			"journal retained at " + term.Dir,
-			fmt.Sprintf("pairmux prune %s reclaims its disk when the history is no longer needed", name),
-			"pairmux ls",
-		},
-	})
+	next := []string{
+		"journal retained at " + term.Dir,
+		fmt.Sprintf("pairmux prune %s reclaims its disk when the history is no longer needed", name),
+		"pairmux ls",
+	}
+	if line := layersNext(layers); line != "" {
+		next = append([]string{line}, next...)
+	}
+	return c.emit(output.Envelope{Status: "killed", Terminal: name, Next: next})
 }
 
 // killAll kills every managed window on the socket and lists the names killed.
@@ -1052,7 +1116,11 @@ func (c *Ctx) killAll() int {
 		panes = nil
 	}
 	var names []string
+	var layers []string
 	for _, p := range panes {
+		if state.ValidName(p.Name) {
+			layers = append(layers, c.killLayers(c.Tmux.Socket, p.Name, 0)...)
+		}
 		_ = c.Tmux.KillWindowOf(p.PaneID) // ignore: pane may already be gone
 		if state.ValidName(p.Name) {
 			dir := c.terminalDir(p.Name)
@@ -1066,14 +1134,15 @@ func (c *Ctx) killAll() int {
 		names = append(names, p.Name)
 	}
 	sort.Strings(names)
-	return c.emit(output.Envelope{
-		Status: "killed", Output: strings.Join(names, "\n"),
-		Next: []string{
-			"journals retained under " + c.namespaceDir(),
-			"pairmux prune reclaims dead-terminal disk when the history is no longer needed",
-			"pairmux ls",
-		},
-	})
+	next := []string{
+		"journals retained under " + c.namespaceDir(),
+		"pairmux prune reclaims dead-terminal disk when the history is no longer needed",
+		"pairmux ls",
+	}
+	if line := layersNext(layers); line != "" {
+		next = append([]string{line}, next...)
+	}
+	return c.emit(output.Envelope{Status: "killed", Output: strings.Join(names, "\n"), Next: next})
 }
 
 // cmdNote records a human message for the agent driving a terminal. The agent
@@ -1115,19 +1184,55 @@ func (c *Ctx) cmdNote(args []string) int {
 	})
 }
 
-// unseenNotes returns the texts of EvNote events recorded after the last
-// EvCmdEnd — human messages the agent has not had a chance to see. When no
-// command has ever completed, every note is unseen.
-func unseenNotes(evs []core.Event) []string {
-	var lastEnd time.Time
+// sentParts names which halves of a send were delivered, for the EvSent event.
+// It deliberately describes the shape of the input and never its content: a
+// human answering a handoff types the credential through send, and the event
+// log is a file that outlives the screen. Pure: unit-tested directly.
+func sentParts(text bool, keys []string, enter bool) string {
+	var parts []string
+	if text {
+		parts = append(parts, "text")
+	}
+	if len(keys) > 0 {
+		parts = append(parts, "keys")
+	}
+	if enter {
+		parts = append(parts, "enter")
+	}
+	return strings.Join(parts, "+")
+}
+
+// lastActedOn returns when the agent last did something to this terminal:
+// finished a command, or delivered input to one. Notes older than that have
+// been answered.
+//
+// EvSent belongs here for the terminals that never finish a command at all. A
+// pane holding a long-lived program — a pager, an editor, another agent's
+// terminal UI — is driven entirely by send, so its last EvCmdEnd is from
+// whatever launched the program, if there ever was one. Without send as a
+// boundary a note stays unseen for the life of the terminal, and every wait
+// after the first returns it again instantly. Pure: unit-tested directly.
+func lastActedOn(evs []core.Event) time.Time {
+	var last time.Time
 	for _, ev := range evs {
-		if ev.Type == core.EvCmdEnd {
-			lastEnd = ev.TS
+		switch ev.Type {
+		case core.EvCmdEnd, core.EvSent:
+			if ev.TS.After(last) {
+				last = ev.TS
+			}
 		}
 	}
+	return last
+}
+
+// unseenNotes returns the texts of EvNote events recorded after the agent last
+// acted on the terminal — human messages it has not had a chance to see. When
+// it has never acted, every note is unseen.
+func unseenNotes(evs []core.Event) []string {
+	acted := lastActedOn(evs)
 	var notes []string
 	for _, ev := range evs {
-		if ev.Type == core.EvNote && (lastEnd.IsZero() || ev.TS.After(lastEnd)) {
+		if ev.Type == core.EvNote && (acted.IsZero() || ev.TS.After(acted)) {
 			notes = append(notes, ev.Text)
 		}
 	}

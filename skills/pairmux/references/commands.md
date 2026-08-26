@@ -36,7 +36,7 @@ Environment: `PAIRMUX_SOCKET` sets the default tmux socket; `PAIRMUX_STATE_DIR` 
 | `error` | object | present when `ok:false`: `{code, message, hint}` |
 
 **Statuses.** Terminal states: `idle`, `running`, `awaiting-input`, `dead`. Per-command action
-statuses: `created` (`new`), `done`/`running` (`run`), `sent` (`send`), `noted` (`note`),
+statuses: `created` (`new`), `done`/`running` (`run`), `sent` (`send`), `noted` (`note`), `note` (`wait --note`),
 `killed` (`kill`), `ok` (`peek`/`log`/`ls`/`doctor`/`version`), and `wait`'s outcomes
 `idle` / `running` / `done` / `awaiting-input` / `pattern-found` / `human-done` / `dead` / `timeout`
 (which ones can resolve the call depends on the requested wait conditions).
@@ -97,8 +97,12 @@ Truncated (a 300-line command, default head/tail):
 
 ### wait — block until a condition
 ```text
-pairmux wait <name> [--idle MS] [--pattern RE] [--done] [--human] [--notify] [--timeout 300s]
+pairmux wait <name>[,<name>...] [--idle MS] [--pattern RE] [--done] [--note] [--human] [--notify] [--timeout 300s]
 ```
+Several terminals may be named, separated by spaces or commas. The wait then ends on the **first**
+of them to satisfy a condition, and `terminal` in the reply says which. This is the join for
+driving a fleet: one blocking call over five sub-agents instead of five processes each polling its
+own deadline, none of which can wake the others.
 - `--idle MS` — after `MS` ms of output silence, refresh terminal state and resolve only when it is
   `idle`, `awaiting-input`, or `dead` (default condition, 800ms). A quiet running command keeps waiting.
 - `--pattern RE` — resolve when **new** output (produced after the wait starts) matches the RE2 regex.
@@ -107,6 +111,13 @@ pairmux wait <name> [--idle MS] [--pattern RE] [--done] [--human] [--notify] [--
   when the **next** one does if the terminal is idle. Shell terminals only (`E_BAD_ARGS` on a `--cmd`
   terminal, which emits no completion marks). This is how you subscribe to a terminal another agent
   is driving — you do not have to be the one who started the command.
+- `--note` — resolve on the next `note` event, and on nothing else (or on one already waiting —
+  see below). This is the exact turn-boundary signal when the terminal holds a long-lived program:
+  a shell terminal completes commands, but an agent's terminal UI never does, so there is no
+  completion mark to wait for and the screen is only ever a guess. Have whatever runs in the pane
+  call `pairmux note "$PAIRMUX_NAME" "<what happened>"` when its turn ends — a stop hook, a
+  wrapper script, a human — and this wait ends exactly then. Unlike `--human` it arms nothing else,
+  so it cannot return early on a terminal that merely happened to be sitting at a prompt.
 - `--human` — hand off to a human. Resolves on a `note` (or one already waiting), **and** on the
   human finishing: as soon as the prompt is answered and the terminal is visibly moving again you
   get `status:"running"` — *execution resumed*, not *the command finished*. Follow the rest with
@@ -115,14 +126,15 @@ pairmux wait <name> [--idle MS] [--pattern RE] [--done] [--human] [--notify] [--
   printing anything after the answer, or had already finished before you got around to waiting —
   hand off, do other work, then wait, and an unseen completion returns immediately instead of
   leaving you blocked for a human who has gone. Like notes, a completion is not consumed by reading:
-  a second `wait --human` can return it again until your next `run` settles it.
+  a second `wait --human` can return it again until your next `run` or `send` settles it. That is
+  what makes a driving loop terminate: `send` the next instruction, then wait for the next note.
 - `--notify` — best-effort desktop notification to summon a human.
 - `--timeout` — overall deadline (default `300s`).
 
 With no condition flag, idle is armed by default. `--pattern` alone waits for a future pattern.
 A prompt does **not** end a `--pattern`- or `--done`-only wait, and never ends a `--human` wait —
 `awaiting-input` is the reason you handed off, not an outcome. Combine `--pattern`, `--done`,
-`--human`, and an explicit `--idle` to race requested conditions; the first one satisfied wins. A
+`--note`, `--human`, and an explicit `--idle` to race requested conditions; the first one satisfied wins. A
 pane that dies while any wait is in flight ends it as `dead`. **A `timeout` is not a failure**: the
 `next` repeats that exact wait — same condition flags — with double the deadline, and never under
 `300s` for a handoff. Run it and keep waiting.
@@ -173,7 +185,11 @@ Safe to call any number of times from any number of agents. Surfaces `notes`.
 pairmux send <name> [--text S] [--key K ...] [--enter]
 ```
 Applied in order: text, then keys, then a trailing Enter. Does **not** take the write lock, so it can
-answer a program a prior `run` is still blocked on.
+answer a program a prior `run` is still blocked on. It does take a short `send` lock, so two agents
+delivering input to one pane cannot interleave their keystrokes into a line that is neither's; a
+holder that has not finished within 2s yields `E_BUSY`. No lock reaches a **human** at the keyboard,
+so when one is attached and looking at that window the reply's `next` says you are sharing its
+input line.
 - `--text S` — literal text via `send-keys -l` (no shell expansion, no key interpretation).
 - `--key K` — a named key, repeatable. Valid: `Enter Escape Tab Space Up Down Left Right Home End
   PPage NPage BSpace DC`, `F1`–`F12`, `C-a`..`C-z`, `M-a`..`M-z`. A plain letter like `--key q` is
@@ -205,12 +221,17 @@ journal is large.
 ```json
 {"schema":"pairmux.v1","ok":true,"status":"ok","terminals":[{"name":"build","status":"idle","mode":"hooks","last_activity":"2026-07-18T15:13:38Z"}]}
 ```
-Text form is a table; a lock holder pid, pending command, and a `[notes:N]` badge show inline.
+Text form is a table; a lock holder pid, pending command, and `[notes:N]` / `[layer:SOCKET]` badges
+show inline. `[layer:…]` means that terminal is itself driving a nested pairmux layer — an agent
+running agents. Reach it with `pairmux --socket SOCKET ls`, which the reply's `next` spells out.
 
 ### kill — end terminal(s); journals are kept
 ```text
 pairmux kill <name> | --all
 ```
+Killing a terminal also tears down any nested layer it was driving, deepest first, and says which
+endpoints went with it. A sub-agent left running would keep working, unlisted at every layer anyone
+is likely to look at.
 ```json
 {"schema":"pairmux.v1","ok":true,"status":"killed","terminal":"deploy","next":["journal retained under the pairmux state root","pairmux prune deploy reclaims its disk when the history is no longer needed","pairmux ls"]}
 ```

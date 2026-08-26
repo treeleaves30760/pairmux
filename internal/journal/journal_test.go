@@ -392,3 +392,81 @@ func TestLockHolderMissing(t *testing.T) {
 		t.Fatalf("LockHolder on blank write.lock: want ok=false")
 	}
 }
+
+// TestSendLockExcludesOtherSenders pins the property send relies on: two
+// processes delivering input to one pane must not interleave their keystrokes.
+func TestSendLockExcludesOtherSenders(t *testing.T) {
+	j := newJournalDir(t)
+	defer swapSendLockWait(50 * time.Millisecond)()
+
+	release, err := j.AcquireSendLock()
+	if err != nil {
+		t.Fatalf("first AcquireSendLock: %v", err)
+	}
+	// A second descriptor on the same file is what a second pairmux process
+	// would have, and it must not get in.
+	other := &Journal{Dir: j.Dir}
+	if _, err := other.AcquireSendLock(); !errors.Is(err, ErrLocked) {
+		t.Fatalf("second AcquireSendLock err = %v, want ErrLocked", err)
+	}
+	release()
+
+	again, err := other.AcquireSendLock()
+	if err != nil {
+		t.Fatalf("AcquireSendLock after release: %v", err)
+	}
+	again()
+}
+
+// TestSendLockIgnoresWriteLock is the reason it is a separate lock at all. The
+// write lock means "a command is running here", which is precisely when an
+// interactive answer most needs to get through: if send waited on it, a handoff
+// prompt raised by a running command could never be answered.
+func TestSendLockIgnoresWriteLock(t *testing.T) {
+	j := newJournalDir(t)
+	defer swapSendLockWait(50 * time.Millisecond)()
+
+	releaseWrite, err := j.AcquireWriteLock()
+	if err != nil {
+		t.Fatalf("AcquireWriteLock: %v", err)
+	}
+	defer releaseWrite()
+
+	releaseSend, err := j.AcquireSendLock()
+	if err != nil {
+		t.Fatalf("AcquireSendLock while the write lock is held: %v", err)
+	}
+	releaseSend()
+}
+
+// TestSendLockReleaseIsIdempotent matches AcquireWriteLock's contract: cmdSend
+// releases through a defer that may also have run on an error path.
+func TestSendLockReleaseIsIdempotent(t *testing.T) {
+	j := newJournalDir(t)
+	release, err := j.AcquireSendLock()
+	if err != nil {
+		t.Fatalf("AcquireSendLock: %v", err)
+	}
+	release()
+	release()
+	again, err := j.AcquireSendLock()
+	if err != nil {
+		t.Fatalf("re-acquire after a double release: %v", err)
+	}
+	again()
+}
+
+func swapSendLockWait(d time.Duration) func() {
+	prev := sendLockWait
+	sendLockWait = d
+	return func() { sendLockWait = prev }
+}
+
+func newJournalDir(t *testing.T) *Journal {
+	t.Helper()
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	return j
+}
