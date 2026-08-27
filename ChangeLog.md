@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`wait --human` could not be armed on a prompt it had just been handed** ([#7]).
+  The documented hand-off loop is `wait --pattern "<the question>"`, notify the human, then
+  `wait --human` — and the pattern wait returns the *instant* the question is printed, which is
+  inside the settle window the prompt classifier required before it would call a terminal
+  `awaiting-input`. The handoff therefore armed no answer-watch at all; on a `--cmd` terminal
+  (`ssh`, a login prompt) there is no completion mark to fall back on either, so the wait could
+  only run out its full deadline while the human answered in the pane — reporting a finished
+  hand-off as still pending, forever. The settle gate exists to stop a busy command's
+  prompt-shaped line from being called a question; it was never meant to hide a prompt from a
+  caller that had already been shown it. Arming now uses the same evidence without that gate,
+  and — because a hand-off may also be armed before the command has got as far as asking — the
+  decision is re-taken on every poll until it is made, so a prompt that arrives later is picked
+  up too. The two branches that gate on a silence threshold of their own keep them, so nothing
+  that was not a prompt before becomes one now.
+
+- **A resolved hand-off on a program terminal pointed at a command that only errors.** It offered
+  `wait --done` for following the command that is still running; a `--cmd` terminal emits no
+  completion marks and `wait` rejects that flag outright. It now offers `wait --idle`, which is
+  the same advice the rejection itself gives.
+
 - **The documentation site had not deployed since 2026-08-01.** The Docs workflow ran
   `npm audit --audit-level=moderate` ahead of the build, a transitive dependency picked up an
   advisory with no published fix, and because the audit gates the build every deploy stopped with
@@ -366,6 +386,7 @@ Codex terminals and fixing what broke.
   stable `error.code` values (`E_NO_TERMINAL`, `E_EXISTS`, `E_BUSY`, `E_DEAD`, `E_BAD_ARGS`,
   `E_TMUX`, `E_INTERNAL`).
 
+[#7]: https://github.com/treeleaves30760/pairmux/issues/7
 [Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v0.5.1...HEAD
 [0.5.1]: https://github.com/treeleaves30760/pairmux/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/treeleaves30760/pairmux/compare/v0.4.0...v0.5.0

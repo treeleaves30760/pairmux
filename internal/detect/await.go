@@ -223,6 +223,32 @@ func Refine(j *journal.Journal, st core.Status, mode core.Mode) (core.Status, st
 // one terminal at once. mode is accepted for signature stability; the rules do
 // not vary by it.
 func Classify(j *journal.Journal, st core.Status, mode core.Mode, tty string) (core.Status, Prompt) {
+	return classifyAfter(j, st, tty, refineQuiet)
+}
+
+// ClassifyPending is Classify without the settle gate, for a caller that has to
+// decide *now* whether a terminal is at a prompt — and for which being told
+// "not yet" is not a safe default it can re-ask its way out of.
+//
+// The gate exists so that a busy command which prints prompt-shaped text and
+// keeps going is not called a question; the price is that nothing can be
+// classified during the first refineQuiet of a prompt's life. That price is
+// wrong for a caller arming a watch on a prompt it has already been shown —
+// `wait --human` after `wait --pattern`, which returns the instant the prompt
+// is printed and therefore always inside that window. Dropping the gate makes
+// two branches reachable early, and only two: the line discipline (a kernel
+// fact, true from the first byte) and a recognised prompt line, which is the
+// same evidence PromptPending already reports without waiting. The inferred
+// branches keep their own, longer, silence thresholds, so a working command is
+// no more likely to be called a prompt than before.
+func ClassifyPending(j *journal.Journal, st core.Status, mode core.Mode, tty string) (core.Status, Prompt) {
+	return classifyAfter(j, st, tty, 0)
+}
+
+// classifyAfter is Classify with its settle requirement as a parameter. quiet is
+// still measured and still passed down, so the branches that gate on a duration
+// of their own are unaffected by relaxing this one.
+func classifyAfter(j *journal.Journal, st core.Status, tty string, settle time.Duration) (core.Status, Prompt) {
 	if st != core.StatusRunning {
 		return st, Prompt{}
 	}
@@ -230,8 +256,11 @@ func Classify(j *journal.Journal, st core.Status, mode core.Mode, tty string) (c
 	if !ok {
 		return st, Prompt{}
 	}
+	// A zero settle is "no gate", not "a gate of zero": output written this
+	// instant — or, on a machine whose clock the test moved, in the future —
+	// leaves quiet at or below zero, and must still be classifiable.
 	quiet := time.Since(mt)
-	if quiet < refineQuiet {
+	if settle > 0 && quiet < settle {
 		return st, Prompt{}
 	}
 

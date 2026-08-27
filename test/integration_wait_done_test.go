@@ -299,6 +299,88 @@ func TestWaitHumanOnProgramTerminalEndsWhenThePromptClears(t *testing.T) {
 	}
 }
 
+// TestWaitHumanArmsOnAPromptHandedStraightFromPattern is issue #7. The
+// documented hand-off loop is `wait --pattern "<the question>"` and then
+// `wait --human`, and the pattern wait returns the instant the question is
+// printed — inside the settle window the classifier used to require before it
+// would call a terminal awaiting-input. The handoff therefore armed no
+// answer-watch at all; on a --cmd terminal there is no completion mark to fall
+// back on either, so it could only run out its whole deadline while the human
+// answered in the pane. Note what this test does *not* do: poll for
+// awaiting-input first. Every other handoff test here does, and that is exactly
+// why they all passed — settling the terminal first is what hid the bug.
+func TestWaitHumanArmsOnAPromptHandedStraightFromPattern(t *testing.T) {
+	e := newEnv(t, bashShell)
+	script := filepath.Join(t.TempDir(), "ask.sh")
+	// The delay is what lets the pattern wait be armed before the question is
+	// asked: --pattern only matches output past its own baseline.
+	body := "#!/bin/sh\nsleep 2\nprintf 'Password: '\nread -r p\necho unlocked\nsleep 300\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	pmx(t, e, "new", "--name", "p1", "--cmd", "sh "+script)
+
+	env, code := pmx(t, e, "wait", "p1", "--pattern", "Password", "--timeout", "20s")
+	if code != 0 || env.Status != "pattern-found" {
+		t.Fatalf("wait --pattern: code=%d env=%+v", code, env)
+	}
+
+	// Straight into the handoff, with no settling step between the two waits.
+	collect := pmxAsync(t, e, "wait", "p1", "--human", "--timeout", "30s")
+	time.Sleep(700 * time.Millisecond)
+	answered := time.Now()
+	humanTypes(t, e, "p1", "hunter2")
+
+	env, code = collect()
+	if code != 0 || env.Status != "running" {
+		t.Fatalf("wait --human straight after --pattern: code=%d env=%+v, want running", code, env)
+	}
+	if elapsed := time.Since(answered); elapsed > 10*time.Second {
+		t.Fatalf("took %s after the answer: the handoff ended when the human did", elapsed)
+	}
+	if env.Output != "" {
+		t.Fatalf("output = %q; a handoff must not quote the span the human typed into", env.Output)
+	}
+	// The follow-on hint has to be runnable on this terminal: --done is rejected
+	// on a --cmd terminal, and this is the flow that lands on one.
+	if nextContains(env.Next, "--done") {
+		t.Fatalf("next = %v, offers --done on a program terminal, where wait rejects it", env.Next)
+	}
+	if !nextContains(env.Next, "pairmux wait p1 --idle") {
+		t.Fatalf("next = %v, want a way to keep following a program terminal", env.Next)
+	}
+}
+
+// TestWaitHumanArmsOnAPromptThatArrivesLater is the same defect from the other
+// side, and without the timing the test above depends on: here the handoff is
+// armed while the command is still working, seconds before it asks anything.
+// The arming decision was taken once, when the wait started, so a prompt that
+// had not appeared yet could never be watched for — the wait sat blind through
+// the question, the answer, and the rest of its deadline.
+func TestWaitHumanArmsOnAPromptThatArrivesLater(t *testing.T) {
+	e := newEnv(t, bashShell)
+	script := filepath.Join(t.TempDir(), "late.sh")
+	body := "#!/bin/sh\necho starting\nsleep 3\nprintf 'Password: '\nread -r p\necho unlocked\nsleep 300\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	pmx(t, e, "new", "--name", "p1", "--cmd", "sh "+script)
+
+	// Armed on a terminal that is plainly running, not prompting.
+	collect := pmxAsync(t, e, "wait", "p1", "--human", "--timeout", "40s")
+	pollPeekStatus(t, e, "p1", "awaiting-input", 20*time.Second)
+	answered := time.Now()
+	humanTypes(t, e, "p1", "hunter2")
+
+	env, code := collect()
+	if code != 0 || env.Status != "running" {
+		t.Fatalf("wait --human armed before the prompt: code=%d env=%+v, want running", code, env)
+	}
+	if elapsed := time.Since(answered); elapsed > 10*time.Second {
+		t.Fatalf("took %s after the answer: the handoff ended when the human did", elapsed)
+	}
+}
+
 // TestWaitDoneRejectsProgramTerminal: a --cmd terminal runs no shell, so it
 // emits no completion marks and --done could never be satisfied. Say so.
 func TestWaitDoneRejectsProgramTerminal(t *testing.T) {
