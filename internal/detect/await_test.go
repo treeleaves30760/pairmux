@@ -236,6 +236,68 @@ func TestRefine(t *testing.T) {
 	}
 }
 
+// TestClassifyPending pins the one difference between Classify and
+// ClassifyPending: the settle gate, and only the settle gate. A prompt that has
+// just been printed is invisible to Classify for refineQuiet — which is the
+// whole life of a prompt a `wait --pattern` has just handed to its caller — and
+// visible to ClassifyPending straight away. Everything the gate was not
+// protecting stays where it was: a working command is still not a prompt, and
+// the branches with silence thresholds of their own still have to earn them.
+func TestClassifyPending(t *testing.T) {
+	tests := []struct {
+		name       string
+		raw        string
+		mtimeDelta time.Duration
+		want       core.Status
+		wantLine   string
+	}{
+		{name: "fresh recognised prompt", raw: "$ ssh host\nPassword: ", mtimeDelta: time.Hour,
+			want: core.StatusAwaitingInput, wantLine: "Password:"},
+		{name: "fresh confirm", raw: "Continue? [y/N] ", mtimeDelta: time.Hour,
+			want: core.StatusAwaitingInput, wantLine: "Continue? [y/N]"},
+		{name: "quiet recognised prompt still works", raw: "Verification code: ", mtimeDelta: -2 * time.Second,
+			want: core.StatusAwaitingInput, wantLine: "Verification code:"},
+		// The gate's actual job — an unrecognised part-line — is done by
+		// inferQuiet, which ClassifyPending leaves alone, so a command that
+		// printed "Building... " and went to work is no likelier to be called a
+		// question than it was before.
+		{name: "fresh unrecognised part-line is not a prompt", raw: "Building... ", mtimeDelta: time.Hour,
+			want: core.StatusRunning},
+		{name: "briefly quiet unrecognised part-line is not a prompt", raw: "Building... ",
+			mtimeDelta: -2 * time.Second, want: core.StatusRunning},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			j := mustOpen(t)
+			writeRawFile(t, j, []byte(tt.raw))
+			setRawMtime(t, j.RawPath(), tt.mtimeDelta)
+			st, p := ClassifyPending(j, core.StatusRunning, core.ModeHooks, "")
+			if st != tt.want || p.Line != tt.wantLine {
+				t.Fatalf("ClassifyPending = (%v, %q), want (%v, %q)", st, p.Line, tt.want, tt.wantLine)
+			}
+			// Same input through the gated form: only the fresh prompts differ,
+			// and they differ by being missed.
+			gated, _ := Classify(j, core.StatusRunning, core.ModeHooks, "")
+			if tt.mtimeDelta > 0 && gated != core.StatusRunning {
+				t.Fatalf("Classify = %v on a fresh journal, want running (the gate is what ClassifyPending drops)", gated)
+			}
+		})
+	}
+}
+
+// TestClassifyPendingPassesThroughSettledStatus: dropping the settle gate must
+// not make a non-running terminal classifiable, or an idle shell sitting on a
+// leftover prompt-shaped line would be reported as a question.
+func TestClassifyPendingPassesThroughSettledStatus(t *testing.T) {
+	j := mustOpen(t)
+	writeRawFile(t, j, []byte("Password:"))
+	for _, st := range []core.Status{core.StatusIdle, core.StatusDead, core.StatusUnknown} {
+		if got, p := ClassifyPending(j, st, core.ModeHooks, ""); got != st || p.Waiting() {
+			t.Fatalf("ClassifyPending(%v) = (%v, %+v), want the status back untouched", st, got, p)
+		}
+	}
+}
+
 // TestRefineReadOnly guards that Refine writes nothing.
 func TestRefineReadOnly(t *testing.T) {
 	j := mustOpen(t)

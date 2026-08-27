@@ -57,6 +57,8 @@ type waitTarget struct {
 	completionStart time.Time
 
 	// answered: --human's primary signal, that the prompt is no longer on screen.
+	// All four are set together by armAnswered, which may run at arm time or on
+	// any later poll — a handoff can be armed before its prompt exists.
 	watchAnswered   bool
 	answerScan      int64
 	answerSubmitted bool
@@ -296,7 +298,7 @@ func (c *Ctx) armWaitTarget(name string, human, doneFlag, noteFlag bool) (t *wai
 	// why a cmd_start with no cmd_end is no proof a command is still running: one
 	// that finished during an earlier wait stays pending until the next run
 	// records its end. Derive the real status before trusting the event.
-	startStatus, _ := detect.Classify(j, deriveTerminalStatus(j, term.Alive, term.Mode, program), term.Mode, term.Meta.Tty)
+	startStatus, _ := detect.ClassifyPending(j, deriveTerminalStatus(j, term.Alive, term.Mode, program), term.Mode, term.Meta.Tty)
 	pending, hasPending, _ := j.PendingCmd()
 	inFlight := hasPending && (startStatus == core.StatusRunning || startStatus == core.StatusAwaitingInput)
 
@@ -333,9 +335,29 @@ func (c *Ctx) armWaitTarget(name string, human, doneFlag, noteFlag bool) (t *wai
 	// prompt and the last line is no longer prompt-shaped. Completion stays armed
 	// underneath for the cases this cannot see (a program that prints nothing
 	// after the answer, or a command that had already finished).
-	t.watchAnswered = human && startStatus == core.StatusAwaitingInput
-	t.answerScan = t.baseSize
+	//
+	// The prompt is judged without Classify's settle gate (see ClassifyPending).
+	// A handoff wait is armed *because* the caller just found the question, and
+	// the way it finds it — `wait --pattern`, which returns the instant the
+	// prompt is printed — lands inside that gate every time. Requiring the
+	// terminal to have been quiet first therefore left the watch unarmed for
+	// precisely the flow the handoff exists for: the wait then had nothing to
+	// resolve on but a note, and ran out its full deadline while the human
+	// answered in the pane.
+	if human && startStatus == core.StatusAwaitingInput {
+		t.armAnswered()
+	}
 	return t, 0, false
+}
+
+// armAnswered starts watching for the handoff prompt to be answered, measured
+// from the journal's current end. The signal is a line terminated after this
+// point, so a watch armed late must take a fresh baseline rather than inherit
+// one with output — and therefore a newline — already past it.
+func (t *waitTarget) armAnswered() {
+	t.watchAnswered = true
+	t.answerScan = t.j.Size()
+	t.answerSubmitted = false
 }
 
 // waitPollSpec is the set of conditions armed for this wait, shared by every
@@ -374,6 +396,19 @@ func (c *Ctx) pollWaitTarget(t *waitTarget, spec waitPollSpec) (env output.Envel
 		if hit {
 			return completionEnvelope(t.j, res, t.completionFrom, t.completionEcho, t.completionFull,
 				t.completionStart, t.peekHint, !spec.human), true, 0, false
+		}
+	}
+	// A handoff need not have its prompt on screen when the wait is armed: an
+	// agent may hand off while the command is still working its way to the
+	// question, and a `--pattern` wait can hand back a line the terminal has not
+	// finished being at yet. So the arming decision is re-taken every poll until
+	// it is made — cheaply, from the wording alone; the discipline-only prompts
+	// arm from the state check below, which computes the same verdict once a
+	// second anyway. Without this a wait armed a moment too early watches for the
+	// answer to a question it never saw, and can only time out.
+	if spec.human && !t.watchAnswered {
+		if _, prompting := detect.PromptPending(t.j); prompting {
+			t.armAnswered()
 		}
 	}
 	// Keystrokes echo into the journal one at a time, so "output appeared" on
@@ -424,6 +459,11 @@ func (c *Ctx) pollWaitTarget(t *waitTarget, spec waitPollSpec) (env output.Envel
 		}
 		status, prompt, terminal := terminalStatusAfterQuiet(t.j, current.Alive, t.term.Mode,
 			current.Meta.Shell == "", spec.idleFor, t.term.Meta.Tty)
+		if spec.human && !t.watchAnswered && status == core.StatusAwaitingInput {
+			// A prompt only the terminal's own discipline can identify (echo off in
+			// a locale the wording rules miss) is invisible to the check above.
+			t.armAnswered()
+		}
 		// awaiting-input is the reason a handoff exists, never its outcome:
 		// returning it to an agent that is already handing off only sends it
 		// round the same loop. --human waits for the prompt to be answered.
@@ -519,12 +559,22 @@ func (c *Ctx) answeredEnvelope(t *waitTarget) (output.Envelope, bool, int, bool)
 	} else {
 		alive = current.Alive
 	}
-	status := deriveTerminalStatus(t.j, alive, t.term.Mode, t.term.Meta.Shell == "")
+	program := t.term.Meta.Shell == ""
+	status := deriveTerminalStatus(t.j, alive, t.term.Mode, program)
 	next := peekNext(t.name, status)
 	body := ""
 	switch status {
 	case core.StatusRunning:
-		next = append([]string{fmt.Sprintf("pairmux wait %s --done", t.name)}, next...)
+		// --done is the natural way to keep following the command, but a program
+		// terminal emits no completion marks and wait rejects the flag outright:
+		// offering it there would hand the agent a command that only errors. The
+		// ssh/2FA handoff runs on exactly such a terminal, so this is not a rare
+		// branch.
+		follow := fmt.Sprintf("pairmux wait %s --done", t.name)
+		if program {
+			follow = fmt.Sprintf("pairmux wait %s --idle 800", t.name)
+		}
+		next = append([]string{follow}, next...)
 	case core.StatusDead:
 		body = waitCurrentTail(t.j)
 	}
