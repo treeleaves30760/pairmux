@@ -104,10 +104,10 @@ For a complete download before execution, inspect the script first:
 installer_dir=$(mktemp -d) &&
 curl -fsSL https://pairmux.treeleaves30760.com/install.sh -o "$installer_dir/install.sh" &&
 less "$installer_dir/install.sh" &&
-bash "$installer_dir/install.sh" --version v0.5.2 --dry-run
+bash "$installer_dir/install.sh" --version v0.5.3 --dry-run
 ```
 
-Replace `v0.5.2` with your chosen published version, or omit `--version` for the latest stable PyPI
+Replace `v0.5.3` with your chosen published version, or omit `--version` for the latest stable PyPI
 release. Remove `--dry-run` only after a successful download and review to perform the installation.
 The downloaded installer's `--dry-run` does not access the network or write files. The pipe form is
 a convenience, not a complete-download-before-execution check.
@@ -204,8 +204,9 @@ install tmux there too (`sudo apt install tmux` on Debian/Ubuntu) if it is not a
 
 ## Migrating from APT / Debian packages
 
-pairmux's APT repository and `.deb` distribution are being retired for v0.5.3. Keep tmux installed
-through your system package manager. Follow the [APT migration guide](./migrating-from-apt.md) to
+pairmux's APT repository and historical `.deb` distribution were retired on 2026-10-08 with
+v0.5.3. Keep tmux installed through your system package manager. Follow the
+[APT migration guide](./migrating-from-apt.md) to
 inspect and retire the old source, origin pin, keyring/package, and command without destructive
 cleanup shortcuts, and check whether an old installation shadows the new command on PATH.
 

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Installation examples now pin the published v0.5.3 migration release. Current APT guidance
+  records completed retirement, with a GitHub source fallback while documentation HTTPS is pending.
+- The release guide records verified GitHub/PyPI/Homebrew publication and isolated runtime checks,
+  distinguishes the remaining clean-machine/WSL/RPM installation gaps, and makes the next-tag
+  checklist generic so it cannot suggest recreating v0.5.3.
+
 ## [0.5.3] - 2026-10-08
 
 ### Added
