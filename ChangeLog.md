@@ -7,12 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-10-08
+
 ### Added
 
 - A project landing page at `https://pairmux.treeleaves30760.com`, with visible PyPI links,
   `uvx` quick runs, persistent `uv tool install` instructions, and inspectable installers.
-- Documentation at `https://pairmux-docs.treeleaves30760.com`, including migration guidance
-  for former APT users; pull requests now validate both sites without deploying them.
+- Documentation configured for `https://pairmux-docs.treeleaves30760.com`, including migration
+  guidance for former APT users; pull requests now validate both sites without deploying them.
+  At release time, DNS and deployment have succeeded but GitHub Pages HTTPS certificate provisioning
+  is still pending; the migration guide source remains available on GitHub.
 
 ### Changed
 
@@ -423,7 +427,8 @@ Codex terminals and fixing what broke.
   `E_TMUX`, `E_INTERNAL`).
 
 [#7]: https://github.com/treeleaves30760/pairmux/issues/7
-[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/treeleaves30760/pairmux/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/treeleaves30760/pairmux/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/treeleaves30760/pairmux/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/treeleaves30760/pairmux/compare/v0.4.0...v0.5.0

@@ -4,10 +4,19 @@ This repository owns the pairmux CLI, native binaries, Python wheel wrappers,
 RPM packages, installers, landing page, and documentation site. The companion
 `pairmux-skills` repository owns the canonical Agent Skill.
 
-**Upcoming release: v0.5.3.** This migration retires pairmux APT / `.deb`
-distribution and makes the website installer use PyPI. Existing tags, published
-PyPI versions, and historical checksums are not rewritten. The seven-asset
-rule below applies to new builds, not historical release manifests.
+**v0.5.3 migration.** This release retires pairmux APT / `.deb` distribution
+and makes the website installer use PyPI. Existing tags, published PyPI versions,
+and historical checksums are not rewritten. The seven-asset rule below applies
+to new builds, not historical release manifests.
+
+**2026-10-08 deployment status:** the Cloudflare landing and both installers are
+live and verified. The public APT repository/Pages and 16 historical `.deb`
+assets have been removed; all 56 surviving assets and historical tags are
+unchanged. Documentation DNS and deployment have succeeded, but its GitHub
+Pages HTTPS certificate is still pending. The operator explicitly approved
+proceeding with v0.5.3 without waiting for documentation HTTPS; do not claim it
+is available yet. The [APT migration guide source](./website/docs/migrating-from-apt.md)
+is available on GitHub while provisioning finishes.
 
 ## Release channels
 
@@ -56,14 +65,18 @@ issue tracker, release archive, and source of the changelog.
    The release workflow retains its build-once / verify / publish pipeline;
    it validates wheel installation against the staged artifacts before
    publishing, not against a version that is not yet on PyPI.
-4. Verify GitHub release permissions, the PyPI credential preflight, and the
-   stable-release Homebrew tap credential (see below). For v0.5.3, confirm the
-   new websites and APT migration guide are available and the former APT
-   publisher has been retired before tagging. Website/domain setup is an
-   explicit deployment task, not a side effect of pushing the release tag.
-5. Create and push an annotated SemVer tag from validated `main`. For the
-   upcoming release, use `v0.5.3` with a subject such as
-   `chore: release-v0-5-3`.
+4. Verify GitHub release permissions, PyPI secret presence, and the
+   stable-release Homebrew tap credential (see below). `uv publish --dry-run`
+   validates local distributions, not the PyPI token's upload authorization;
+   treat prior successful uploads as historical evidence only. Confirm actual
+   publishing authorization from the upload result, and preserve the original
+   artifacts for recovery if any wheel is accepted. For the v0.5.3 migration,
+   the landing and migration guide source are available and the former APT
+   publisher is retired. Documentation HTTPS is the explicitly deferred
+   deployment item noted above, not a prerequisite silently marked complete.
+5. Create and push an annotated SemVer tag from validated `main`. For
+   v0.5.3, use `v0.5.3` with a subject such as `chore: release-v0-5-3`;
+   confirm the tag and PyPI version do not already exist first.
 6. Watch the tag workflow. It stages **seven** verified native assets in a
    draft GitHub release, publishes the four verified wheels to PyPI, makes
    the GitHub release public, then updates Homebrew for stable tags. Confirm
@@ -182,9 +195,17 @@ The [migration guide](https://pairmux-docs.treeleaves30760.com/migrating-from-ap
 covers the former source, origin pin, keyring package/file, and PATH shadowing.
 The installer does not run sudo or clean up system-package configuration.
 
-The external retirement must be coordinated after the new sites and guide are
-available: stop the old publisher before retiring its Pages/repository and
-removing only the approved historical `.deb` assets. Keep historical tags,
-checksums, other release assets, and published PyPI versions unchanged. Old
-checksums may still list `.deb` hashes as a historical record; do not apply the
-new seven-asset rule retroactively or re-publish an existing PyPI version.
+The external retirement was completed on 2026-10-08 after the operator approved
+proceeding without waiting for documentation HTTPS. The publisher was disabled
+and its waiting run cancelled before its Pages and public repository were
+removed. Only the 16 approved historical `.deb` assets were deleted; all 56
+surviving release assets and historical tags were verified unchanged. Dated
+retirement notices were appended to the original release notes, pointing to the
+[migration guide source](./website/docs/migrating-from-apt.md). The local
+`pairmux-apt` clone remains an offline backup, not a complete backup of Issues,
+Actions or secrets; third-party forks and caches cannot be removed by this process.
+
+Keep historical checksums, other release assets, and published PyPI versions
+unchanged. Old checksums may still list `.deb` hashes as a historical record;
+do not apply the new seven-asset rule retroactively or re-publish an existing
+PyPI version.
