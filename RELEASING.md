@@ -9,13 +9,23 @@ and makes the website installer use PyPI. Existing tags, published PyPI versions
 and historical checksums are not rewritten. The seven-asset rule below applies
 to new builds, not historical release manifests.
 
+**v0.5.3 published on 2026-10-08** from commit `0d14566`.
+[Release run 37760804396](https://github.com/treeleaves30760/pairmux/actions/runs/37760804396)
+completed validation, GitHub publication, the four-wheel PyPI upload and Homebrew
+update. Public downloads match the preserved validated bytes. Isolated public
+PyPI `uvx`, persistent uv installation and the website installer passed version
+and `doctor` checks; the unpinned installer resolved 0.5.3. The official Homebrew
+tap fetch/checksum and macOS ARM64 binary also passed. Clean-machine Homebrew
+installation, actual WSL installation and Linux RPM installation were not
+performed locally; CI verified the Linux wheel runtime and RPM file listing.
+
 **2026-10-08 deployment status:** the Cloudflare landing and both installers are
 live and verified. The public APT repository/Pages and 16 historical `.deb`
 assets have been removed; all 56 surviving assets and historical tags are
 unchanged. Documentation DNS and deployment have succeeded, but its GitHub
 Pages HTTPS certificate is still pending. The operator explicitly approved
-proceeding with v0.5.3 without waiting for documentation HTTPS; do not claim it
-is available yet. The [APT migration guide source](./website/docs/migrating-from-apt.md)
+proceeding with v0.5.3 without waiting for documentation HTTPS; do not claim the
+documentation HTTPS endpoint is available yet. The [APT migration guide source](./website/docs/migrating-from-apt.md)
 is available on GitHub while provisioning finishes.
 
 ## Release channels
@@ -37,9 +47,9 @@ issue tracker, release archive, and source of the changelog.
 
 1. Sync `../pairmux-skills/skills/pairmux/` into `skills/pairmux/` and confirm
    that `diff -ru` reports no differences.
-2. Update `ChangeLog.md`: move `[Unreleased]` entries into a dated version and
-   add the release comparison link. v0.5.3 is not published until its tag and
-   workflow complete; keep the migration entries Unreleased until release time.
+2. Update `ChangeLog.md`: move `[Unreleased]` entries into the next dated
+   version and add its release comparison link. Do not call a version published
+   until its tag workflow and public release verification complete.
 3. Run the local validation suite from the repository root:
 
    ```sh
@@ -74,18 +84,19 @@ issue tracker, release archive, and source of the changelog.
    the landing and migration guide source are available and the former APT
    publisher is retired. Documentation HTTPS is the explicitly deferred
    deployment item noted above, not a prerequisite silently marked complete.
-5. Create and push an annotated SemVer tag from validated `main`. For
-   v0.5.3, use `v0.5.3` with a subject such as `chore: release-v0-5-3`;
-   confirm the tag and PyPI version do not already exist first.
+5. Create and push the next annotated SemVer tag from validated `main`.
+   Confirm that tag and PyPI version do not already exist. `v0.5.3` is already
+   published and must not be recreated or moved.
 6. Watch the tag workflow. It stages **seven** verified native assets in a
    draft GitHub release, publishes the four verified wheels to PyPI, makes
    the GitHub release public, then updates Homebrew for stable tags. Confirm
    each stage; do not replace this ordering with a separate rebuild.
 7. On clean or isolated systems, smoke-test `uvx pairmux version`,
    `uvx pairmux doctor`, `uv tool install pairmux`, the website's `install.sh`,
-   a direct RPM, and Homebrew. For release-specific uv checks, use
+   a direct RPM, and Homebrew. Release-specific examples
    `uvx --from 'pairmux==0.5.3' pairmux version` and
-   `uv tool install 'pairmux==0.5.3'` **after** that version is published.
+   `uv tool install 'pairmux==0.5.3'` use the already-published migration version;
+   substitute the new version only **after** its upload succeeds.
    Verify wheel metadata has the new Home/Docs domains and the GitHub
    Repository URL. Use isolated HOME/tool/cache directories so an existing
    installation or cache does not stand in for the release under test.

@@ -6,7 +6,9 @@ description: Retire the former pairmux APT source safely and check for PATH shad
 
 # Migrating from APT / Debian packages
 
-The former pairmux APT repository and `.deb` distribution are being retired for v0.5.3. Use
+The public pairmux APT repository/Pages and all 16 historical `.deb` release assets were retired
+on 2026-10-08 with v0.5.3. Published PyPI versions, other release assets, tags and original
+checksums remain unchanged; historical checksum manifests may still list removed Debian files. Use
 [PyPI/uv, Homebrew, or a manual archive](./getting-started.mdx#install) for pairmux instead. This
 does not retire APT for system dependencies: keep **tmux >= 3.2** installed. The PyPI installer
 does not change your APT configuration or remove system packages.

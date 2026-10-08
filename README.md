@@ -107,10 +107,10 @@ Prefer to inspect the script first? Download it successfully before reviewing an
 installer_dir=$(mktemp -d) &&
 curl -fsSL https://pairmux.treeleaves30760.com/install.sh -o "$installer_dir/install.sh" &&
 less "$installer_dir/install.sh" &&
-bash "$installer_dir/install.sh" --version v0.5.2 --dry-run
+bash "$installer_dir/install.sh" --version v0.5.3 --dry-run
 ```
 
-Replace `v0.5.2` with your chosen published version, or omit `--version` for the latest stable PyPI
+Replace `v0.5.3` with your chosen published version, or omit `--version` for the latest stable PyPI
 release. Remove `--dry-run` only after a successful download and review to perform the installation.
 The downloaded installer's `--dry-run` prints its plan without network access or writes; it does not
 install anything. `PAIRMUX_INSTALL_DIR` selects the uv tool executable directory. The
@@ -155,7 +155,7 @@ one-liner sets up: it finds WSL, checks it has a distribution, and runs the Bash
 it. Configure it through the environment, since a piped script takes no arguments:
 
 ```powershell
-$env:PAIRMUX_VERSION   = 'v0.5.2'   # optional: a published version
+$env:PAIRMUX_VERSION   = 'v0.5.3'   # optional: a published version
 $env:PAIRMUX_WSL_DISTRO = 'Ubuntu'  # optional: a distribution other than the default
 irm https://pairmux.treeleaves30760.com/install.ps1 | iex
 ```
@@ -178,17 +178,20 @@ There is no Yum repository; download a new RPM when upgrading.
 
 ### Migrating from APT / Debian packages
 
-pairmux's APT repository and `.deb` distribution are being retired for v0.5.3. Debian/Ubuntu users
-should use PyPI/uv, Homebrew, or a manual archive; `apt install tmux` remains the normal dependency
-installation. Existing APT-installed pairmux commands may shadow a new user-level installation.
+pairmux's APT repository and historical `.deb` distribution were retired on 2026-10-08.
+Debian/Ubuntu users should use PyPI/uv, Homebrew, or a manual archive; `apt install tmux` remains
+the normal dependency installation. Existing APT-installed pairmux commands may shadow a new
+user-level installation.
 
 The former setup created `/etc/apt/sources.list.d/pairmux.sources`,
 `/etc/apt/preferences.d/pairmux.pref`, `/usr/share/keyrings/pairmux-archive-keyring.pgp`, and installed
 the `pairmux-archive-keyring` package. Review and disable/remove only those pairmux-specific entries,
 and review removal of the old `pairmux` and keyring packages without removing tmux. Follow the
 [APT migration guide](https://pairmux-docs.treeleaves30760.com/migrating-from-apt)
-for read-only inspection, safe cleanup ordering, and PATH checks. The installer does not perform
-system-package cleanup or overwrite commands owned by other installers.
+for read-only inspection, safe cleanup ordering, and PATH checks. While the documentation
+custom-domain HTTPS certificate is pending, use the
+[migration guide source](https://github.com/treeleaves30760/pairmux/blob/main/website/docs/migrating-from-apt.md).
+The installer does not perform system-package cleanup or overwrite commands owned by other installers.
 
 ### Build this checkout
 
