@@ -25,6 +25,7 @@ const (
 	CodeDead       = "E_DEAD"
 	CodeBadArgs    = "E_BAD_ARGS"
 	CodeTmux       = "E_TMUX"
+	CodeUpdate     = "E_UPDATE"
 	CodeInternal   = "E_INTERNAL"
 )
 

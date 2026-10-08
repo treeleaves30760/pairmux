@@ -76,6 +76,8 @@ func (c *Ctx) dispatch(rest []string) int {
 		return c.cmdNote(args)
 	case "doctor":
 		return c.cmdDoctor(args)
+	case "update":
+		return c.cmdUpdate(args)
 	case "skill":
 		return c.cmdSkill(args)
 	case "mcp":
@@ -208,6 +210,7 @@ human commands:
   watch  [--interval 2s]   live dashboard (Ctrl-C quits)     e.g. pairmux watch
   note   <name> <text...>  leave a message for the agent     e.g. pairmux note build "fixed the token"
   doctor                   probe tmux + shell integration    e.g. pairmux doctor
+  update                   reinstall this uv tool from PyPI  e.g. pairmux update
   skill install [--target T | all] [--dry-run]  teach your agent pairmux   e.g. pairmux skill install --target all
   mcp serve                serve typed tools over MCP stdio  e.g. pairmux mcp serve
   version                  print version
