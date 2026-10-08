@@ -283,6 +283,9 @@ func resolveUpdateUV(lookPath func(string) (string, error), env string) (string,
 		}
 		path = filepath.Join(home, ".local", "bin", "uv")
 	}
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("uv does not have a supported absolute executable path")
+	}
 	path, err = filepath.EvalSymlinks(path)
 	if err != nil {
 		return "", fmt.Errorf("uv was not found on PATH or in ~/.local/bin")

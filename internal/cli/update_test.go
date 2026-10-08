@@ -527,6 +527,30 @@ func TestUpdateUVRejectsPATHDotAndInsideEnvironment(t *testing.T) {
 	}
 }
 
+func TestUpdateUVRejectsRelativePATHWhenErrDotDisabled(t *testing.T) {
+	f := newUpdateFixture(t)
+	t.Chdir(f.root)
+	writeUpdateTestFile(t, filepath.Join(f.root, "uv"), []byte("untrusted current-directory uv"), 0o700)
+	t.Setenv("GODEBUG", "execerrdot=0")
+	for _, path := range []string{".", string(os.PathListSeparator) + "."} {
+		t.Run(path, func(t *testing.T) {
+			t.Setenv("PATH", path)
+			candidate, err := exec.LookPath("uv")
+			if err != nil || filepath.IsAbs(candidate) {
+				t.Fatalf("expected a relative lookup with ErrDot disabled, got %q: %v", candidate, err)
+			}
+			var buf bytes.Buffer
+			c := &Ctx{JSON: true, Stdout: &buf}
+			ops := f.ops(t)
+			ops.lookPath = exec.LookPath
+			assertUpdateError(t, c.cmdUpdateWith(nil, "0.5.3", ops), &buf)
+			if len(f.calls) != 0 {
+				t.Fatalf("relative uv was executed: %+v", f.calls)
+			}
+		})
+	}
+}
+
 func TestUpdateDoesNotUsePATHPairmux(t *testing.T) {
 	f := newUpdateFixture(t)
 	shadowDir := filepath.Join(f.root, "shadow")
