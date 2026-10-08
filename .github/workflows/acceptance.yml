@@ -1,0 +1,262 @@
+name: Published release acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published canonical stable release tag
+        required: true
+        default: v0.6.0
+        type: string
+
+# Only public sources and read-only GitHub metadata. No publishing credentials,
+# fresh Go builds, local wheelhouses, draft releases, or synthetic platform passes.
+permissions:
+  contents: read
+
+concurrency:
+  group: published-acceptance-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  ACCEPTANCE_TAG: ${{ inputs.tag }}
+  GH_REPO: treeleaves30760/pairmux
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  published:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Test trusted acceptance helper contracts offline
+        run: python3 -I "$GITHUB_WORKSPACE/scripts/test_release_acceptance.py"
+      - name: Validate actual published GitHub and PyPI inventory
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p acceptance-logs
+          python3 -I "$GITHUB_WORKSPACE/scripts/release-acceptance.py" \
+            --out-dir "$RUNNER_TEMP/published-release-downloads" 2>&1 | tee acceptance-logs/validate.txt
+          cp "$RUNNER_TEMP/published-release-downloads/provenance.json" acceptance-logs/provenance.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: published-inventory
+          path: acceptance-logs/
+          if-no-files-found: warn
+
+  public-uv:
+    needs: published
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: 0.11.16
+          enable-cache: false
+      - name: Install runtime dependency
+        run: |
+          set -euo pipefail
+          mkdir -p acceptance-logs
+          if [ "$RUNNER_OS" = macOS ]; then
+            brew install tmux
+          else
+            sudo apt-get update
+            sudo apt-get install -y tmux
+          fi
+          tmux -V > acceptance-logs/tmux.txt
+      - name: Verify selected public wheel against checksummed native bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case "$(uname -s)" in Darwin) os=darwin ;; Linux) os=linux ;; *) exit 1 ;; esac
+          case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; x86_64) arch=amd64 ;; *) exit 1 ;; esac
+          python3 -I "$GITHUB_WORKSPACE/scripts/release-acceptance.py" \
+            --target "$os-$arch" --out-dir "$RUNNER_TEMP/uv-public-downloads" \
+            2>&1 | tee acceptance-logs/validate.txt
+          cp "$RUNNER_TEMP/uv-public-downloads/provenance.json" acceptance-logs/provenance.json
+      - name: Actual public uv installs, v0.5.3 upgrade, self-refresh, and Bash installer
+        run: |
+          set -euo pipefail
+          ./scripts/test-release-uv.sh "$(command -v uv)" "$(command -v python3)" \
+            "${ACCEPTANCE_TAG#v}" "$GITHUB_WORKSPACE/acceptance-logs/provenance.json" \
+            "$GITHUB_WORKSPACE/acceptance-logs" 2>&1 | tee acceptance-logs/acceptance.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: public-uv-${{ matrix.os }}
+          path: acceptance-logs/
+          if-no-files-found: warn
+
+  homebrew:
+    needs: published
+    runs-on: macos-14
+    timeout-minutes: 25
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_ANALYTICS: '1'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Verify the selected public native archive and wheel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p acceptance-logs
+          case "$(uname -m)" in arm64) arch=arm64 ;; x86_64) arch=amd64 ;; *) exit 1 ;; esac
+          python3 -I "$GITHUB_WORKSPACE/scripts/release-acceptance.py" \
+            --target "darwin-$arch" --out-dir "$RUNNER_TEMP/brew-public-downloads" \
+            2>&1 | tee acceptance-logs/validate.txt
+          cp "$RUNNER_TEMP/brew-public-downloads/provenance.json" acceptance-logs/provenance.json
+      - name: Install the real public tap cask on a fresh runner
+        run: |
+          set -euo pipefail
+          if command -v pairmux > acceptance-logs/pairmux-before.txt 2>&1; then
+            printf 'pairmux is already on PATH; runner is not fresh\n' >&2; exit 1
+          fi
+          if brew list --cask pairmux >> acceptance-logs/pairmux-before.txt 2>&1; then
+            printf 'pairmux cask is already installed\n' >&2; exit 1
+          fi
+          brew list --versions tmux > acceptance-logs/tmux-before.txt 2>&1 || true
+          if command -v tmux >> acceptance-logs/tmux-before.txt 2>&1; then
+            tmux -V >> acceptance-logs/tmux-before.txt
+            printf 'tmux was pre-existing; no dependency installation claim\n' >> acceptance-logs/tmux-before.txt
+          else
+            printf 'tmux absent on PATH before cask installation\n' >> acceptance-logs/tmux-before.txt
+          fi
+          brew tap treeleaves30760/pairmux 2>&1 | tee acceptance-logs/tap.txt
+          tap_dir=$(brew --repository treeleaves30760/pairmux)
+          git -C "$tap_dir" rev-parse HEAD > acceptance-logs/tap-commit.txt
+          printf 'tap=https://github.com/treeleaves30760/homebrew-pairmux\n' > acceptance-logs/brew-source.txt
+          brew info --json=v2 --cask treeleaves30760/pairmux/pairmux > acceptance-logs/cask.json
+          python3 -I -c '
+          import json,os,sys
+          p=json.load(open(sys.argv[1])); casks=json.load(open(sys.argv[2]))["casks"]
+          if len(casks)!=1: raise SystemExit("expected exactly one cask")
+          c=casks[0]; a=next(a for a in p["assets"] if a["name"]=="pairmux_"+p["version"]+"_"+p["selected"]["target"].replace("-","_")+".tar.gz")
+          if c.get("version")!=os.environ["ACCEPTANCE_TAG"][1:] or c.get("url")!=a["url"] or c.get("sha256")!=a["sha256"]:
+              raise SystemExit("tap cask does not match requested published release and checksum")
+          if "tmux" not in c.get("depends_on",{}).get("formula",[]): raise SystemExit("cask omits tmux dependency")
+          ' acceptance-logs/provenance.json acceptance-logs/cask.json
+          brew install --cask treeleaves30760/pairmux/pairmux 2>&1 | tee acceptance-logs/brew-install.txt
+          brew list --versions tmux > acceptance-logs/tmux-after.txt
+          exe="$(brew --prefix)/bin/pairmux"
+          python3 -I -c 'import hashlib,json,sys; p=json.load(open(sys.argv[1])); sys.exit(0 if hashlib.sha256(open(sys.argv[2],"rb").read()).hexdigest()==p["selected"]["binary_sha256"] else "Homebrew binary differs from checksummed release")' acceptance-logs/provenance.json "$exe"
+          ./scripts/test-release-runtime.sh "$exe" "${ACCEPTANCE_TAG#v}" \
+            "$GITHUB_WORKSPACE/acceptance-logs/runtime" --reject-update 2>&1 | tee acceptance-logs/acceptance.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: homebrew-public-cask
+          path: acceptance-logs/
+          if-no-files-found: warn
+
+  rpm:
+    needs: published
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Download and checksum the matching public amd64 RPM
+        id: public
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p acceptance-logs
+          python3 -I "$GITHUB_WORKSPACE/scripts/release-acceptance.py" \
+            --target linux-amd64 --rpm --out-dir "$RUNNER_TEMP/rpm-public-downloads" \
+            2>&1 | tee acceptance-logs/validate.txt
+          cp "$RUNNER_TEMP/rpm-public-downloads/provenance.json" acceptance-logs/provenance.json
+      - name: Actual dnf install and runtime inside official stable Fedora
+        env:
+          RELEASE_RPM: ${{ steps.public.outputs.rpm }}
+          BINARY_SHA256: ${{ steps.public.outputs.binary_sha256 }}
+        run: |
+          set -euo pipefail
+          image=docker.io/library/fedora:44
+          docker pull "$image" 2>&1 | tee acceptance-logs/fedora-pull.txt
+          docker image inspect --format '{{json .RepoDigests}}' "$image" > acceptance-logs/fedora-digest.json
+          printf 'image=%s\n' "$image" > acceptance-logs/fedora-source.txt
+          rpm_dir=$(dirname "$RELEASE_RPM")
+          docker run --rm --platform linux/amd64 \
+            --mount "type=bind,source=$rpm_dir,target=/release,readonly" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/scripts,target=/trusted-scripts,readonly" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/acceptance-logs,target=/logs" \
+            --workdir /trusted-scripts "$image" \
+            bash /trusted-scripts/test-release-rpm.sh "/release/$(basename "$RELEASE_RPM")" \
+              "${ACCEPTANCE_TAG#v}" "$BINARY_SHA256" /logs 2>&1 | tee acceptance-logs/acceptance.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: fedora-public-rpm
+          path: acceptance-logs/
+          if-no-files-found: warn
+
+  wsl:
+    needs: published
+    runs-on: windows-2025
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Verify selected public Linux bytes for WSL
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path acceptance-logs -Force | Out-Null
+          $downloads = Join-Path $env:RUNNER_TEMP 'wsl-public-downloads'
+          python -I "$env:GITHUB_WORKSPACE/scripts/release-acceptance.py" --target linux-amd64 --out-dir $downloads 2>&1 |
+            Tee-Object -FilePath acceptance-logs/validate.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Public release validation failed' }
+          Copy-Item (Join-Path $downloads 'provenance.json') acceptance-logs/provenance.json
+      - name: Real Canonical Ubuntu 24.04 WSL1 and production Windows installer
+        run: |
+          ./scripts/test-release-wsl.ps1 -Version $env:ACCEPTANCE_TAG `
+            -LogDir "$env:GITHUB_WORKSPACE/acceptance-logs" `
+            -ProvenancePath "$env:GITHUB_WORKSPACE/acceptance-logs/provenance.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: windows-real-wsl1
+          path: acceptance-logs/
+          if-no-files-found: warn

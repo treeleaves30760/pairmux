@@ -53,6 +53,7 @@ jobs:
           go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
           shellcheck install.sh scripts/*.sh
           ./scripts/test-install.sh
+          python3 -I scripts/test_release_acceptance.py
 
       - name: Lint the Windows installer
         shell: pwsh
@@ -88,6 +89,17 @@ jobs:
       - name: Test legacy PowerShell WSL argument transport
         shell: powershell
         run: ./scripts/test-install-windows.ps1
+      - name: Parse the real WSL acceptance helper
+        shell: pwsh
+        run: |
+          $errors = $null
+          $tokens = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$PWD/scripts/test-release-wsl.ps1", [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors) {
+            $errors | ForEach-Object { Write-Host $_.Message }
+            exit 1
+          }
 
   # Fast feedback: static analysis + unit tests, no tmux required.
   unit:

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-09
+
 ### Added
 
 - `pairmux update` updates the currently running, verified persistent uv installation from public
@@ -14,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   intentional downgrade. Global `--json` returns one envelope with `updated` or `refreshed`; failures
   use `E_UPDATE`. The command requires installed uv and refuses non-uv, temporary uvx, development,
   and unverified installations rather than overwriting another manager's files.
+- Opt-in offline uv self-update integration tests install real local native wheels into isolated
+  tool directories and exercise pinned upgrades, same-version reinstalls, source isolation,
+  entrypoint ownership refusals, and stable-version resolution. CI and release validation share
+  a fail-closed gate that rejects a missing suite instead of passing mock-only or empty tests.
+- A manually dispatched published-release acceptance workflow checks real public uv upgrades,
+  macOS Homebrew installations, Fedora RPM transactions and Windows-hosted WSL1 installations.
+  Each channel must pass doctor and an isolated live terminal round trip using its installed binary.
+  Public uv refresh requires a genuine executable replacement, preserved held-old bytes and the
+  actual upgraded release's verified native/wheel identity; hosted execution is still pending.
 
 ### Changed
 
@@ -28,6 +39,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The release guide records verified GitHub/PyPI/Homebrew publication and isolated runtime checks,
   distinguishes the remaining clean-machine/WSL/RPM installation gaps, and makes the next-tag
   checklist generic so it cannot suggest recreating v0.5.3.
+
+### Fixed
+
+- Both the updater and Bash installer reject ambiguous uv name/path display delimiters, so a
+  malformed receipt entrypoint name cannot make preflight check a different symlink while uv
+  removes the actual recorded path. Rare paths containing ` (` fail closed.
+- The updater rejects relative uv PATH lookup results before resolving symlinks, including when
+  `GODEBUG=execerrdot=0` disables Go's usual current-directory lookup protection.
 
 ## [0.5.3] - 2026-10-08
 
@@ -449,7 +468,8 @@ Codex terminals and fixing what broke.
   `E_TMUX`, `E_INTERNAL`).
 
 [#7]: https://github.com/treeleaves30760/pairmux/issues/7
-[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/treeleaves30760/pairmux/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/treeleaves30760/pairmux/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/treeleaves30760/pairmux/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/treeleaves30760/pairmux/compare/v0.5.0...v0.5.1

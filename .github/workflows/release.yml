@@ -51,6 +51,7 @@ jobs:
           go vet ./...
           go test -race -count=1 ./...
           python3 -m unittest discover -s packaging/pypi -p 'test_*.py'
+          python3 -I scripts/test_release_acceptance.py
           shellcheck install.sh scripts/*.sh
           ./scripts/test-install.sh
           ./scripts/validate-commit-subjects.sh --self-test
@@ -348,7 +349,8 @@ jobs:
               "repos/$TAP_REPO/contents/Casks/pairmux.rb" \
               --jq .sha 2>/dev/null || true
           )
-          args=(-f message="chore: update-pairmux-to-$GITHUB_REF_NAME" -f content="$content")
+          message=$(printf 'chore: update-pairmux-to-%s\n\nCo-Authored-By: Claude Code <noreply@anthropic.com>' "$GITHUB_REF_NAME")
+          args=(-f "message=$message" -f content="$content")
           if [[ -n "$sha" ]]; then
             args+=(-f sha="$sha")
           fi

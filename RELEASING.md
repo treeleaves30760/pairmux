@@ -43,8 +43,34 @@ validation passed. The fresh unpublished snapshot contains seven native assets,
 four wheels, and zero Debian packages. Its version is 0.6.0 but metadata still
 names the existing v0.5.3 tag and commit `6327d42`; it is build-test evidence,
 **not publication input**. The local `actionlint@v1.7.7` execution was blocked by
-permissions; do not trigger the same external execution through CI as a bypass.
-No v0.6.0 tag or publication has occurred.
+permissions at that preparation stage. On 2026-10-09 the operator explicitly
+authorized the fixed `github.com/rhysd/actionlint/cmd/actionlint@v1.7.7` source for
+local and CI execution, along with public PyPI/GitHub/Homebrew publication and
+official Canonical Ubuntu/Fedora platform acceptance. The local fixed-source
+workflow lint passed after that authorization; this is not a permission bypass.
+No v0.6.0 tag or publication had occurred at that stage.
+
+**Updater completion checks (2026-10-09):** the real offline `uvintegration`
+suite and shared fail-closed gate passed all six cases on macOS ARM64 with uv
+0.11.7, Python 3.14.3 and Go 1.25.2: pinned upgrade, same-version native binary
+replacement, regular-file and foreign-symlink refusals, hostile configuration
+isolation, and rejection of a wheelhouse containing only a lower stable version
+and a higher prerelease. The gate also failed as intended when the suite was
+absent or required tools were unspecified. Ordinary/tagged Go vet and race tests,
+tmux integration, 25 packaging tests, installer mocks/ShellCheck, 24 landing tests,
+release configuration validation and docs typecheck/build passed; skill copies
+remain byte-identical. The user's installed v0.5.2 binary and receipt hashes are
+unchanged. [CI run 37827182087](https://github.com/treeleaves30760/pairmux/actions/runs/37827182087)
+verified all six real cases with uv 0.11.16 on Ubuntu x86-64/Python 3.12.3 and
+macOS ARM64/Python 3.14.7 at commit `18be0f9`; the full PR checks, including
+fixed-version actionlint, were green. The earlier local completion checks made
+no commit, push, tag or publication. Documentation
+HTTPS remains deferred; the newer fixed-source actionlint authorization above
+superseded its historical execution restriction for those checks. A later
+permission check again blocked a local actionlint run, even after the original
+source-specific consent was located. That new execution block is unresolved:
+do not retry via an agent or trigger CI/publication as a bypass. Previously
+green checks remain historical evidence, not validation of later workflow edits.
 
 ## Release channels
 
@@ -76,7 +102,7 @@ issue tracker, release archive, and source of the changelog.
    go test -race -count=1 ./...
    PAIRMUX_TEST_UV="$(command -v uv)" \
    PAIRMUX_TEST_PYTHON="$(command -v python3)" \
-     go test -race -tags uvintegration -count=1 ./internal/cli -run '^TestUpdateUV'
+     ./scripts/test-update-uv.sh
    go test -race -tags integration -count=1 ./test/...
    python3 -m unittest discover -s packaging/pypi -p 'test_*.py'
    shellcheck install.sh scripts/*.sh
@@ -91,13 +117,16 @@ issue tracker, release archive, and source of the changelog.
    node landing/build.mjs
    ```
 
-   The opt-in `uvintegration` tests use the supplied installed uv/Python and
-   local test wheels in isolated directories, without tmux or package downloads.
-   A test-only runner redirects the production updater invocation to that local
-   wheelhouse; it is not a production source override. CI runs this with uv
-   0.11.16 on macOS/Linux and again in release validation. The older fixture
-   contains the new updater with an older version stamp: real v0.5.3 has no update
-   command, so public bootstrap is a separate post-publication check.
+   The opt-in `uvintegration` tests require the supplied installed uv/Python and
+   use local test wheels in isolated HOME/config/cache/tool/bin directories,
+   without tmux or package/Python downloads. `test-update-uv.sh` first verifies
+   the exact tagged suite exists, so a missing test or a mock-only name match
+   cannot pass the gate. A test-only runner checks the production updater argv
+   before redirecting installation to that local wheelhouse; it is not a
+   production source override. CI is configured to run this with uv 0.11.16 on
+   macOS/Linux and again in release validation. The older fixture contains the
+   new updater with an older version stamp: real v0.5.3 has no update command, so
+   public bootstrap is a separate post-publication check.
 
    Use only a fresh build output. Verify **four archives + two RPMs + one
    checksum file = seven native assets**, four wheels, and zero `.deb` files.
@@ -132,6 +161,50 @@ issue tracker, release archive, and source of the changelog.
    Repository URL. Use isolated HOME/tool/cache directories so an existing
    installation or cache does not stand in for the release under test.
    Never publish artifacts from an old local `dist/` directory.
+
+### Published-release platform acceptance
+
+After the stable release and tap publication succeed, dispatch the
+`Published release acceptance` workflow with its exact canonical `vX.Y.Z` tag.
+It consumes public artifacts only; it never rebuilds or publishes. It records
+release/PyPI sources and checksums, and requires the installed binary to match
+the selected native bytes, an exact version, healthy JSON `doctor`, and a live
+isolated terminal command with `done`, exit 0 and one unique marker line.
+
+- Public uv on Ubuntu/macOS: fresh isolated persistent install, public v0.5.3
+  bootstrap followed by uv upgrade and same-version `refreshed`, and the public
+  pinned Bash installer. The actual upgraded version is matched to its verified
+  native/wheel bytes even for historical tags or differing channel-latest values;
+  missing/inconsistent public provenance fails closed. The refresh probe retains
+  the old canonical executable open, requires a distinct replacement inode and
+  unchanged held bytes, then verifies the replacement hash/version. A healthy
+  `refreshed` JSON response alone cannot pass. Public installer hashes are logged;
+  checkout/deployed bytes are checked separately because website deployment can lag.
+- Homebrew on fresh macOS: real tap/cask installation, tap commit and checksum,
+  tmux dependency metadata and whether tmux was already installed, plus refusal
+  of non-uv `pairmux update` without changing the binary.
+- RPM: real `dnf` installation in official Fedora 44 x86-64 userspace on an
+  Ubuntu Docker host, resolving tmux from pairmux's dependency. This is not
+  bare-metal Fedora or ARM64 RPM runtime coverage.
+- WSL: Windows 2025 importing checksum-verified official Canonical Ubuntu 24.04
+  as an owned **WSL1** distribution, a non-root default user, production
+  `install.ps1`, and Linux runtime/cleanup. Unsupported runner features fail;
+  mocks and WSL2 are not substitutes.
+
+All jobs preserve logs/provenance even on failure. The new helpers passed
+local model-free tests and the common runtime probe against the unchanged
+installed v0.5.2, but actual hosted/public channel acceptance is still pending.
+The unresolved actionlint execution block above also means the new workflow
+has not been linted or dispatched; do not represent prepared checks as passes.
+Review also reproduced and fixed relative uv discovery with `PATH=.` and
+`GODEBUG=execerrdot=0`; lookup results are now rejected before path resolution,
+with zero subprocess calls in the regression. Post-fix local Go vet/race and real tmux integration,
+all six real offline uv cases, 25 packaging tests, 20 acceptance-helper tests,
+installer mocks/ShellCheck, 24 landing tests/build, and GoReleaser configuration
+checks passed. The helper regressions include no-op refresh, held-byte mutation,
+wrong actual-version bytes under channel-latest disagreement, and unverifiable
+historical upgrades; focused post-fix review found no remaining actionable defect.
+Those results do not replace pending final-head hosted CI.
 
 ### Rotating `HOMEBREW_TAP_GITHUB_TOKEN`
 
