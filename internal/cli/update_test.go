@@ -563,6 +563,8 @@ func TestUpdateListingStrictGrammar(t *testing.T) {
 		{"duplicate entry", pair + fmt.Sprintf("- pairmux (%s)\n", f.entrypoint)},
 		{"extra entry", pair + fmt.Sprintf("- extra (%s)\n", filepath.Join(f.binDir, "extra"))},
 		{"improper command name", strings.Replace(pair, "- pairmux (", "- fake (", 1)},
+		{"entrypoint name/path delimiter ambiguity", strings.Replace(pair, "- pairmux (", "- pairmux (/checked (", 1)},
+		{"header name/path delimiter ambiguity", strings.Replace(pair, "pairmux v0.5.3 (", "pairmux v0.5.3 (/checked (", 1)},
 		{"improper path basename", strings.Replace(pair, f.entrypoint, filepath.Join(f.binDir, "fake"), 1)},
 		{"wrong block name", strings.Replace(pair, "pairmux v", "pairmux-other v", 1)},
 		{"wrong block environment", strings.Replace(pair, f.environment+")", f.root+")", 1)},
@@ -596,6 +598,38 @@ func TestUpdateListingStrictGrammar(t *testing.T) {
 	}
 	if entry, err := parseUpdateListing([]byte(strings.TrimSuffix(f.listing, "\n")), f.environment); err != nil || entry != f.entrypoint {
 		t.Fatalf("listing without trailing newline rejected: %q %v", entry, err)
+	}
+}
+
+func TestUpdateRefusesReceiptNamePathAmbiguityBeforeInstall(t *testing.T) {
+	f := newUpdateFixture(t)
+	victim := filepath.Join(f.root, "victim", "pairmux")
+	if err := os.MkdirAll(filepath.Dir(victim), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeUpdateTestFile(t, victim, []byte("manual replacement"), 0o700)
+	name := "pairmux (" + filepath.Join(f.root, "checked")
+	misparsed := strings.TrimPrefix(name, "pairmux (") + " (" + victim
+	if err := os.MkdirAll(filepath.Dir(misparsed), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(f.binary, misparsed); err != nil {
+		t.Fatal(err)
+	}
+	receipt := fmt.Sprintf("[tool]\nrequirements = [{ name = \"pairmux\", specifier = \"==0.5.3\" }]\nentrypoints = [{ name = %q, install-path = %q, from = \"pairmux\" }]\n", name, victim)
+	writeUpdateTestFile(t, filepath.Join(f.environment, "uv-receipt.toml"), []byte(receipt), 0o600)
+	// Real uv accepts and renders this receipt name without quoting. An
+	// apparently valid pairmux symlink is not the receipt's actual install-path.
+	f.listing = fmt.Sprintf("pairmux v0.5.3 (%s)\n- %s (%s)\n", f.environment, name, victim)
+	var buf bytes.Buffer
+	c := &Ctx{JSON: true, Stdout: &buf}
+	e := assertUpdateError(t, c.cmdUpdateWith(nil, "0.5.3", f.ops(t)), &buf)
+	if !strings.Contains(e.Error.Message, "ambiguous name/path delimiter") || len(f.calls) != 1 {
+		t.Fatalf("ambiguous receipt reached install: error=%+v calls=%+v", e.Error, f.calls)
+	}
+	b, err := os.ReadFile(victim)
+	if err != nil || string(b) != "manual replacement" {
+		t.Fatalf("unmanaged receipt path changed: %q, %v", b, err)
 	}
 }
 

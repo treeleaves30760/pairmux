@@ -157,6 +157,9 @@ check_entrypoints() {
 			err "could not inspect the existing uv tool receipt"
 		while IFS= read -r line; do
 			[[ ! "$line" =~ [[:cntrl:]] ]] || err "existing uv tool listing contains an unsupported control character"
+			# uv prints receipt names and paths without quoting. A second delimiter
+			# can hide the actual recorded path inside an entrypoint name.
+			[[ "$line" != *' ('*' ('* ]] || err "existing uv tool listing has an ambiguous name/path delimiter"
 			case "$line" in
 			pairmux\ v*)
 				[[ "$line" =~ $header && "$line" = *" ($tool_env)" ]] || err "existing pairmux tool listing is malformed"

@@ -332,6 +332,11 @@ func parseUpdateListing(b []byte, env string) (string, error) {
 	tool, entrypoint := "", ""
 	pairmuxCount := 0
 	for _, line := range strings.Split(strings.TrimSuffix(string(b), "\n"), "\n") {
+		// uv prints receipt names and paths without quoting. More than one
+		// delimiter could hide a different install-path inside an entrypoint name.
+		if strings.Count(line, " (") != 1 {
+			return "", fmt.Errorf("uv tool listing has an ambiguous name/path delimiter")
+		}
 		if m := updateListHeader.FindStringSubmatch(line); m != nil {
 			tool = m[1]
 			if tools[tool] || !safeUpdatePath(m[3]) {

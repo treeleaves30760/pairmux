@@ -194,6 +194,20 @@ printf '%s\n%s\n' "$CASE_DIR/link)" 'manual/pairmux' >"$HOME/.test-uv-tools/pair
 if run_installer; then fail 'accepted split receipt entrypoint'; fi
 [ "$(grep -c 'tool install' "$PM_TEST_LOG")" = 1 ] || fail 'reinstalled malformed listing'
 
+new_case ambiguous-receipt-delimiter
+run_installer --version v1.2.3
+victim="$CASE_DIR/manual/pairmux"
+mkdir -p "$(dirname "$victim")"
+printf 'manual replacement\n' >"$victim"
+misparsed="$CASE_DIR/checked ($victim"
+mkdir -p "$(dirname "$misparsed")"
+ln -s "$HOME/.test-uv-tools/pairmux/bin/pairmux" "$misparsed"
+printf '%s\n' "$misparsed" >"$HOME/.test-uv-tools/pairmux/uv-receipt.toml"
+if run_installer; then fail 'accepted ambiguous receipt name/path delimiter'; fi
+[ "$(grep -c 'tool install' "$PM_TEST_LOG")" = 1 ] || fail 'reinstalled ambiguous receipt listing'
+[ "$(<"$victim")" = 'manual replacement' ] || fail 'changed ambiguous recorded manual replacement'
+grep -q 'ambiguous name/path delimiter' "$CASE_DIR/errors"
+
 new_case escaped-receipt
 run_installer --version v1.2.3
 printf '%s\\n%s\n' "$CASE_DIR/link)" 'manual/pairmux' >"$HOME/.test-uv-tools/pairmux/uv-receipt.toml"

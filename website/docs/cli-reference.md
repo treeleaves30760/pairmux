@@ -546,7 +546,8 @@ manager or manual replacement, not this command.
 and `uv tool list --show-paths` must agree on one persistent pairmux tool and its single entrypoint.
 The entrypoint must be a symlink resolving to that executable. Verified custom tool/bin directories
 are retained, not inherited `UV_TOOL_DIR`/`UV_TOOL_BIN_DIR` guesses. Missing, malformed, oversized,
-ambiguous, escaped/multiline-path, or control-character receipt/listing data fails closed. The
+ambiguous, escaped/multiline-path, or control-character receipt/listing data fails closed. Paths
+containing ` (` are unsupported because uv's unquoted name/path display would be ambiguous. The
 receipt and entrypoint are checked again before reinstalling; these checks are not a guarantee
 against all races or a network-free/write-free preflight (uv's list query may take its tool-root
 lock).

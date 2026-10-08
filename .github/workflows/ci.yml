@@ -105,6 +105,15 @@ jobs:
       - run: go test -race -count=1 ./...
       - name: Test release packaging
         run: python3 -m unittest discover -s packaging/pypi -p 'test_*.py'
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: 0.11.16
+          enable-cache: false
+      - name: Test offline uv self-update without tmux
+        run: |
+          PAIRMUX_TEST_UV="$(command -v uv)" \
+          PAIRMUX_TEST_PYTHON="$(command -v python3)" \
+            ./scripts/test-update-uv.sh
 
   # tmux-backed suite behind the `integration` build tag.
   integration:
