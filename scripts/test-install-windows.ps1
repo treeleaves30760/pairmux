@@ -57,6 +57,8 @@ public static class FakeWsl {
     $env:PAIRMUX_WSL_TEST_MODE = 'fail'
     & powershell.exe -NoProfile -File (Join-Path $root 'install.ps1') -Distribution Ubuntu
     if ($LASTEXITCODE -eq 0) { throw 'WSL failure was ignored' }
+    # The child failure above is expected; do not leak it to the Actions shell.
+    $global:LASTEXITCODE = 0
     Write-Host 'Windows legacy-native WSL argv tests passed (no network or installation)'
 } finally {
     $env:PATH = $previousPath

@@ -144,8 +144,9 @@ check_entrypoints() {
 	[[ "$tool_dir" = /* && ! "$tool_dir" =~ [[:cntrl:]] ]] || err "uv tool directory is not a supported absolute path"
 	tool_env="$tool_dir/pairmux"
 	if [ -e "$tool_env" ] || [ -L "$tool_env" ]; then
-		[ -f "$tool_env/uv-receipt.toml" ] && [ ! -L "$tool_env/uv-receipt.toml" ] || \
+		if [ ! -f "$tool_env/uv-receipt.toml" ] || [ -L "$tool_env/uv-receipt.toml" ]; then
 			err "existing pairmux tool has no regular uv receipt; repair it manually first"
+		fi
 		# uv writes escaped paths to TOML but prints them unescaped in the listing.
 		# Refuse unsupported escape/multiline representations rather than checking
 		# a truncated path while uv subsequently removes the complete recorded one.
@@ -170,8 +171,9 @@ check_entrypoints() {
 				[[ "$entry" = /* && ! "$entry" =~ [[:cntrl:]] ]] || err "existing receipt entrypoint is not a supported absolute path"
 				count=$((count + 1))
 				if [ -e "$entry" ] || [ -L "$entry" ]; then
-					[ -L "$entry" ] && [ "$(readlink "$entry")" = "$tool_env/bin/pairmux" ] || \
+					if [ ! -L "$entry" ] || [ "$(readlink "$entry")" != "$tool_env/bin/pairmux" ]; then
 						err "refusing to replace $entry: it is not the recorded uv-managed symlink"
+					fi
 				fi
 				;;
 			*)
@@ -184,8 +186,9 @@ check_entrypoints() {
 	fi
 	entry="$INSTALL_DIR/pairmux"
 	if [ -e "$entry" ] || [ -L "$entry" ]; then
-		[ -L "$entry" ] && [ "$(readlink "$entry")" = "$tool_env/bin/pairmux" ] || \
+		if [ ! -L "$entry" ] || [ "$(readlink "$entry")" != "$tool_env/bin/pairmux" ]; then
 			err "refusing to overwrite $entry: choose another PAIRMUX_INSTALL_DIR or remove the old installation manually"
+		fi
 	fi
 }
 
@@ -265,7 +268,9 @@ main() {
 		case "$1" in
 		--version)
 			shift
-			[ "$#" -gt 0 ] && [ -n "$1" ] || err "--version requires an argument (e.g. v0.5.3)"
+			if [ "$#" -eq 0 ] || [ -z "$1" ]; then
+				err "--version requires an argument (e.g. v0.5.3)"
+			fi
 			PINNED_TAG=$1
 			;;
 		--version=*) PINNED_TAG=${1#*=}; [ -n "$PINNED_TAG" ] || err "--version requires an argument" ;;

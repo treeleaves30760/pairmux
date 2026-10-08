@@ -153,7 +153,7 @@ run_installer --version v1.2.3
 
 new_case dry-run
 run_installer --version v1.2.3 --dry-run
-[ ! -s "$PM_TEST_LOG" ] && [ ! -e "$PAIRMUX_INSTALL_DIR" ] || fail 'dry-run side effects'
+if [ -s "$PM_TEST_LOG" ] || [ -e "$PAIRMUX_INSTALL_DIR" ]; then fail 'dry-run side effects'; fi
 grep -q 'pairmux==1.2.3' "$CASE_DIR/output"
 run_installer --help
 [ ! -s "$PM_TEST_LOG" ] || fail 'help side effects'
@@ -265,7 +265,7 @@ run_bootstrap --version v1.2.3
 grep -q bootstrap "$PM_TEST_LOG"
 grep -q 'tmux is not installed' "$CASE_DIR/errors"
 [ -z "$(find "$TMPDIR" -mindepth 1 -print -quit)" ] || fail 'bootstrap temp leak'
-[ ! -e "$HOME/.bashrc" ] && [ ! -e "$HOME/.zshrc" ] || fail 'modified shell profile'
+if [ -e "$HOME/.bashrc" ] || [ -e "$HOME/.zshrc" ]; then fail 'modified shell profile'; fi
 
 new_case download-failure
 export PM_TEST_DOWNLOAD_FAIL=1
