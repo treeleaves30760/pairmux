@@ -15,7 +15,7 @@ function createDocument({ clipboard, selectionAvailable = true } = {}) {
     addRange: (value) => selected.push(value),
   };
   const command = {
-    textContent: '  uvx --default-index https://pypi.org/simple pairmux@latest version\n',
+    textContent: '  uv tool install pairmux\n',
     closest: (selector) => {
       assert.equal(selector, 'pre');
       return { focus: (options) => focusCalls.push(options) };
@@ -49,7 +49,7 @@ test('copy controls become available only after enhancement and copy exactly the
   const page = createDocument({ clipboard: { writeText: async (text) => copied.push(text) } });
   assert.equal(page.button.hidden, false);
   await page.listeners.get('click')();
-  assert.deepEqual(copied, ['uvx --default-index https://pypi.org/simple pairmux@latest version']);
+  assert.deepEqual(copied, ['uv tool install pairmux']);
   assert.equal(page.button.textContent, 'Copied');
   assert.equal(page.status.textContent, 'Command copied.');
   assert.equal(page.button.disabled, false);

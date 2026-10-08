@@ -28,12 +28,30 @@ proceeding with v0.5.3 without waiting for documentation HTTPS; do not claim the
 documentation HTTPS endpoint is available yet. The [APT migration guide source](./website/docs/migrating-from-apt.md)
 is available on GitHub while provisioning finishes.
 
+**v0.6.0 preparation.** Persistent `uv tool install pairmux` is the primary install
+path. The new `pairmux update` command is limited to the verified running uv tool
+installation and reinstalls the latest compatible stable wheel from public PyPI,
+resetting old pins and source policy. Keep public guidance gated to v0.6.0+ until
+publication; v0.5.3 and earlier need `uv tool install --upgrade pairmux` first.
+Do not move v0.5.3, revisit APT deletion, or unblock this release by silently
+marking deferred documentation HTTPS complete.
+
+**Local preparation checks (2026-10-08):** Go vet/race and tmux integration,
+25 packaging tests, offline installer mocks/ShellCheck, 24 landing tests and
+browser checks, docs audit/typecheck/build, manpage lint, and GoReleaser config
+validation passed. The fresh unpublished snapshot contains seven native assets,
+four wheels, and zero Debian packages. Its version is 0.6.0 but metadata still
+names the existing v0.5.3 tag and commit `6327d42`; it is build-test evidence,
+**not publication input**. The local `actionlint@v1.7.7` execution was blocked by
+permissions; do not trigger the same external execution through CI as a bypass.
+No v0.6.0 tag or publication has occurred.
+
 ## Release channels
 
 | Channel | Implementation | Release operation |
 | --- | --- | --- |
 | GitHub Releases | GoReleaser builds four macOS/Linux `.tar.gz` archives, two Linux `.rpm` packages, and `checksums.txt`: **seven native assets**. | Push a canonical SemVer tag. The existing workflow verifies and stages the exact artifacts before publishing the release. No `.deb` is produced. |
-| PyPI | Four platform wheels wrap the same verified Go binaries; wheel installation requires Python >= 3.9. | Configure the `PYPI_TOKEN` repository secret or migrate to Trusted Publishing. The tag workflow uploads only the four verified wheels. Smoke-test both `uvx` quick runs and persistent `uv tool install`. |
+| PyPI | Four platform wheels wrap the same verified Go binaries; wheel installation requires Python >= 3.9. | Configure the `PYPI_TOKEN` repository secret or migrate to Trusted Publishing. The tag workflow uploads only the four verified wheels. Smoke-test persistent `uv tool install` and `pairmux update` first, plus optional `uvx` quick runs. |
 | Website installer | Root `install.sh` installs the pairmux wheel from `https://pypi.org/simple` through uv, bootstrapping official Astral uv and a compatible managed Python if needed. `install.ps1` delegates into WSL. | Rebuild the landing site whenever either root installer changes; test the public `/install.sh` and `/install.ps1` endpoints. The Bash installer no longer selects GitHub archives or consumes `checksums.txt`. |
 | RPM files | GoReleaser emits installable `.rpm` release assets for Linux x86-64 and ARM64, with a tmux >= 3.2 dependency. | No extra work for direct package downloads. Verify checksums and smoke-test a local RPM; there is no Yum repository. |
 | Homebrew tap | **Active.** GoReleaser renders the cask (binary + manpage, `depends_on formula: tmux`, quarantine-stripping postflight) during the build; the release workflow pushes `Casks/pairmux.rb` to [`homebrew-pairmux`](https://github.com/treeleaves30760/homebrew-pairmux) after the release goes public. Prereleases are skipped. | Smoke-test `brew install --cask treeleaves30760/pairmux/pairmux` + `pairmux doctor` on a clean machine after each stable release. |
@@ -56,6 +74,9 @@ issue tracker, release archive, and source of the changelog.
    gofmt -w .
    go vet ./...
    go test -race -count=1 ./...
+   PAIRMUX_TEST_UV="$(command -v uv)" \
+   PAIRMUX_TEST_PYTHON="$(command -v python3)" \
+     go test -race -tags uvintegration -count=1 ./internal/cli -run '^TestUpdateUV'
    go test -race -tags integration -count=1 ./test/...
    python3 -m unittest discover -s packaging/pypi -p 'test_*.py'
    shellcheck install.sh scripts/*.sh
@@ -69,6 +90,14 @@ issue tracker, release archive, and source of the changelog.
    npm --prefix website run build
    node landing/build.mjs
    ```
+
+   The opt-in `uvintegration` tests use the supplied installed uv/Python and
+   local test wheels in isolated directories, without tmux or package downloads.
+   A test-only runner redirects the production updater invocation to that local
+   wheelhouse; it is not a production source override. CI runs this with uv
+   0.11.16 on macOS/Linux and again in release validation. The older fixture
+   contains the new updater with an older version stamp: real v0.5.3 has no update
+   command, so public bootstrap is a separate post-publication check.
 
    Use only a fresh build output. Verify **four archives + two RPMs + one
    checksum file = seven native assets**, four wheels, and zero `.deb` files.
@@ -91,12 +120,14 @@ issue tracker, release archive, and source of the changelog.
    draft GitHub release, publishes the four verified wheels to PyPI, makes
    the GitHub release public, then updates Homebrew for stable tags. Confirm
    each stage; do not replace this ordering with a separate rebuild.
-7. On clean or isolated systems, smoke-test `uvx pairmux version`,
-   `uvx pairmux doctor`, `uv tool install pairmux`, the website's `install.sh`,
-   a direct RPM, and Homebrew. Release-specific examples
-   `uvx --from 'pairmux==0.5.3' pairmux version` and
-   `uv tool install 'pairmux==0.5.3'` use the already-published migration version;
-   substitute the new version only **after** its upload succeeds.
+7. On clean or isolated systems, smoke-test persistent `uv tool install pairmux`
+   and, from v0.6.0, `pairmux update` followed by `version`/`doctor`. Also test the
+   website installer, optional uvx quick runs, a direct RPM, and Homebrew.
+   Start an older-release bootstrap check with `uv tool install 'pairmux==0.5.3'`,
+   then `uv tool install --upgrade pairmux`, and only then `pairmux update`.
+   Substitute a new release pin only **after** its upload succeeds. A same-version
+   update reports `refreshed`, not a write-free no-op; a failed uv operation may
+   have changed the environment, so do not promise automatic rollback.
    Verify wheel metadata has the new Home/Docs domains and the GitHub
    Repository URL. Use isolated HOME/tool/cache directories so an existing
    installation or cache does not stand in for the release under test.

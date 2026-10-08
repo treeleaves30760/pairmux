@@ -44,6 +44,15 @@ live shell state and no human (a plain `make`, a test suite in a fresh env) is o
 well by your harness's own background execution — reach for pairmux when the command is
 interactive, shares a terminal or its state, or may need a human to step in.
 
+## Before starting
+
+Use the installed CLI: `pairmux version`, then `pairmux doctor`. If missing, recommend
+`uv tool install pairmux` (Python 3.9+); tmux 3.2+ is a separate system dependency.
+With explicit user authorization, `pairmux update` (v0.6.0+) updates only the running persistent
+uv installation from public PyPI. Older versions first need `uv tool install --upgrade pairmux`.
+Do not install or self-update autonomously during a terminal workflow. Keep other installations
+under their existing package manager; uvx quick runs are not persistent update targets.
+
 ## The golden loop
 
 ```
@@ -131,7 +140,7 @@ terminal resumes, `pattern-found`, `human-done`, `dead`, or `timeout`, depending
 condition. A `timeout` carries a `next` that repeats the same wait with a longer deadline — follow
 it rather than giving up or switching strategy.
 Errors set `ok:false` with a stable `error.code`: `E_NO_TERMINAL`, `E_EXISTS`, `E_BUSY`, `E_DEAD`,
-`E_BAD_ARGS`, `E_TMUX`, `E_INTERNAL`. The error's `hint`/`next` tells you how to recover.
+`E_BAD_ARGS`, `E_TMUX`, `E_UPDATE`, `E_INTERNAL`. The error's `hint`/`next` tells you how to recover.
 
 ## Worked examples (real envelopes)
 

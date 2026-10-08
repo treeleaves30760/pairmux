@@ -28,22 +28,57 @@ normal access to the same live terminal — watch, take over, hand back.
 
 ## Install
 
-Quick run without a persistent command on PATH:
+With [uv](https://docs.astral.sh/uv/getting-started/installation/) installed, add a persistent
+`pairmux` command to PATH:
+
+```bash
+uv tool install pairmux
+pairmux version
+pairmux doctor
+```
+
+This ordinary install retains your environment and uv configuration, including index overrides,
+and may reuse cache. Check `command -v pairmux` for an older installation shadowing the new one.
+
+### Update (v0.6.0+)
+
+From **v0.6.0** onward, update the currently running, verified persistent uv tool installation
+(including one created by the installer):
+
+```bash
+pairmux update
+```
+
+**v0.5.3 and older have no `update` command.** First use `uv tool install --upgrade pairmux` with
+your normal configuration to obtain v0.6.0+ when available, then use the new command.
+
+The updater needs uv installed. It clears all inherited `UV_*` settings, ignores uv configuration,
+and reinstalls from **`https://pypi.org/simple`** with no persistent cache or source builds,
+replacing old exact pins, constraints, indexes, and extras. It selects the latest compatible stable
+wheel, never below the running version's numeric core; recognized alpha/beta/rc builds can advance
+to that core's final or a later stable release, but dev/snapshot builds are refused.
+
+A version change returns `updated`; a same-version reinstall returns `refreshed`, not a no-op.
+Failures return `E_UPDATE` with a recovery hint, without a guaranteed rollback. Recover with the
+original manager, or `uv tool install --upgrade pairmux` for uv installs (normal configuration
+applies). It does not update Homebrew, RPM, pipx/pip, manual/development installs, or temporary uvx
+runs, and does not touch tmux. There are no command-specific options, automatic updates, sudo, or
+uv bootstrap/update; global `--json` is supported.
+
+### Optional temporary run with uvx
 
 ```bash
 uvx pairmux version
 uvx pairmux doctor
 ```
 
-`uvx` runs pairmux in a temporary tool environment (which uv may cache). For a persistent
-installation that exposes `pairmux` on PATH:
+`uvx` remains supported. It uses a temporary tool environment, which uv may cache, or reuses an
+existing uv-managed installation; it does not promise the latest version or a fresh download every
+time. Temporary runs cannot use `pairmux update`.
 
-```bash
-uv tool install pairmux
-pairmux doctor
-```
+### Alternative installer
 
-Or use the [inspectable installer](https://pairmux.treeleaves30760.com/install.sh), which installs
+The [inspectable installer](https://pairmux.treeleaves30760.com/install.sh) persistently installs
 pairmux with uv from the public PyPI index:
 
 ```bash
@@ -53,16 +88,20 @@ curl -fsSL https://pairmux.treeleaves30760.com/install.sh | bash
 To review it before execution, download successfully first, inspect the file, then run it:
 
 ```bash
-curl -fsSL https://pairmux.treeleaves30760.com/install.sh -o install-pairmux.sh && \
-  less install-pairmux.sh && \
-  bash install-pairmux.sh
+installer_dir=$(mktemp -d) &&
+curl -fsSL https://pairmux.treeleaves30760.com/install.sh -o "$installer_dir/install.sh" &&
+less "$installer_dir/install.sh" &&
+bash "$installer_dir/install.sh"
 ```
 
 The one-line pipe executes downloaded code; it is not a substitute for that review. The installer
-uses public PyPI explicitly; normal uv commands default to PyPI, but local uv configuration can
-change their index. See [installation guidance](https://pairmux-docs.treeleaves30760.com/getting-started)
+clears all inherited `UV_*` settings, ignores uv configuration, and uses **`https://pypi.org/simple`**
+with no persistent cache and wheels only. Normal uv commands use your regular configuration. See
+[installation guidance](https://pairmux-docs.treeleaves30760.com/#install)
 for PATH setup and other supported methods (`pipx install pairmux` or `python -m pip install pairmux`
 in a dedicated environment).
+
+### Requirements
 
 The [PyPI pairmux wheels](https://pypi.org/project/pairmux/) contain a prebuilt native Go binary,
 so installation needs no Go toolchain or source build. Wheel installers require Python 3.9 or newer;

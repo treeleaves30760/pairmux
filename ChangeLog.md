@@ -7,8 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `pairmux update` updates the currently running, verified persistent uv installation from public
+  PyPI to the latest compatible stable wheel, replacing old pins and source settings without an
+  intentional downgrade. Global `--json` returns one envelope with `updated` or `refreshed`; failures
+  use `E_UPDATE`. The command requires installed uv and refuses non-uv, temporary uvx, development,
+  and unverified installations rather than overwriting another manager's files.
+
 ### Changed
 
+- `uv tool install pairmux` is the primary installation path in the README, website, docs and PyPI
+  description, followed by `pairmux update` from v0.6.0. Older versions first need
+  `uv tool install --upgrade pairmux`. The PyPI one-click installer remains a persistent uv
+  alternative, and uvx remains available for optional quick runs.
+- The canonical Agent Skill covers setup and update authorization; agents must not autonomously
+  install or self-update during terminal workflows.
 - Installation examples now pin the published v0.5.3 migration release. Current APT guidance
   records completed retirement, with a GitHub source fallback while documentation HTTPS is pending.
 - The release guide records verified GitHub/PyPI/Homebrew publication and isolated runtime checks,

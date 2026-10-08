@@ -37,7 +37,8 @@ Environment: `PAIRMUX_SOCKET` sets the default tmux socket; `PAIRMUX_STATE_DIR` 
 
 **Statuses.** Terminal states: `idle`, `running`, `awaiting-input`, `dead`. Per-command action
 statuses: `created` (`new`), `done`/`running` (`run`), `sent` (`send`), `noted` (`note`), `note` (`wait --note`),
-`killed` (`kill`), `ok` (`peek`/`log`/`ls`/`doctor`/`version`), and `wait`'s outcomes
+`killed` (`kill`), `updated`/`refreshed` (`update`, v0.6.0+),
+`ok` (`peek`/`log`/`ls`/`doctor`/`version`), and `wait`'s outcomes
 `idle` / `running` / `done` / `awaiting-input` / `pattern-found` / `human-done` / `dead` / `timeout`
 (which ones can resolve the call depends on the requested wait conditions).
 
@@ -51,6 +52,7 @@ statuses: `created` (`new`), `done`/`running` (`run`), `sent` (`send`), `noted` 
 | `E_DEAD` | the terminal's pane is gone |
 | `E_BAD_ARGS` | usage/flag error (invalid name/key, bad regex, wrong terminal kind) |
 | `E_TMUX` | an underlying tmux command failed |
+| `E_UPDATE` | unsupported/unverified installation, uv failure, or post-update verification failure |
 | `E_INTERNAL` | an unexpected internal error |
 
 ---
@@ -258,6 +260,14 @@ pairmux prune [name] [--older-than 7d] [--dry-run]
   `run`/`peek`/`wait` `notes`, and resolves `wait --human`.
 - `pairmux doctor` — probe tmux version, state-dir writability + retained journal size, per-shell
   completion tier, notifier, and (when set) `PAIRMUX_SECRET_PROMPT_RE` validity.
+- `pairmux update` — **v0.6.0+; explicit user authorization required.** Update only the currently
+  running, verified persistent uv installation from public PyPI to the latest compatible stable
+  wheel, without downgrading. Resets saved pins, constraints, extra requirements, and source settings;
+  reports `updated`, or `refreshed` after reinstalling the same version. Supports global `--json`,
+  no command-specific arguments. Requires installed uv, does not bootstrap it, and does not touch
+  tmux or other package managers. Unverified/non-uv/uvx/dev installations fail with `E_UPDATE`;
+  follow the hint rather than force-overwriting. Versions through v0.5.3 first need
+  `uv tool install --upgrade pairmux` (which follows normal uv configuration).
 - `pairmux version` — print the build version.
 - `pairmux skill install [--target T|all] [--dry-run]` — install the embedded canonical skill into a
   supported agent; `all` only touches agent configuration directories that already exist.
