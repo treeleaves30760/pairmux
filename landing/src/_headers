@@ -1,0 +1,19 @@
+/*
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+
+/install.sh
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: no-cache, max-age=0, must-revalidate
+  X-Robots-Tag: noindex
+
+/install.ps1
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: no-cache, max-age=0, must-revalidate
+  X-Robots-Tag: noindex
+
+/404.html
+  X-Robots-Tag: noindex

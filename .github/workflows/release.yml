@@ -62,10 +62,6 @@ jobs:
             --tag "$GITHUB_REF_NAME" \
             --commit "$GITHUB_SHA" \
             --out-dir dist/release-assets
-          for package in dist/release-assets/*.deb; do
-            dpkg-deb --info "$package" >/dev/null
-            dpkg-deb --contents "$package" | grep -q '/usr/bin/pairmux$'
-          done
           for package in dist/release-assets/*.rpm; do
             rpm -qpl "$package" | grep -q '/usr/bin/pairmux$'
           done
@@ -77,16 +73,47 @@ jobs:
             --out-dir dist/wheels \
             --check
           test "$(find dist/wheels -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')" -eq 4
-      - name: Smoke-test the Linux runner wheel and package version
+      - name: Smoke-test the Linux runner wheel with pip
         run: |
           expected_version=${GITHUB_REF_NAME#v}
           python3 -m venv dist/smoke-venv
           dist/smoke-venv/bin/python -m pip install --no-deps \
             dist/wheels/*manylinux_2_17_x86_64*.whl
           test "$(dist/smoke-venv/bin/pairmux version)" = "$expected_version"
-          mkdir dist/smoke-deb
-          dpkg-deb -x dist/release-assets/*linux_amd64.deb dist/smoke-deb
-          test "$(dist/smoke-deb/usr/bin/pairmux version)" = "$expected_version"
+      - name: Smoke-test the just-built Linux wheel with uv tool and uvx
+        run: |
+          set -euo pipefail
+          expected_version=${GITHUB_REF_NAME#v}
+          python=$(command -v python3)
+          linux_wheels=("$GITHUB_WORKSPACE"/dist/wheels/*manylinux_2_17_x86_64*.whl)
+          test "${#linux_wheels[@]}" -eq 1
+          test -f "${linux_wheels[0]}"
+          smoke_root=$(mktemp -d "$RUNNER_TEMP/pairmux-uv-smoke.XXXXXX")
+          trap 'rm -rf "$smoke_root"' EXIT
+          mkdir "$smoke_root/home"
+          "$python" -m venv "$smoke_root/uv-venv"
+          # Official uv binary package, pinned like the publish job. No new
+          # action or source build is needed; leave the runner's Python intact.
+          # Keep setup-python's shared-library path while discarding ambient
+          # pip/uv configuration variables.
+          env -i PATH="$PATH" HOME="$smoke_root/home" \
+            LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" \
+            "$smoke_root/uv-venv/bin/python" -I -m pip --isolated install \
+            --index-url https://pypi.org/simple --only-binary=:all: \
+            --no-deps --no-cache-dir uv==0.11.16
+          smoke_env=(env -i PATH="$smoke_root/bin:$PATH" HOME="$smoke_root/home"
+            LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
+            UV_TOOL_DIR="$smoke_root/tools" UV_TOOL_BIN_DIR="$smoke_root/bin"
+            UV_CACHE_DIR="$smoke_root/cache")
+          # Both installs consume these exact local bytes, never PyPI latest.
+          "${smoke_env[@]}" "$smoke_root/uv-venv/bin/uv" --no-config tool install \
+            --offline --no-index --no-build --no-python-downloads \
+            --python "$python" "${linux_wheels[0]}"
+          test "$("$smoke_root/bin/pairmux" version)" = "$expected_version"
+          test "$("${smoke_env[@]}" "$smoke_root/uv-venv/bin/uvx" \
+            --no-config --isolated --offline --no-index --no-build \
+            --no-python-downloads --python "$python" \
+            --from "${linux_wheels[0]}" pairmux version)" = "$expected_version"
       - name: Preserve verified native release assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -161,7 +188,7 @@ jobs:
               exit 1
             }
           fi
-          test "$(find dist/release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 9
+          test "$(find dist/release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 7
           test "$(find dist/wheels -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')" -eq 4
           gh auth status
           uv publish --dry-run dist/wheels/*.whl

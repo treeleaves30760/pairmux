@@ -13,8 +13,8 @@ const config: Config = {
     v4: true, // Improve compatibility with the upcoming Docusaurus v4
   },
 
-  url: 'https://treeleaves30760.github.io',
-  baseUrl: '/pairmux/',
+  url: 'https://pairmux-docs.treeleaves30760.com',
+  baseUrl: '/',
 
   organizationName: 'treeleaves30760',
   projectName: 'pairmux',
@@ -63,6 +63,7 @@ const config: Config = {
     navbar: {
       title: 'pairmux',
       items: [
+        {href: 'https://pairmux.treeleaves30760.com', label: 'Home', position: 'left'},
         {
           type: 'docSidebar',
           sidebarId: 'docsSidebar',
@@ -70,7 +71,9 @@ const config: Config = {
           label: 'Docs',
         },
         {to: '/cli-reference', label: 'CLI Reference', position: 'left'},
+        {to: '/migrating-from-apt', label: 'APT Migration', position: 'left'},
         {to: '/changelog', label: 'Changelog', position: 'left'},
+        {href: 'https://pypi.org/project/pairmux/', label: 'PyPI', position: 'right'},
         {
           href: 'https://github.com/treeleaves30760/pairmux',
           label: 'GitHub',
@@ -85,6 +88,7 @@ const config: Config = {
           title: 'Docs',
           items: [
             {label: 'Getting Started', to: '/'},
+            {label: 'APT Migration', to: '/migrating-from-apt'},
             {label: 'CLI Reference', to: '/cli-reference'},
             {label: 'Concepts', to: '/concepts'},
             {label: 'Changelog', to: '/changelog'},
@@ -93,6 +97,8 @@ const config: Config = {
         {
           title: 'Project',
           items: [
+            {label: 'Home', href: 'https://pairmux.treeleaves30760.com'},
+            {label: 'PyPI', href: 'https://pypi.org/project/pairmux/'},
             {label: 'pairmux (GitHub)', href: 'https://github.com/treeleaves30760/pairmux'},
             {label: 'pairmux-skills', href: 'https://github.com/treeleaves30760/pairmux-skills'},
           ],

@@ -81,6 +81,14 @@ jobs:
           }
           Write-Host "install.ps1 parses clean with no analyzer findings"
 
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Test legacy PowerShell WSL argument transport
+        shell: powershell
+        run: ./scripts/test-install-windows.ps1
+
   # Fast feedback: static analysis + unit tests, no tmux required.
   unit:
     strategy:

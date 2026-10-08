@@ -2,8 +2,9 @@
 
 **Let AI agents drive interactive terminal programs — and hand off to a human when they can't.**
 
-[Documentation](https://treeleaves30760.github.io/pairmux/) ·
-[CLI reference](https://treeleaves30760.github.io/pairmux/cli-reference) ·
+[Homepage](https://pairmux.treeleaves30760.com) ·
+[Documentation](https://pairmux-docs.treeleaves30760.com/) ·
+[CLI reference](https://pairmux-docs.treeleaves30760.com/cli-reference) ·
 [Changelog](https://github.com/treeleaves30760/pairmux/blob/main/ChangeLog.md) ·
 [Source](https://github.com/treeleaves30760/pairmux)
 
@@ -27,30 +28,59 @@ normal access to the same live terminal — watch, take over, hand back.
 
 ## Install
 
+Quick run without a persistent command on PATH:
+
 ```bash
-uv tool install pairmux
-# or
-pipx install pairmux
-# or, inside a dedicated environment
-python -m pip install pairmux
+uvx pairmux version
+uvx pairmux doctor
 ```
 
-The wheel contains a prebuilt native Go binary, so installation needs no Go toolchain or source
-build. Wheel installers must select Python 3.9 or newer; the installed `pairmux` executable itself
-contains no Python code.
+`uvx` runs pairmux in a temporary tool environment (which uv may cache). For a persistent
+installation that exposes `pairmux` on PATH:
+
+```bash
+uv tool install pairmux
+pairmux doctor
+```
+
+Or use the [inspectable installer](https://pairmux.treeleaves30760.com/install.sh), which installs
+pairmux with uv from the public PyPI index:
+
+```bash
+curl -fsSL https://pairmux.treeleaves30760.com/install.sh | bash
+```
+
+To review it before execution, download successfully first, inspect the file, then run it:
+
+```bash
+curl -fsSL https://pairmux.treeleaves30760.com/install.sh -o install-pairmux.sh && \
+  less install-pairmux.sh && \
+  bash install-pairmux.sh
+```
+
+The one-line pipe executes downloaded code; it is not a substitute for that review. The installer
+uses public PyPI explicitly; normal uv commands default to PyPI, but local uv configuration can
+change their index. See [installation guidance](https://pairmux-docs.treeleaves30760.com/getting-started)
+for PATH setup and other supported methods (`pipx install pairmux` or `python -m pip install pairmux`
+in a dedicated environment).
+
+The [PyPI pairmux wheels](https://pypi.org/project/pairmux/) contain a prebuilt native Go binary,
+so installation needs no Go toolchain or source build. Wheel installers require Python 3.9 or newer;
+the installed `pairmux` executable itself contains no Python code. If needed, the installer obtains
+uv from [Astral's official installer](https://docs.astral.sh/uv/getting-started/installation/), and
+uv may obtain managed Python from Astral's upstream Python distributions. **Only the pairmux wheel
+comes from PyPI in that installer flow; uv/Python may come from Astral upstream.**
 
 PyPI package requirements and wheel targets:
 
-- tmux 3.2 or newer
+- **tmux 3.2 or newer, installed separately** with your system package manager; neither the wheel
+  nor the installer supplies tmux or runs sudo to install it
 - macOS 12+ or manylinux_2_17 (glibc 2.17+)
 - x86-64 or ARM64 (aarch64)
 - no native Windows wheel; use a compatible Linux distribution inside WSL
 
-Check the local environment after installation:
-
-```bash
-pairmux doctor
-```
+The quickstart below assumes the persistent `pairmux` command is on PATH. For temporary use,
+prefix each command with `uvx`.
 
 ## 60-second quickstart
 
@@ -83,7 +113,7 @@ pairmux skill install --target codex
 ```
 
 Use `--target all` to update only the supported agent configuration directories that already
-exist. See the [Agent Skills guide](https://treeleaves30760.github.io/pairmux/skills) for all
+exist. See the [Agent Skills guide](https://pairmux-docs.treeleaves30760.com/skills) for all
 targets and install locations.
 
 MCP clients can launch the built-in stdio server and use the core terminal operations as typed

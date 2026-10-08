@@ -1,8 +1,12 @@
 name: Docs
 
-# Builds the Docusaurus site in website/ and deploys it to GitHub Pages.
-# Runs only when documentation actually changes.
+# Builds the Docusaurus site in website/. Pull requests validate without deploying.
 on:
+  pull_request:
+    paths:
+      - 'website/**'
+      - 'ChangeLog.md'
+      - '.github/workflows/docs.yml'
   push:
     branches: [main]
     paths:
@@ -16,7 +20,7 @@ permissions:
 
 # Allow one concurrent Pages deployment; do not cancel an in-flight one.
 concurrency:
-  group: pages
+  group: pages-${{ github.event_name == 'pull_request' && github.ref || 'production' }}
   cancel-in-progress: false
 
 jobs:
@@ -43,10 +47,12 @@ jobs:
       - run: npm run build
       # Docusaurus emits the static site to website/build by default.
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        if: github.event_name != 'pull_request'
         with:
           path: website/build
 
   deploy:
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -56,5 +62,20 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # Keep the existing site intact until the Dashboard/DNS handoff is ready.
+      # Actions Pages does not derive its custom domain from an artifact CNAME.
+      - id: domain
+        name: Check the configured documentation domain
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          domain=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq '.cname // ""')
+          if [ "$domain" = 'pairmux-docs.treeleaves30760.com' ]; then
+            printf 'ready=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'ready=false\n' >> "$GITHUB_OUTPUT"
+            printf '::notice::Docs deployment deferred until the custom domain is configured in Pages settings.\n'
+          fi
       - id: deployment
+        if: steps.domain.outputs.ready == 'true'
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

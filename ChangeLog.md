@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A project landing page at `https://pairmux.treeleaves30760.com`, with visible PyPI links,
+  `uvx` quick runs, persistent `uv tool install` instructions, and inspectable installers.
+- Documentation at `https://pairmux-docs.treeleaves30760.com`, including migration guidance
+  for former APT users; pull requests now validate both sites without deploying them.
+
+### Changed
+
+- The shell installer now installs a platform wheel exclusively from public PyPI using uv,
+  rather than a GitHub release archive. It ignores inherited uv source/configuration overrides,
+  supports version pins and an offline dry run, and verifies the executable in its actual tool-bin
+  directory. Missing uv is bootstrapped from Astral; Python and tmux requirements are explicit.
+- The Windows entry point still installs into WSL, but downloads the Bash installer completely
+  before executing it and safely passes version and destination arguments.
+- Homepage and documentation metadata point to the new domains; repository, issue and source
+  links remain on GitHub. RPM, tar archives, Homebrew and all four PyPI wheels remain supported.
+
+### Fixed
+
+- Updated documentation-build dependency pins for 31 actionable security advisories. A reviewed,
+  automatically expiring exception covers the sole unpatched `braces` nested-glob DoS advisory;
+  its inputs are repository-controlled build/dev patterns, not public request patterns.
+- Installer upgrades refuse manual replacements of uv receipt entrypoints, including old paths
+  when the executable directory changes. WSL delegation preserves arguments under Windows
+  PowerShell's legacy native binder and now has an offline native-argv regression test.
+
+### Removed
+
+- Debian packages and the public signed APT repository are retired. New releases contain seven
+  native assets (four archives, two RPMs and a checksum manifest), not nine. Historical `.deb`
+  assets are removed while surviving release files, tags and their original checksums remain;
+  historical checksum manifests may still list retired Debian files.
+
 ## [0.5.2] - 2026-08-28
 
 ### Fixed

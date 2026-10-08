@@ -21,7 +21,7 @@ TARGETS = (
     ("linux", "amd64"),
     ("linux", "arm64"),
 )
-PACKAGE_FORMATS = ("deb", "rpm")
+PACKAGE_FORMATS = ("rpm",)
 ALLOWED_TYPES = {"Metadata", "Binary", "Archive", "Linux Package", "Checksum", "Homebrew Cask"}
 
 

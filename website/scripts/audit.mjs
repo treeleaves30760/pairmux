@@ -18,14 +18,15 @@ import {execFileSync} from 'node:child_process';
 // anything else has a version to pin in package.json's "overrides".
 const ACCEPTED = [
   {
-    package: 'image-size',
-    advisories: ['GHSA-w3rx-r6r6-pgpr', 'GHSA-5p2g-fcmc-qvqq'],
+    package: 'braces',
+    advisories: ['GHSA-vfj7-8cjw-p6xm'],
     reason:
-      'Denial of service in the ICNS/JXL/HEIF parsers. Reached only through ' +
-      "@docusaurus/mdx-loader, which measures this repository's own images at " +
-      'build time — there is no untrusted input on that path, and no attacker ' +
-      'to be denied service. Every published version including the latest ' +
-      '(2.0.2) is in range, so there is nothing to pin.',
+      'Reviewed and accepted on 2026-10-08: stack exhaustion requires a deeply ' +
+      'nested attacker-controlled glob. Docusaurus uses repository-controlled ' +
+      'include/exclude and local paths in build/dev tooling, not public request ' +
+      'patterns or browser code. The latest published braces (3.0.3) is affected ' +
+      'and npm reports no fix. This exception expires when a fix is available ' +
+      'or the advisory disappears; untrusted configuration is not supported.',
   },
 ];
 
