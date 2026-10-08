@@ -8,10 +8,9 @@
     native Windows artifact and never will be. What does work, and what Windows
     users actually want, is pairmux inside WSL. So this script does not pretend
     to install a Windows binary: it finds WSL, checks it has a distribution,
-    and runs the ordinary POSIX installer inside it.
-
-    Anything that would end with pairmux not on the WSL PATH is refused with the
-    command that fixes it, rather than half-done.
+    and runs the PyPI/uv Bash installer inside it. It downloads the script
+    completely before executing and installs without sudo or shell-profile edits.
+    Add the uv tool-bin directory to the WSL shell's PATH if the installer asks.
 
 .PARAMETER Version
     Install a specific tagged release, e.g. v0.5.1. Default: the latest release.
@@ -23,17 +22,17 @@
     WSL distribution to install into. Default: the WSL default distribution.
 
 .PARAMETER DryRun
-    Print what would be run, then exit without touching the distribution. Set
-    PAIRMUX_DRY_RUN to reach this from a piped invocation, which takes no
-    arguments.
+    Print the WSL delegation command without downloading or installing anything.
+    The WSL distribution list is still checked. Set PAIRMUX_DRY_RUN to reach
+    this from a piped invocation, which takes no arguments.
 
 .EXAMPLE
-    irm https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.ps1 | iex
+    irm https://pairmux.treeleaves30760.com/install.ps1 | iex
 
 .EXAMPLE
     # A piped script takes no arguments, so configure it through the environment:
     $env:PAIRMUX_VERSION = 'v0.5.1'
-    irm https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.ps1 | iex
+    irm https://pairmux.treeleaves30760.com/install.ps1 | iex
 
 .EXAMPLE
     .\install.ps1 -Version v0.5.1 -Distribution Ubuntu -DryRun
@@ -61,7 +60,12 @@ if (-not $DryRun -and (Test-PairmuxTruthy $env:PAIRMUX_DRY_RUN)) {
     $DryRun = $true
 }
 
-$InstallUrl = 'https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.sh'
+$InstallUrl = 'https://pairmux.treeleaves30760.com/install.sh'
+
+function ConvertTo-ShellLiteral {
+    param([string]$Value)
+    return "'" + $Value.Replace("'", "'" + '"' + "'" + '"' + "'") + "'"
+}
 
 # Write-Host, not Write-Output, throughout: this script is normally run as
 # `irm ... | iex`, where anything written to the success stream becomes the
@@ -81,7 +85,7 @@ function Write-Fatal {
 # needed: the POSIX installer is already the right tool and is one pipe away.
 if ($PSVersionTable.PSVersion.Major -ge 6 -and -not $IsWindows) {
     Write-Fatal "this script is the Windows entry point; you are already on a POSIX system" `
-        "curl -fsSL $InstallUrl | sh"
+        "curl -fsSL $InstallUrl | bash"
 }
 
 if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
@@ -114,41 +118,50 @@ try {
         Write-Step "Installing pairmux into the default WSL distribution"
     }
 
-    # The POSIX installer needs one of these to fetch the release archive. A
-    # minimal distribution image may ship neither, and finding that out here
-    # beats finding it out halfway through a piped shell script.
-    & wsl.exe @wslArgs -- sh -c 'command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1' 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Fatal "the distribution has neither curl nor wget, so the installer cannot download anything" `
-            "inside WSL run:  sudo apt update && sudo apt install -y curl"
-    }
-
-    # Everything below runs inside the distribution. install.sh reads its target
-    # directory from the environment, so it is exported rather than passed.
-    $inner = "set -e; "
-    if ($InstallDir) {
-        $inner += "export PAIRMUX_INSTALL_DIR='$InstallDir'; "
-    }
-    $inner += "curl -fsSL '$InstallUrl' | sh -s --"
+    # Download completely before executing: neither an unavailable downloader
+    # nor a failed transfer should look like a successful empty shell script.
+    $inner = @'
+set -euo pipefail
+command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || { printf 'need curl or wget in WSL\n' >&2; exit 1; }
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+if command -v curl >/dev/null 2>&1; then
+    curl -q -fsSL --proto '=https' --proto-redir '=https' "$1" -o "$work/install.sh"
+else
+    WGETRC=/dev/null wget --https-only -qO "$work/install.sh" "$1"
+fi
+shift
+bash "$work/install.sh" "$@"
+'@
+    $inner = $inner.Replace("`r`n", "`n")
+    $invoke = 'bash -c ' + (ConvertTo-ShellLiteral $inner) + ' pairmux-installer ' + (ConvertTo-ShellLiteral $InstallUrl)
     if ($Version) {
-        $inner += " --version '$Version'"
+        $invoke += ' --version ' + (ConvertTo-ShellLiteral $Version)
+    }
+    if ($InstallDir) {
+        $invoke = 'PAIRMUX_INSTALL_DIR=' + (ConvertTo-ShellLiteral $InstallDir) + ' ' + $invoke
     }
 
     if ($DryRun) {
-        Write-Step 'Dry run: nothing will be installed'
-        Write-Note "wsl.exe $($wslArgs -join ' ') -- sh -c `"$inner`""
+        Write-Step 'Dry run: no download or installation'
+        Write-Note $invoke
         exit 0
     }
 
-    & wsl.exe @wslArgs -- sh -c $inner
+    # WSL --exec bypasses its default shell. Base64 keeps the command argument
+    # free of embedded double quotes, which PowerShell 5.1's native binder does
+    # not escape reliably. Decode fully to a temporary file before executing.
+    $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($invoke))
+    $transport = 'set -euo pipefail; work=$(mktemp -d /tmp/pairmux-wsl.XXXXXX); trap ''rm -rf $work'' EXIT; printf %s ' + $payload + ' | base64 -d >$work/invoke.sh; bash $work/invoke.sh'
+    & wsl.exe @wslArgs --exec bash -c $transport
     if ($LASTEXITCODE -ne 0) {
         Write-Fatal "the installer failed inside WSL (exit code $LASTEXITCODE)" `
-            "re-run it there directly to see the full output:  wsl -- sh -c ""curl -fsSL $InstallUrl | sh"""
+            "open WSL and download $InstallUrl to inspect the installer and run it with bash"
     }
 
     # tmux is pairmux's runtime dependency, not a build one, so a successful
     # install can still be a pairmux that cannot open a terminal.
-    & wsl.exe @wslArgs -- sh -c 'command -v tmux >/dev/null 2>&1' 2>$null
+    & wsl.exe @wslArgs --exec sh -c 'command -v tmux >/dev/null 2>&1' 2>$null
     if ($LASTEXITCODE -ne 0) {
         Write-Host 'warning: tmux is not installed in that distribution; pairmux needs tmux 3.2 or newer' -ForegroundColor Yellow
         Write-Note 'inside WSL run:  sudo apt update && sudo apt install -y tmux'

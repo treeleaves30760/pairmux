@@ -1,0 +1,33 @@
+name: Landing
+
+# Cloudflare Pages deploys main through Git integration. This workflow validates
+# the same dependency-free build, including changes to the canonical installers.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'landing/**'
+      - 'install.sh'
+      - 'install.ps1'
+      - '.github/workflows/landing.yml'
+  pull_request:
+    paths:
+      - 'landing/**'
+      - 'install.sh'
+      - 'install.ps1'
+      - '.github/workflows/landing.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - run: node --test landing/test/*.test.mjs
+      - run: node landing/build.mjs

@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /install.sh
+Disallow: /install.ps1
+
+Sitemap: https://pairmux.treeleaves30760.com/sitemap.xml

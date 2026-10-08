@@ -1,10 +1,40 @@
 # packaging/pypi — PyPI platform wheels for pairmux
 
-pairmux is a Go binary, but `uv tool install pairmux` and `pipx install pairmux`
-should still Just Work. We get that the same way **ruff** and **uv** do: publish
-one **platform wheel per OS/arch**, each carrying the prebuilt native binary in
-the wheel's *scripts* section. No build backend, no compilation on the user's
-machine, and **no sdist**.
+pairmux is a Go binary, but `uvx pairmux version`, `uv tool install pairmux`,
+and `pipx install pairmux` should still Just Work. We get that the same way
+**ruff** and **uv** do: publish one **platform wheel per OS/arch**, each carrying
+the prebuilt native binary in the wheel's *scripts* section. No build backend,
+no compilation on the user's machine, and **no sdist**.
+
+## Install from public PyPI
+
+```bash
+# Quick run; no persistent pairmux command is installed on PATH.
+uvx pairmux version
+uvx pairmux doctor
+
+# Persistent install.
+uv tool install pairmux
+pairmux doctor
+
+# Inspectable installer, also installing the pairmux wheel from public PyPI.
+curl -fsSL https://pairmux.treeleaves30760.com/install.sh | bash
+```
+
+`uvx` uses a temporary tool environment, which uv may cache. uv commands default
+to PyPI unless overridden by local configuration; the installer explicitly
+uses the public index. The pipe executes downloaded code; download and review
+[the installer](https://pairmux.treeleaves30760.com/install.sh) first if preferred.
+The pairmux wheel comes from [PyPI](https://pypi.org/project/pairmux/); when the
+installer needs uv or a managed Python, those may come from Astral upstream,
+not PyPI. Python 3.9+ is required for wheel installation, not for executing the
+native binary. Install **tmux 3.2+ separately**; neither the wheel nor the
+installer supplies it. Supported targets are macOS 12+ and glibc 2.17+ Linux,
+on x86-64 or ARM64; use compatible Linux inside WSL on Windows.
+
+[Homepage](https://pairmux.treeleaves30760.com) ·
+[Documentation](https://pairmux-docs.treeleaves30760.com/) ·
+[Source and issues](https://github.com/treeleaves30760/pairmux)
 
 ## The model
 
@@ -40,7 +70,9 @@ expand to two `Tag:` lines each in the wheel's `WHEEL` metadata, per spec.
 `build_wheels.py` owns the Core Metadata headers written into every wheel.
 [`DESCRIPTION.md`](./DESCRIPTION.md) is the single source for the user-facing
 Markdown rendered on the PyPI project page; the root README and this packaging
-guide are not uploaded as the Description.
+guide are not uploaded as the Description. `HOMEPAGE` points to the public
+site, `DOCUMENTATION` to the docs site, and `REPOSITORY` remains GitHub;
+`ISSUES` and `CHANGELOG` derive from `REPOSITORY`, not from `HOMEPAGE`.
 
 Keep every link in `DESCRIPTION.md` absolute so it works outside the GitHub
 repository view. Metadata tests verify the content type, source file, project
@@ -120,16 +152,26 @@ workflow. Publishing is intentionally ordered after validation:
 1. The read-only `validate` job runs Go/Python/shell/workflow checks and
    race-enabled unit and tmux integration tests.
 2. A single `goreleaser release --skip=publish` invocation builds four native
-   binaries, four archives, four Linux packages, and one checksum manifest.
+   binaries, four archives, two RPM packages, and one checksum manifest.
    `verify_release.py` checks the structured artifact manifest, archive contents,
-   binary identity, filenames, and every checksum before staging nine public assets.
-3. The wheel builder consumes those same four binaries, emits exactly four
-   wheels, and smoke-tests both the Linux wheel and Debian package with an exact
-   tag-version comparison.
-4. The native assets and wheels are preserved separately. The publish job
-   downloads those exact bytes and never invokes GoReleaser or a compiler.
-5. GitHub assets are first uploaded to a draft release. PyPI receives the exact
-   verified wheels; only after that succeeds is the GitHub release made visible.
+   binary identity, filenames, and every checksum before staging **seven public
+   assets**. Unexpected Debian packages or checksum rows are rejected.
+3. The wheel builder consumes those same four binaries and emits exactly four
+   wheels. The just-built Linux x86-64 wheel is smoke-tested with pip, persistent
+   `uv tool install`, and temporary `uvx --from` using exact tag-version
+   comparisons. uv is bootstrapped as the pinned `uv==0.11.16` official PyPI
+   binary package in a disposable venv; tool/bin/cache/HOME directories are
+   isolated. Both uv paths use the local wheel with `--offline`, `--no-index`,
+   `--no-build`, `--no-config`, and the runner's existing Python with downloads
+   disabled. Validation never requests a not-yet-published version or public
+   PyPI's latest pairmux.
+4. The native assets, wheels, and rendered Homebrew cask are preserved separately.
+   The publish job downloads those exact bytes and never invokes GoReleaser or
+   a compiler.
+5. After description rendering and credential preflight, GitHub assets are first
+   uploaded to a draft release. PyPI receives the exact verified wheels; only
+   after that succeeds is the GitHub release made visible. The rendered cask is
+   then published to the Homebrew tap for stable tags only.
 
 The validation step is equivalent to:
 
@@ -173,7 +215,9 @@ The PyPI distribution name is `pairmux`. Confirm project ownership and configure
 the repository's `PYPI_TOKEN` before pushing a release tag. Publishing uses
 PyPI's simple index as a duplicate check, so a workflow retry can skip exact
 wheel files already accepted while the matching GitHub release is still a
-draft.
+draft. If PyPI succeeds but a later step fails, preserve the already-published
+wheel bytes and follow the recovery procedure in
+[`RELEASING.md`](../../RELEASING.md); do not retag or rebuild that version.
 
 ## Linting
 

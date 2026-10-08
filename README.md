@@ -2,9 +2,10 @@
 
 **Let AI agents drive interactive terminal programs — and hand off to a human when they can't.**
 
+[Home](https://pairmux.treeleaves30760.com) ·
 [PyPI](https://pypi.org/project/pairmux/) ·
-[Documentation](https://treeleaves30760.github.io/pairmux/) ·
-[CLI reference](https://treeleaves30760.github.io/pairmux/cli-reference) ·
+[Documentation](https://pairmux-docs.treeleaves30760.com/) ·
+[CLI reference](https://pairmux-docs.treeleaves30760.com/cli-reference) ·
 [Changelog](https://github.com/treeleaves30760/pairmux/blob/main/ChangeLog.md) ·
 [Source](https://github.com/treeleaves30760/pairmux)
 
@@ -52,29 +53,70 @@ workload.
 
 ## Install
 
+### Quick run with uvx
+
+With [uv](https://docs.astral.sh/uv/getting-started/installation/) installed, try pairmux without
+adding a persistent `pairmux` command to your PATH:
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.sh | sh
+uvx pairmux version
+uvx pairmux doctor
 ```
 
-```powershell
-irm https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.ps1 | iex
+`uvx` runs a tool in an isolated environment and may reuse its cache or an existing uv-managed
+installation. It does not promise a fresh download on every invocation. For a persistent command:
+
+```bash
+uv tool install pairmux
+pairmux version
+pairmux doctor
 ```
 
-The first detects your OS and architecture, verifies the release archive's SHA-256 against the
-published `checksums.txt`, and installs to `~/.local/bin` without sudo. The second is the Windows
-entry point: tmux has no Windows build, so it installs into WSL rather than pretending otherwise —
-see [Windows](#windows) below. Package managers are covered further down, and are the better choice
-if you want upgrades handled for you.
-
-pairmux requires **tmux 3.2 or newer** at runtime.
-
-Release artifacts target:
+pairmux requires **tmux 3.2 or newer** at runtime. Install it separately (`brew install tmux` on
+macOS, `sudo apt install tmux` on Debian/Ubuntu), or use the Homebrew cask below. PyPI wheels require
+**Python 3.9+** to install; uv can obtain a managed Python if needed. The wheel bundles the prebuilt
+Go binary, so the installed executable needs neither Python nor a Go toolchain to run.
 
 | Platform | Architectures | Additional requirement |
 | --- | --- | --- |
-| macOS 12+ | x86-64, ARM64 | None for the installed binary |
-| Linux | x86-64, ARM64/aarch64 | PyPI wheels use the `manylinux_2_17` / glibc 2.17+ tags |
+| macOS 12+ | x86-64, ARM64 | Python 3.9+ for wheel installation |
+| Linux | x86-64, ARM64/aarch64 | PyPI wheels use `manylinux_2_17` / glibc 2.17+ tags; Python 3.9+ to install |
 | Windows | No native artifact | Runs inside WSL; see [Windows](#windows) |
+
+### PyPI installer
+
+```bash
+curl -fsSL https://pairmux.treeleaves30760.com/install.sh | bash
+```
+
+This Bash installer installs the `pairmux` wheel from **PyPI**, not a GitHub archive. It uses uv,
+bootstrapping uv from [Astral's official installer](https://astral.sh/uv/install.sh) if absent, and
+lets uv manage a compatible Python when needed. Those uv/Python bootstrap downloads are separate
+from the pairmux wheel's PyPI source. It installs to `~/.local/bin` by default, without sudo or
+shell-profile edits, and checks for tmux without installing it.
+
+The installer ignores inherited `UV_*` settings and uv configuration/index overrides, uses only
+`https://pypi.org/simple` for pairmux, and requires a wheel rather than a source build. It reinstalls
+with uv's persistent cache disabled so an existing tool or shared cache cannot stand in for the
+PyPI wheel. Ordinary `uvx` / `uv tool install` commands use your normal configuration and may reuse
+cache; that is not a fresh-download guarantee.
+
+Prefer to inspect the script first? Download it successfully before reviewing and executing it:
+
+```bash
+installer_dir=$(mktemp -d) &&
+curl -fsSL https://pairmux.treeleaves30760.com/install.sh -o "$installer_dir/install.sh" &&
+less "$installer_dir/install.sh" &&
+bash "$installer_dir/install.sh" --version v0.5.2 --dry-run
+```
+
+Replace `v0.5.2` with your chosen published version, or omit `--version` for the latest stable PyPI
+release. Remove `--dry-run` only after a successful download and review to perform the installation.
+The downloaded installer's `--dry-run` prints its plan without network access or writes; it does not
+install anything. `PAIRMUX_INSTALL_DIR` selects the uv tool executable directory. The
+pipeline is a convenience, not a complete-download-before-execution check. It cannot update the
+parent shell's PATH; follow the printed PATH hint and check `command -v pairmux` for older commands
+that may shadow the new installation.
 
 ### Homebrew (macOS and Linuxbrew)
 
@@ -87,75 +129,66 @@ brew install --cask treeleaves30760/pairmux/pairmux
 
 Available from v0.2.0; the cask is republished automatically with every stable release.
 
-### PyPI
+### Other PyPI installers
 
-Install the platform wheel with an isolated tool manager, or use `pip` inside a dedicated virtual
-environment:
+Use `pipx`, or `pip` inside a dedicated Python 3.9+ virtual environment:
 
 ```bash
-uv tool install pairmux
-# or: pipx install pairmux
+pipx install pairmux
 # or, inside a dedicated environment:
 python -m pip install pairmux
 ```
 
-Wheel installers must select Python 3.9 or newer. The wheel contains a prebuilt native Go binary;
-the installed `pairmux` executable contains no Python code and needs no Go toolchain.
+### Manual release archives
 
-### Checksummed release archive
-
-The one-liner at the top of this section selects the latest matching GitHub release archive,
-verifies its SHA-256 checksum, and installs the binary under `~/.local/bin`. Downloaded and run as a
-file it also takes options:
-
-```bash
-curl -fsSLO https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.sh
-sh install.sh --version v0.5.0 --dry-run
-```
-
-Use `PAIRMUX_INSTALL_DIR` to choose another directory. Specific versions are available from
-[GitHub Releases](https://github.com/treeleaves30760/pairmux/releases).
+For installation without Python, download the matching macOS/Linux `.tar.gz` and `checksums.txt`
+from [GitHub Releases](https://github.com/treeleaves30760/pairmux/releases). Verify the archive's
+SHA-256 before extracting and installing the binary; the
+[Getting Started guide](https://pairmux-docs.treeleaves30760.com/#install) has complete commands.
+This manual path remains available, but the website's `install.sh` now uses PyPI.
 
 ### Windows
 
 tmux does not run on Windows, so neither does pairmux — there is no native Windows artifact. The
 supported arrangement is pairmux inside WSL, driving terminals there, which is what the PowerShell
-one-liner sets up: it finds WSL, checks it has a distribution, and runs the POSIX installer inside
+one-liner sets up: it finds WSL, checks it has a distribution, and runs the Bash installer inside
 it. Configure it through the environment, since a piped script takes no arguments:
 
 ```powershell
-$env:PAIRMUX_VERSION   = 'v0.5.0'   # optional: a specific release
+$env:PAIRMUX_VERSION   = 'v0.5.2'   # optional: a published version
 $env:PAIRMUX_WSL_DISTRO = 'Ubuntu'  # optional: a distribution other than the default
-irm https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.ps1 | iex
+irm https://pairmux.treeleaves30760.com/install.ps1 | iex
 ```
 
 pairmux then lives inside the distribution: run it as `wsl -- pairmux version`, or from a shell in
 that distribution. Install tmux there too (`sudo apt install tmux`) if it is not already present.
 
-### Direct `.deb` and `.rpm` packages
+### Direct RPM packages
 
-Each stable GitHub release includes `.deb` and `.rpm` files for Linux x86-64 and ARM64. Download the
-matching file and `checksums.txt` from
-[GitHub Releases](https://github.com/treeleaves30760/pairmux/releases), verify its SHA-256 checksum,
-then install that local file (the [Getting Started guide](https://treeleaves30760.github.io/pairmux/)
-shows the complete commands):
+Stable GitHub releases include `.rpm` files for Linux x86-64 and ARM64. Download the matching
+file and `checksums.txt` from [GitHub Releases](https://github.com/treeleaves30760/pairmux/releases),
+verify its SHA-256 checksum, then install that local file (the
+[Getting Started guide](https://pairmux-docs.treeleaves30760.com/#install) shows complete commands):
 
 ```bash
-sudo apt install ./downloaded-file.deb
-# or, on an RPM-based distribution
 sudo dnf install ./downloaded-file.rpm
 ```
 
-### APT repository (Debian/Ubuntu)
+There is no Yum repository; download a new RPM when upgrading.
 
-A signed APT repository is published from every stable release, so `apt install pairmux`, upgrades,
-and older-version pins work without downloading files by hand, and the package declares its
-`tmux (>= 3.2)` dependency. Enroll the key and source using the verification snippet in the
-[pairmux-apt repository](https://github.com/treeleaves30760/pairmux-apt#install), then:
+### Migrating from APT / Debian packages
 
-```bash
-sudo apt update && sudo apt install pairmux
-```
+pairmux's APT repository and `.deb` distribution are being retired for v0.5.3. Debian/Ubuntu users
+should use PyPI/uv, Homebrew, or a manual archive; `apt install tmux` remains the normal dependency
+installation. Existing APT-installed pairmux commands may shadow a new user-level installation.
+
+The former setup created `/etc/apt/sources.list.d/pairmux.sources`,
+`/etc/apt/preferences.d/pairmux.pref`, `/usr/share/keyrings/pairmux-archive-keyring.pgp`, and installed
+the `pairmux-archive-keyring` package. Review and disable/remove only those pairmux-specific entries,
+and review removal of the old `pairmux` and keyring packages without removing tmux. Follow the
+[APT migration guide](https://pairmux-docs.treeleaves30760.com/migrating-from-apt)
+for read-only inspection, safe cleanup ordering, and PATH checks. The installer does not perform
+system-package cleanup or overwrite commands owned by other installers.
 
 ### Build this checkout
 
@@ -296,7 +329,7 @@ Common terminal states:
 
 `run` reports `done`, `running`, or `awaiting-input`; `wait` can also report `idle`,
 `pattern-found`, `human-done`, `dead`, or `timeout`. See the
-[CLI reference](https://treeleaves30760.github.io/pairmux/cli-reference) for every command status,
+[CLI reference](https://pairmux-docs.treeleaves30760.com/cli-reference) for every command status,
 field, flag, and exit behavior.
 
 Errors set `ok:false` and include a stable `error.code`: `E_NO_TERMINAL`, `E_EXISTS`,
@@ -348,7 +381,7 @@ pairmux skill install --target all
 ```
 
 Supported targets and install paths are documented in the
-[Agent Skills guide](https://treeleaves30760.github.io/pairmux/skills). The companion
+[Agent Skills guide](https://pairmux-docs.treeleaves30760.com/skills). The companion
 [`pairmux-skills` repository](https://github.com/treeleaves30760/pairmux-skills) is the public
 source of the embedded skill.
 
@@ -377,9 +410,9 @@ when those actions can have side effects.
 
 ## Documentation
 
-- [Getting started and task guides](https://treeleaves30760.github.io/pairmux/)
-- [CLI reference and envelope schema](https://treeleaves30760.github.io/pairmux/cli-reference)
-- [Human collaboration](https://treeleaves30760.github.io/pairmux/guides/human-collaboration)
+- [Getting started and task guides](https://pairmux-docs.treeleaves30760.com/)
+- [CLI reference and envelope schema](https://pairmux-docs.treeleaves30760.com/cli-reference)
+- [Human collaboration](https://pairmux-docs.treeleaves30760.com/guides/human-collaboration)
 - [Documentation source](./website/docs)
 - [Release channels and remaining work](./RELEASING.md)
 

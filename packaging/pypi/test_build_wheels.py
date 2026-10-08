@@ -64,15 +64,17 @@ class BuildWheelsTest(unittest.TestCase):
         self.assertEqual(
             metadata.get_all("Project-URL"),
             [
-                "Homepage, https://github.com/treeleaves30760/pairmux",
+                "Homepage, https://pairmux.treeleaves30760.com",
                 "Repository, https://github.com/treeleaves30760/pairmux",
-                "Documentation, https://treeleaves30760.github.io/pairmux/",
+                "Documentation, https://pairmux-docs.treeleaves30760.com/",
                 "Changelog, "
                 "https://github.com/treeleaves30760/pairmux/blob/main/ChangeLog.md",
                 "Issues, https://github.com/treeleaves30760/pairmux/issues",
             ],
         )
+        self.assertEqual(metadata["Requires-Python"], ">=3.9")
         self.assertEqual(metadata["Requires-External"], "tmux (>=3.2)")
+        self.assertIsNone(metadata.get_all("Requires-Dist"))
         self.assertEqual(
             metadata["Keywords"],
             "ai agents, tmux, terminal, cli, mcp, developer tools",
@@ -96,6 +98,26 @@ class BuildWheelsTest(unittest.TestCase):
         )
         self.assertIn("pairmux --json new --name demo", description)
         self.assertIn("pairmux --json run demo", description)
+
+    def test_markdown_description_distinguishes_install_modes_and_sources(self) -> None:
+        description = build_wheels.DESCRIPTION_PATH.read_text(encoding="utf-8")
+        for command in (
+            "uvx pairmux version",
+            "uvx pairmux doctor",
+            "uv tool install pairmux",
+            "curl -fsSL https://pairmux.treeleaves30760.com/install.sh | bash",
+        ):
+            with self.subTest(command=command):
+                self.assertIn(command, description)
+        self.assertIn("temporary tool environment", description)
+        self.assertIn("persistent", description)
+        self.assertIn("https://pypi.org/project/pairmux/", description)
+        self.assertIn("Astral upstream", description)
+        self.assertIn("tmux 3.2 or newer, installed separately", description)
+        self.assertNotIn("pairmux-apt", description)
+        self.assertNotIn(".deb", description)
+        self.assertNotIn("apt install pairmux", description)
+        self.assertNotIn("https://treeleaves30760.github.io/pairmux/", description)
 
     def test_scan_dist_accepts_goreleaser_variants(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -136,7 +158,10 @@ class BuildWheelsTest(unittest.TestCase):
 
             self.assertTrue(build_wheels.check_wheel(wheel))
             with zipfile.ZipFile(wheel) as zf:
-                script = next(name for name in zf.namelist() if ".data/scripts/" in name)
+                names = zf.namelist()
+                self.assertEqual(len(names), 4)
+                self.assertFalse(any(name.endswith(".py") for name in names))
+                script = next(name for name in names if ".data/scripts/" in name)
                 mode = (zf.getinfo(script).external_attr >> 16) & 0xFFFF
                 self.assertTrue(mode & 0o111)
                 self.assertEqual(zf.read(script), binary.read_bytes())

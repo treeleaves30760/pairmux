@@ -1,8 +1,7 @@
 # GoReleaser configuration for pairmux.
 # Schema: v2 (goreleaser >= 2). Validate with `make release-check`.
-# Distribution strategy: GitHub Releases + install.sh, PyPI wheels, native
-# .deb/.rpm packages (consumed by the pairmux-apt repository), and a Homebrew
-# formula. The formula installs from the release tarball without bottles, so
+# Distribution strategy: GitHub release tarballs, PyPI wheels, native RPM
+# packages, and a Homebrew cask. The cask installs from the release tarball, so
 # it is not gated on macOS signing/notarization (tracked separately in
 # RELEASING.md for a wider stable release).
 version: 2
@@ -60,7 +59,7 @@ nfpms:
       - pairmux
     package_name: pairmux
     vendor: treeleaves30760
-    homepage: https://github.com/treeleaves30760/pairmux
+    homepage: https://pairmux.treeleaves30760.com
     maintainer: treeleaves30760 <treeleaves30760.ai@gmail.com>
     description: |-
       Reliable terminal primitives for AI agents on tmux.
@@ -69,19 +68,13 @@ nfpms:
       attach, and help.
     license: MIT
     formats:
-      - deb
       - rpm
     section: utils
     priority: optional
     bindir: /usr/bin
-    # Hard dependency on tmux >= 3.2. The Debian control syntax is
-    # `tmux (>= 3.2)`; rpm's Requires syntax differs, so it is overridden below.
+    # Hard dependency using RPM's Requires syntax.
     dependencies:
-      - tmux (>= 3.2)
-    overrides:
-      rpm:
-        dependencies:
-          - tmux >= 3.2
+      - tmux >= 3.2
     contents:
       - src: ./man/pairmux.1
         dst: /usr/share/man/man1/pairmux.1
@@ -112,7 +105,7 @@ homebrew_casks:
       owner: treeleaves30760
       name: homebrew-pairmux
       token: '{{ envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "" }}'
-    homepage: https://github.com/treeleaves30760/pairmux
+    homepage: https://pairmux.treeleaves30760.com
     description: Let AI agents drive interactive terminal programs on tmux, with live human handoff
     skip_upload: auto
     commit_msg_template: "chore: update-pairmux-to-{{ .Tag }}"

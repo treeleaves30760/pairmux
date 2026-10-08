@@ -62,10 +62,11 @@ from typing import List, Tuple
 PROJECT_NAME = "pairmux"          # PyPI distribution name (already lowercase/normalized)
 SCRIPT_NAME = "pairmux"           # command installed into bin/
 SUMMARY = "Blocking tmux terminal control for AI agents, with captured logs and live human handoff"
-HOMEPAGE = "https://github.com/treeleaves30760/pairmux"
-DOCUMENTATION = "https://treeleaves30760.github.io/pairmux/"
-CHANGELOG = HOMEPAGE + "/blob/main/ChangeLog.md"
-ISSUES = HOMEPAGE + "/issues"
+HOMEPAGE = "https://pairmux.treeleaves30760.com"
+REPOSITORY = "https://github.com/treeleaves30760/pairmux"
+DOCUMENTATION = "https://pairmux-docs.treeleaves30760.com/"
+CHANGELOG = REPOSITORY + "/blob/main/ChangeLog.md"
+ISSUES = REPOSITORY + "/issues"
 DESCRIPTION_PATH = Path(__file__).resolve().with_name("DESCRIPTION.md")
 DESCRIPTION_CONTENT_TYPE = "text/markdown; charset=UTF-8; variant=GFM"
 KEYWORDS = "ai agents, tmux, terminal, cli, mcp, developer tools"
@@ -300,7 +301,7 @@ def metadata_bytes(version: str) -> bytes:
     lines += ["Classifier: " + c for c in CLASSIFIERS]
     lines += [
         "Project-URL: Homepage, " + HOMEPAGE,
-        "Project-URL: Repository, " + HOMEPAGE,
+        "Project-URL: Repository, " + REPOSITORY,
         "Project-URL: Documentation, " + DOCUMENTATION,
         "Project-URL: Changelog, " + CHANGELOG,
         "Project-URL: Issues, " + ISSUES,

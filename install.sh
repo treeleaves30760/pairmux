@@ -1,112 +1,209 @@
-#!/bin/sh
-# pairmux installer — POSIX sh, safe for `curl -fsSL .../install.sh | sh`.
+#!/usr/bin/env bash
+# pairmux installer — installs the platform wheel from public PyPI with uv.
 #
-#   Usage:
-#     curl -fsSL https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.sh | sh
-#     ./install.sh [--version vX.Y.Z] [--dry-run] [--help]
+#   curl -fsSL https://pairmux.treeleaves30760.com/install.sh | bash
+#   bash install.sh [--version vX.Y.Z] [--dry-run] [--help]
 #
-#   Environment:
-#     PAIRMUX_INSTALL_DIR   install target (default: ~/.local/bin)
-#
-# It detects OS/arch, downloads the matching GitHub release archive, verifies
-# its sha256 against checksums.txt, installs the binary without sudo, warns if
-# tmux is missing or older than 3.2, and confirms with `pairmux version`.
-set -eu
+# PAIRMUX_INSTALL_DIR selects the executable directory (default: ~/.local/bin).
+# uv and, if needed, Python are bootstrapped from Astral's official upstream;
+# the pairmux package itself is resolved exclusively from https://pypi.org/simple.
+set -euo pipefail
 
-REPO="treeleaves30760/pairmux"
+PYPI_INDEX="https://pypi.org/simple"
+PYPI_PROJECT="https://pypi.org/project/pairmux/"
+UV_INSTALLER="https://astral.sh/uv/install.sh"
+DOCS="https://pairmux-docs.treeleaves30760.com"
 
-# --- output helpers -------------------------------------------------------
 info() { printf '==> %s\n' "$*"; }
 warn() { printf 'warning: %s\n' "$*" >&2; }
 err()  { printf 'error: %s\n' "$*" >&2; exit 1; }
-
 have() { command -v "$1" >/dev/null 2>&1; }
 
 usage() {
 	cat <<'EOF'
-pairmux installer
+pairmux PyPI installer
 
-usage: install.sh [--version vX.Y.Z] [--dry-run] [--help]
+usage: bash install.sh [--version vX.Y.Z] [--dry-run] [--help]
 
 options:
-  --version vX.Y.Z   install a specific tagged release (default: latest)
-  --dry-run          print the resolved download URL and install dir, then exit
-                     (no network, nothing written)
+  --version vX.Y.Z   install a specific version (default: latest stable on PyPI)
+                     canonical -alpha.N, -beta.N and -rc.N pins are also accepted
+  --dry-run          print the source, command and target without network or writes
   -h, --help         show this help
 
 environment:
-  PAIRMUX_INSTALL_DIR   install target directory (default: ~/.local/bin)
+  PAIRMUX_INSTALL_DIR   executable directory (default: ~/.local/bin)
+
+Requires macOS 12+ or glibc Linux, x86-64 or ARM64. uv creates a Python >=3.9
+isolated tool environment; the installed command is a native Go binary.
+tmux >=3.2 is a separate runtime dependency. No sudo or shell-profile edits.
+Inherited UV_* settings and uv configuration files are ignored for this install.
 EOF
 }
 
-# --- download primitives (curl or wget) -----------------------------------
-download() { # download URL OUTFILE
-	if have curl; then
-		curl -fsSL "$1" -o "$2"
-	elif have wget; then
-		wget -qO "$2" "$1"
-	else
-		err "need curl or wget to download files"
+# uv's --no-config does not ignore environment variables. Scope the reset to
+# child processes, including bootstrap download/mirror and constraint settings.
+clean_uv() (
+	local name
+	for name in "${!UV_@}" "${!CARGO_DIST_@}" "${!INSTALLER_@}"; do
+		[ -z "$name" ] || unset "$name"
+	done
+	unset CARGO_HOME
+	export UV_TOOL_BIN_DIR="$INSTALL_DIR"
+	"$@"
+)
+
+resolve_version() {
+	REQUIREMENT="pairmux"
+	VERSION_NUM=""
+	if [ -z "$PINNED_TAG" ]; then
+		return
 	fi
+	VERSION_NUM=${PINNED_TAG#v}
+	local pattern='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.(0|[1-9][0-9]*))?$'
+	[[ "$VERSION_NUM" =~ $pattern ]] || err "invalid version: $PINNED_TAG (expected vX.Y.Z or vX.Y.Z-rc.N)"
+	local wheel_version="$VERSION_NUM" pre
+	case "$VERSION_NUM" in
+	*-alpha.*) pre=${VERSION_NUM##*-alpha.}; wheel_version="${VERSION_NUM%-alpha.*}a${pre}" ;;
+	*-beta.*) pre=${VERSION_NUM##*-beta.}; wheel_version="${VERSION_NUM%-beta.*}b${pre}" ;;
+	*-rc.*) pre=${VERSION_NUM##*-rc.}; wheel_version="${VERSION_NUM%-rc.*}rc${pre}" ;;
+	esac
+	REQUIREMENT="pairmux==${wheel_version}"
 }
 
-fetch() { # fetch URL to stdout
-	if have curl; then
-		curl -fsSL "$1"
-	elif have wget; then
-		wget -qO- "$1"
-	else
-		err "need curl or wget to download files"
-	fi
-}
-
-sha256_file() { # print the sha256 hex digest of FILE
-	if have sha256sum; then
-		sha256sum "$1" | awk '{print $1}'
-	elif have shasum; then
-		shasum -a 256 "$1" | awk '{print $1}'
-	else
-		err "need sha256sum or shasum to verify the download"
-	fi
-}
-
-strip_v() { printf '%s\n' "${1#v}"; }
-
-# --- platform detection ---------------------------------------------------
 detect_platform() {
+	local os_raw arch_raw
 	os_raw=$(uname -s)
 	case "$os_raw" in
 	Darwin) OS=darwin ;;
 	Linux) OS=linux ;;
-	*) err "unsupported OS: ${os_raw} (pairmux supports darwin and linux; on Windows use WSL)" ;;
+	*) err "unsupported OS: $os_raw (on Windows, use WSL)" ;;
 	esac
-
 	arch_raw=$(uname -m)
 	case "$arch_raw" in
-	arm64 | aarch64) ARCH=arm64 ;;
-	x86_64 | amd64) ARCH=amd64 ;;
-	*) err "unsupported architecture: ${arch_raw}" ;;
+	arm64 | aarch64 | x86_64 | amd64) : ;;
+	*) err "unsupported architecture: $arch_raw" ;;
 	esac
 }
 
 resolve_install_dir() {
-	# Prefer a user-writable directory so no sudo prompt is ever needed.
-	if [ -n "${PAIRMUX_INSTALL_DIR:-}" ]; then
-		INSTALL_DIR=$PAIRMUX_INSTALL_DIR
+	[ -n "${HOME:-}" ] || err "HOME must be set to a user-writable directory"
+	INSTALL_DIR=${PAIRMUX_INSTALL_DIR:-"$HOME/.local/bin"}
+	[[ ! "$INSTALL_DIR" =~ [[:cntrl:]] ]] || err "install directory must not contain control characters"
+	case "$INSTALL_DIR" in
+	/*) : ;;
+	*) INSTALL_DIR="$PWD/$INSTALL_DIR" ;;
+	esac
+	[[ ! "$INSTALL_DIR$HOME" =~ [[:cntrl:]] ]] || err "HOME and install paths must not contain control characters"
+	UV_INSTALL_DIR_PM="$HOME/.local/bin"
+}
+
+download() {
+	if have curl; then
+		curl -q -fsSL --proto '=https' --proto-redir '=https' "$1" -o "$2"
+	elif have wget; then
+		WGETRC=/dev/null wget --https-only -qO "$2" "$1"
 	else
-		INSTALL_DIR="${HOME}/.local/bin"
+		err "need curl or wget to bootstrap uv"
 	fi
 }
 
-resolve_latest() { # print the latest release tag (e.g. v0.1.0)
-	rl_tag=$(fetch "https://api.github.com/repos/${REPO}/releases/latest" |
-		grep '"tag_name"' | head -n1 |
-		sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
-	[ -n "$rl_tag" ] || err "could not determine the latest release tag from the GitHub API"
-	printf '%s\n' "$rl_tag"
+ensure_uv() {
+	UV_BIN=$(type -P uv || true)
+	if [ -n "$UV_BIN" ]; then
+		case "$UV_BIN" in /*) : ;; *) UV_BIN="$PWD/$UV_BIN" ;; esac
+		return
+	fi
+	if [ -x "$UV_INSTALL_DIR_PM/uv" ]; then
+		UV_BIN="$UV_INSTALL_DIR_PM/uv"
+		return
+	fi
+	local executable
+	for executable in uv uvx; do
+		if [ -e "$UV_INSTALL_DIR_PM/$executable" ] || [ -L "$UV_INSTALL_DIR_PM/$executable" ]; then
+			err "refusing to overwrite $UV_INSTALL_DIR_PM/$executable; install uv manually first"
+		fi
+	done
+	TMPDIR_PM=$(mktemp -d "${TMPDIR:-/tmp}/pairmux-uv.XXXXXX") || err "could not create a temporary directory"
+	info "uv is missing; bootstrapping from $UV_INSTALLER (not PyPI)"
+	clean_uv download "$UV_INSTALLER" "$TMPDIR_PM/install-uv.sh" || err "uv installer download failed; nothing executed"
+	# Execute only a fully downloaded script, not a transport pipeline. Leave the
+	# caller's shell profiles alone and use the installed binary by absolute path.
+	clean_uv env UV_INSTALL_DIR="$UV_INSTALL_DIR_PM" UV_NO_MODIFY_PATH=1 \
+		sh "$TMPDIR_PM/install-uv.sh" || err "uv bootstrap failed"
+	UV_BIN="$UV_INSTALL_DIR_PM/uv"
+	[ -x "$UV_BIN" ] || err "uv bootstrap did not install $UV_BIN"
 }
 
-# --- tmux dependency check (non-fatal) ------------------------------------
+# uv reinstalls remove the entrypoints recorded by the old receipt, even without
+# --force. Inspect that public listing before allowing uv to touch those paths.
+check_entrypoints() {
+	local tool_dir tool_env listing line in_pairmux=0 count=0 entry
+	local header='^[a-zA-Z0-9_.-]+ v[^[:space:]]+ \(/.*\)$'
+	tool_dir=$(clean_uv "$UV_BIN" tool dir --no-config) || err "could not determine uv's tool directory"
+	[[ "$tool_dir" = /* && ! "$tool_dir" =~ [[:cntrl:]] ]] || err "uv tool directory is not a supported absolute path"
+	tool_env="$tool_dir/pairmux"
+	if [ -e "$tool_env" ] || [ -L "$tool_env" ]; then
+		[ -f "$tool_env/uv-receipt.toml" ] && [ ! -L "$tool_env/uv-receipt.toml" ] || \
+			err "existing pairmux tool has no regular uv receipt; repair it manually first"
+		# uv writes escaped paths to TOML but prints them unescaped in the listing.
+		# Refuse unsupported escape/multiline representations rather than checking
+		# a truncated path while uv subsequently removes the complete recorded one.
+		if grep -Fq "\\" "$tool_env/uv-receipt.toml"; then
+			err "existing pairmux receipt contains escaped paths; repair it manually first"
+		fi
+		listing=$(clean_uv "$UV_BIN" tool list --no-config --show-paths --color never) || \
+			err "could not inspect the existing uv tool receipt"
+		while IFS= read -r line; do
+			[[ ! "$line" =~ [[:cntrl:]] ]] || err "existing uv tool listing contains an unsupported control character"
+			case "$line" in
+			pairmux\ v*)
+				[[ "$line" =~ $header && "$line" = *" ($tool_env)" ]] || err "existing pairmux tool listing is malformed"
+				in_pairmux=1; continue
+				;;
+			'- '*)
+				[ "$in_pairmux" -eq 1 ] || continue
+				case "$line" in
+				'- pairmux ('*')') entry=${line#'- pairmux ('}; entry=${entry%')'} ;;
+				*) err "unexpected entrypoint in existing pairmux receipt; repair it manually first" ;;
+				esac
+				[[ "$entry" = /* && ! "$entry" =~ [[:cntrl:]] ]] || err "existing receipt entrypoint is not a supported absolute path"
+				count=$((count + 1))
+				if [ -e "$entry" ] || [ -L "$entry" ]; then
+					[ -L "$entry" ] && [ "$(readlink "$entry")" = "$tool_env/bin/pairmux" ] || \
+						err "refusing to replace $entry: it is not the recorded uv-managed symlink"
+				fi
+				;;
+			*)
+				[[ "$line" =~ $header ]] || err "uv tool listing is malformed; repair the existing receipt manually first"
+				in_pairmux=0
+				;;
+			esac
+		done <<<"$listing"
+		[ "$count" -eq 1 ] || err "existing pairmux receipt is invalid or has unexpected entrypoints; repair it manually first"
+	fi
+	entry="$INSTALL_DIR/pairmux"
+	if [ -e "$entry" ] || [ -L "$entry" ]; then
+		[ -L "$entry" ] && [ "$(readlink "$entry")" = "$tool_env/bin/pairmux" ] || \
+			err "refusing to overwrite $entry: choose another PAIRMUX_INSTALL_DIR or remove the old installation manually"
+	fi
+}
+
+print_command() {
+	printf '  uv tool install --no-config --default-index %s --no-sources --no-build\n' "$PYPI_INDEX"
+	printf '    --python ">=3.9" --upgrade --reinstall --no-cache %q\n' "$REQUIREMENT"
+}
+
+print_dry_run() {
+	printf 'pairmux install.sh — dry run (no network, nothing written)\n\n'
+	printf '  package:      %s\n' "$PYPI_PROJECT"
+	printf '  index:        %s (exclusive)\n' "$PYPI_INDEX"
+	printf '  requirement:  %s\n' "$REQUIREMENT"
+	printf '  tool bin:     %s\n' "$INSTALL_DIR"
+	printf '  uv bootstrap: %s (only if uv is missing)\n\n' "$UV_INSTALLER"
+	print_command
+}
+
 tmux_hint() {
 	if [ "$OS" = darwin ]; then
 		printf 'brew install tmux'
@@ -117,100 +214,45 @@ tmux_hint() {
 
 check_tmux() {
 	if ! have tmux; then
-		warn "tmux is not installed. pairmux requires tmux >= 3.2 to do anything."
+		warn "tmux is not installed. pairmux requires tmux >=3.2."
 		printf '         install it with: %s\n' "$(tmux_hint)" >&2
 		return
 	fi
-	tv=$(tmux -V 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -n1)
+	local tv tmaj tmin
+	tv=$(tmux -V 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -n1) || true
 	if [ -z "$tv" ]; then
-		warn "could not parse the tmux version; ensure it is >= 3.2"
+		warn "could not parse the tmux version; ensure it is >=3.2"
 		return
 	fi
 	tmaj=${tv%%.*}
 	tmin=${tv#*.}
 	if [ "$tmaj" -gt 3 ] || { [ "$tmaj" -eq 3 ] && [ "$tmin" -ge 2 ]; }; then
-		info "tmux ${tv} detected (>= 3.2)"
+		info "tmux $tv detected (>=3.2)"
 	else
-		warn "tmux ${tv} is older than the required 3.2."
+		warn "tmux $tv is older than the required 3.2."
 		printf '         upgrade it with: %s\n' "$(tmux_hint)" >&2
 	fi
 }
 
 path_hint() {
-	case ":${PATH}:" in
-	*":${INSTALL_DIR}:"*) : ;;
+	case ":$PATH:" in
+	*":$INSTALL_DIR:"*) : ;;
 	*)
-		warn "${INSTALL_DIR} is not on your PATH."
-		printf '         add this line to your shell profile:\n' >&2
-		printf "           export PATH=\"%s:\$PATH\"\n" "$INSTALL_DIR" >&2
+		warn "$INSTALL_DIR is not on your PATH; a piped installer cannot change the parent shell."
+		printf '         add this directory to PATH in your shell profile:\n' >&2
+		printf '           %s\n' "$INSTALL_DIR" >&2
 		;;
 	esac
-}
-
-# --- install --------------------------------------------------------------
-verify_checksum() { # verify_checksum ARCHIVE SUMSFILE
-	vc_expected=$(awk -v f="$ASSET" '$2 == f {print $1}' "$2" | head -n1)
-	[ -n "$vc_expected" ] || err "no checksum for ${ASSET} in checksums.txt"
-	vc_actual=$(sha256_file "$1")
-	if [ "$vc_expected" != "$vc_actual" ]; then
-		err "checksum mismatch for ${ASSET}: expected ${vc_expected}, got ${vc_actual}"
+	local visible
+	visible=$(type -P pairmux || true)
+	if [ -n "$visible" ] && [ "$visible" != "$INSTALL_DIR/pairmux" ]; then
+		warn "PATH currently selects $visible instead of $INSTALL_DIR/pairmux."
+		warn "remove the old installation or put the uv tool-bin directory first; see $DOCS/migrating-from-apt"
 	fi
-	info "checksum verified (sha256)"
-}
-
-do_install() {
-	TMPDIR_PM=$(mktemp -d 2>/dev/null || mktemp -d -t pairmux) || err "could not create a temp directory"
-	archive="${TMPDIR_PM}/${ASSET}"
-	sums="${TMPDIR_PM}/checksums.txt"
-
-	info "downloading ${ASSET}"
-	download "$ASSET_URL" "$archive" || err "download failed: ${ASSET_URL}"
-	info "downloading checksums.txt"
-	download "$CHECKSUMS_URL" "$sums" || err "download failed: ${CHECKSUMS_URL}"
-
-	verify_checksum "$archive" "$sums"
-
-	info "extracting"
-	tar -xzf "$archive" -C "$TMPDIR_PM" pairmux || err "failed to extract pairmux from ${archive}"
-	if [ ! -f "${TMPDIR_PM}/pairmux" ] || [ -L "${TMPDIR_PM}/pairmux" ]; then
-		err "archive did not contain a regular pairmux binary"
-	fi
-
-	mkdir -p "$INSTALL_DIR" || err "could not create ${INSTALL_DIR}"
-	INSTALL_TMP=$(mktemp "${INSTALL_DIR}/.pairmux.XXXXXX") || err "could not create a temporary file in ${INSTALL_DIR}"
-	cp "${TMPDIR_PM}/pairmux" "$INSTALL_TMP" || err "could not write to ${INSTALL_DIR} (set PAIRMUX_INSTALL_DIR to a writable dir)"
-	chmod 0755 "$INSTALL_TMP" || err "could not make the downloaded pairmux executable"
-	staged_ver=$("$INSTALL_TMP" version 2>/dev/null) || err "the downloaded binary failed to run"
-	[ "$staged_ver" = "$VERSION_NUM" ] || err "downloaded binary reports ${staged_ver}; expected ${VERSION_NUM}"
-	mv -f "$INSTALL_TMP" "${INSTALL_DIR}/pairmux" || err "could not atomically replace ${INSTALL_DIR}/pairmux"
-	INSTALL_TMP=""
-	info "installed to ${INSTALL_DIR}/pairmux"
-}
-
-print_dry_run() {
-	printf 'pairmux install.sh — dry run (no network, nothing written)\n\n'
-	printf '  os:           %s\n' "$OS"
-	printf '  arch:         %s\n' "$ARCH"
-	printf '  version:      %s\n' "$TAG"
-	printf '  asset:        %s\n' "$ASSET"
-	printf '  download url: %s\n' "$ASSET_URL"
-	printf '  checksums:    %s\n' "$CHECKSUMS_URL"
-	printf '  install dir:  %s\n' "$INSTALL_DIR"
-}
-
-print_quickstart() {
-	printf '\nQuickstart:\n'
-	printf '  pairmux new --name build           # create a managed terminal\n'
-	printf '  pairmux run build "make -j4"       # run a command, block until it finishes\n'
-	printf '  pairmux ls                         # list terminals and their status\n'
-	printf '\nDocs: https://github.com/%s\n' "$REPO"
 }
 
 cleanup() {
-	if [ -n "${INSTALL_TMP:-}" ] && [ -f "${INSTALL_TMP:-}" ]; then
-		rm -f "$INSTALL_TMP"
-	fi
-	if [ -n "${TMPDIR_PM:-}" ] && [ -d "${TMPDIR_PM:-}" ]; then
+	if [ -n "${TMPDIR_PM:-}" ] && [ -d "$TMPDIR_PM" ]; then
 		rm -rf "$TMPDIR_PM"
 	fi
 }
@@ -219,64 +261,54 @@ main() {
 	PINNED_TAG=""
 	DRY_RUN=0
 	TMPDIR_PM=""
-	INSTALL_TMP=""
-
-	while [ $# -gt 0 ]; do
+	while [ "$#" -gt 0 ]; do
 		case "$1" in
 		--version)
 			shift
-			[ $# -gt 0 ] || err "--version requires an argument (e.g. --version v0.1.0)"
+			[ "$#" -gt 0 ] && [ -n "$1" ] || err "--version requires an argument (e.g. v0.5.3)"
 			PINNED_TAG=$1
 			;;
-		--version=*) PINNED_TAG=${1#*=} ;;
+		--version=*) PINNED_TAG=${1#*=}; [ -n "$PINNED_TAG" ] || err "--version requires an argument" ;;
 		--dry-run) DRY_RUN=1 ;;
-		-h | --help)
-			usage
-			exit 0
-			;;
+		-h | --help) usage; return ;;
 		*) err "unknown argument: $1 (try --help)" ;;
 		esac
 		shift
 	done
-
+	resolve_version
 	detect_platform
 	resolve_install_dir
-
-	if [ -n "$PINNED_TAG" ]; then
-		TAG=$PINNED_TAG
-		VERSION_NUM=$(strip_v "$TAG")
-	elif [ "$DRY_RUN" -eq 1 ]; then
-		# Dry run must not touch the network, so leave the version symbolic.
-		TAG="<latest>"
-		VERSION_NUM="<latest>"
-	else
-		info "resolving the latest release"
-		TAG=$(resolve_latest)
-		VERSION_NUM=$(strip_v "$TAG")
-	fi
-
-	ASSET="pairmux_${VERSION_NUM}_${OS}_${ARCH}.tar.gz"
-	BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
-	ASSET_URL="${BASE_URL}/${ASSET}"
-	CHECKSUMS_URL="${BASE_URL}/checksums.txt"
-
 	if [ "$DRY_RUN" -eq 1 ]; then
 		print_dry_run
-		exit 0
+		return
 	fi
-
-	trap cleanup EXIT INT TERM
-
-	do_install
-
-	info "verifying: pairmux version"
-	installed_ver=$("${INSTALL_DIR}/pairmux" version 2>/dev/null) || err "the installed binary failed to run after rename"
-	[ "$installed_ver" = "$VERSION_NUM" ] || err "installed binary reports ${installed_ver}; expected ${VERSION_NUM}"
-	info "pairmux ${installed_ver} is ready"
-
+	trap cleanup EXIT
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
+	info "pairmux package: $PYPI_PROJECT"
+	info "package index: $PYPI_INDEX (exclusive; inherited UV_* and config ignored)"
+	info "uv may download Python >=3.9 from Astral's upstream if none is available."
+	ensure_uv
+	check_entrypoints
+	info "installing the PyPI platform wheel with uv (no source builds, no sudo)"
+	print_command
+	clean_uv "$UV_BIN" tool install --no-config --default-index "$PYPI_INDEX" \
+		--no-sources --no-build --python '>=3.9' --upgrade --reinstall --no-cache \
+		"$REQUIREMENT" || err "PyPI installation failed; check uv's error above (upgrade uv if its flags are unsupported)"
+	local installed_ver
+	installed_ver=$("$INSTALL_DIR/pairmux" version) || err "the uv-installed executable failed to run"
+	if [ -n "$VERSION_NUM" ] && [ "$installed_ver" != "$VERSION_NUM" ]; then
+		err "installed binary reports $installed_ver; expected $VERSION_NUM"
+	fi
+	[ -n "$installed_ver" ] || err "the installed binary did not report a version"
+	info "pairmux $installed_ver is ready at $INSTALL_DIR/pairmux"
 	check_tmux
 	path_hint
-	print_quickstart
+	printf '\nQuickstart:\n'
+	printf '  pairmux new --name build\n'
+	printf '  pairmux run build "make -j4"\n'
+	printf '  pairmux ls\n'
+	printf '\nDocs: %s\n' "$DOCS"
 }
 
 main "$@"

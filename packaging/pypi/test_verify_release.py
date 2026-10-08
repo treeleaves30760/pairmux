@@ -82,8 +82,53 @@ class VerifyReleaseTest(unittest.TestCase):
             staged = verify_release.verify_release(
                 dist, "v1.2.3", "abc123", root / "staged"
             )
-            self.assertEqual(len(staged), 9)
-            self.assertEqual(len(list((root / "staged").iterdir())), 9)
+            expected_names = {
+                "pairmux_1.2.3_darwin_amd64.tar.gz",
+                "pairmux_1.2.3_darwin_arm64.tar.gz",
+                "pairmux_1.2.3_linux_amd64.tar.gz",
+                "pairmux_1.2.3_linux_arm64.tar.gz",
+                "pairmux_1.2.3_linux_amd64.rpm",
+                "pairmux_1.2.3_linux_arm64.rpm",
+                "checksums.txt",
+            }
+            self.assertEqual(len(staged), 7)
+            self.assertEqual({path.name for path in staged}, expected_names)
+            self.assertEqual(
+                {path.name for path in (root / "staged").iterdir()}, expected_names
+            )
+            for path in staged:
+                self.assertEqual(path.read_bytes(), (dist / path.name).read_bytes())
+
+    def test_rejects_unexpected_debian_package(self):
+        for arch in ("amd64", "arm64"):
+            with self.subTest(arch=arch), tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                dist = self.make_fixture(root)
+                package = dist / ("pairmux_1.2.3_linux_%s.deb" % arch)
+                package.write_bytes(b"unexpected-debian-package")
+                entries = json.loads((dist / "artifacts.json").read_text(encoding="utf-8"))
+                entries.append({
+                    "type": "Linux Package", "name": package.name, "path": str(package),
+                    "goos": "linux", "goarch": arch, "extra": {"Format": "deb"},
+                })
+                (dist / "artifacts.json").write_text(json.dumps(entries), encoding="utf-8")
+                with (dist / "checksums.txt").open("a", encoding="utf-8") as stream:
+                    stream.write("%s  %s\n" % (
+                        hashlib.sha256(package.read_bytes()).hexdigest(), package.name
+                    ))
+                with self.assertRaisesRegex(ValueError, "Linux package targets"):
+                    verify_release.verify_release(dist, "v1.2.3", "abc123", root / "staged")
+                self.assertFalse((root / "staged").exists())
+
+    def test_rejects_unexpected_debian_checksum(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            dist = self.make_fixture(root)
+            with (dist / "checksums.txt").open("a", encoding="utf-8") as stream:
+                stream.write("%s  pairmux_1.2.3_linux_amd64.deb\n" % ("0" * 64))
+            with self.assertRaisesRegex(ValueError, "checksum filenames"):
+                verify_release.verify_release(dist, "v1.2.3", "abc123", root / "staged")
+            self.assertFalse((root / "staged").exists())
 
     def test_rejects_wrong_commit(self):
         with tempfile.TemporaryDirectory() as td:

@@ -1,27 +1,37 @@
 # Releasing pairmux
 
 This repository owns the pairmux CLI, native binaries, Python wheel wrappers,
-Linux packages, install script, and documentation site. The companion
+RPM packages, installers, landing page, and documentation site. The companion
 `pairmux-skills` repository owns the canonical Agent Skill.
+
+**Upcoming release: v0.5.3.** This migration retires pairmux APT / `.deb`
+distribution and makes the website installer use PyPI. Existing tags, published
+PyPI versions, and historical checksums are not rewritten. The seven-asset
+rule below applies to new builds, not historical release manifests.
 
 ## Release channels
 
 | Channel | Implementation | Release operation |
 | --- | --- | --- |
-| GitHub Releases | GoReleaser builds four macOS/Linux archives, four `.deb`/`.rpm` packages, and checksums. | Push a canonical SemVer tag. The workflow verifies and stages the exact artifacts before publishing the release. |
-| PyPI | Four platform wheels wrap the same verified Go binaries. Linux wheel installation is smoke-tested. | Configure the `PYPI_TOKEN` repository secret or migrate to Trusted Publishing. The tag workflow uploads only the four verified wheels. |
-| Direct installer | `install.sh` selects a GitHub archive and installs atomically. | Smoke-test the public URL on macOS and Linux after every release. |
-| Debian/RPM files | GoReleaser emits installable `.deb` and `.rpm` release assets. | No extra work for direct package downloads. |
-| APT repository | **Live.** The [`pairmux-apt`](https://github.com/treeleaves30760/pairmux-apt) repository signs and publishes metadata rebuilt from every stable release to GitHub Pages. | Operate per `pairmux-apt/OPERATIONS.md` (key custody, rebuild workflow). |
+| GitHub Releases | GoReleaser builds four macOS/Linux `.tar.gz` archives, two Linux `.rpm` packages, and `checksums.txt`: **seven native assets**. | Push a canonical SemVer tag. The existing workflow verifies and stages the exact artifacts before publishing the release. No `.deb` is produced. |
+| PyPI | Four platform wheels wrap the same verified Go binaries; wheel installation requires Python >= 3.9. | Configure the `PYPI_TOKEN` repository secret or migrate to Trusted Publishing. The tag workflow uploads only the four verified wheels. Smoke-test both `uvx` quick runs and persistent `uv tool install`. |
+| Website installer | Root `install.sh` installs the pairmux wheel from `https://pypi.org/simple` through uv, bootstrapping official Astral uv and a compatible managed Python if needed. `install.ps1` delegates into WSL. | Rebuild the landing site whenever either root installer changes; test the public `/install.sh` and `/install.ps1` endpoints. The Bash installer no longer selects GitHub archives or consumes `checksums.txt`. |
+| RPM files | GoReleaser emits installable `.rpm` release assets for Linux x86-64 and ARM64, with a tmux >= 3.2 dependency. | No extra work for direct package downloads. Verify checksums and smoke-test a local RPM; there is no Yum repository. |
 | Homebrew tap | **Active.** GoReleaser renders the cask (binary + manpage, `depends_on formula: tmux`, quarantine-stripping postflight) during the build; the release workflow pushes `Casks/pairmux.rb` to [`homebrew-pairmux`](https://github.com/treeleaves30760/homebrew-pairmux) after the release goes public. Prereleases are skipped. | Smoke-test `brew install --cask treeleaves30760/pairmux/pairmux` + `pairmux doctor` on a clean machine after each stable release. |
+
+The public entry points are [Home](https://pairmux.treeleaves30760.com),
+[PyPI](https://pypi.org/project/pairmux/), and
+[Docs](https://pairmux-docs.treeleaves30760.com/). GitHub remains the repository,
+issue tracker, release archive, and source of the changelog.
 
 ## Release checklist
 
 1. Sync `../pairmux-skills/skills/pairmux/` into `skills/pairmux/` and confirm
    that `diff -ru` reports no differences.
 2. Update `ChangeLog.md`: move `[Unreleased]` entries into a dated version and
-   add the release comparison link.
-3. Run the local validation suite:
+   add the release comparison link. v0.5.3 is not published until its tag and
+   workflow complete; keep the migration entries Unreleased until release time.
+3. Run the local validation suite from the repository root:
 
    ```sh
    gofmt -w .
@@ -34,9 +44,39 @@ Linux packages, install script, and documentation site. The companion
    ./scripts/validate-commit-subjects.sh --self-test
    goreleaser check
    goreleaser release --snapshot --clean --skip=publish
+   npm --prefix website ci
+   npm --prefix website run audit
+   npm --prefix website run typecheck
+   npm --prefix website run build
+   node landing/build.mjs
    ```
 
-4. Verify the GitHub repository settings and PyPI credential preflight.
+   Use only a fresh build output. Verify **four archives + two RPMs + one
+   checksum file = seven native assets**, four wheels, and zero `.deb` files.
+   The release workflow retains its build-once / verify / publish pipeline;
+   it validates wheel installation against the staged artifacts before
+   publishing, not against a version that is not yet on PyPI.
+4. Verify GitHub release permissions, the PyPI credential preflight, and the
+   stable-release Homebrew tap credential (see below). For v0.5.3, confirm the
+   new websites and APT migration guide are available and the former APT
+   publisher has been retired before tagging. Website/domain setup is an
+   explicit deployment task, not a side effect of pushing the release tag.
+5. Create and push an annotated SemVer tag from validated `main`. For the
+   upcoming release, use `v0.5.3` with a subject such as
+   `chore: release-v0-5-3`.
+6. Watch the tag workflow. It stages **seven** verified native assets in a
+   draft GitHub release, publishes the four verified wheels to PyPI, makes
+   the GitHub release public, then updates Homebrew for stable tags. Confirm
+   each stage; do not replace this ordering with a separate rebuild.
+7. On clean or isolated systems, smoke-test `uvx pairmux version`,
+   `uvx pairmux doctor`, `uv tool install pairmux`, the website's `install.sh`,
+   a direct RPM, and Homebrew. For release-specific uv checks, use
+   `uvx --from 'pairmux==0.5.3' pairmux version` and
+   `uv tool install 'pairmux==0.5.3'` **after** that version is published.
+   Verify wheel metadata has the new Home/Docs domains and the GitHub
+   Repository URL. Use isolated HOME/tool/cache directories so an existing
+   installation or cache does not stand in for the release under test.
+   Never publish artifacts from an old local `dist/` directory.
 
 ### Rotating `HOMEBREW_TAP_GITHUB_TOKEN`
 
@@ -59,19 +99,11 @@ That workflow (`gh workflow run tap-credential.yml`) is also the standalone
 check to run any time; it removes the probe file it writes. The release
 preflight repeats the read check for stable tags, so a broken token fails the
 run before anything is published rather than after PyPI.
-5. Create and push an annotated SemVer tag from `main`, for example
-   `git tag -a v0.1.0 -m 'chore: release-v0-1-0'`.
-6. Watch the tag workflow. Confirm the draft release contains nine native
-   assets and PyPI contains four wheels before making the release visible.
-7. Smoke-test `uv tool install pairmux`, `install.sh`, and one `.deb` on clean
-   systems. Never publish artifacts from an old local `dist/` directory.
 
 ## Homebrew (activated 2026-08-01)
 
-Homebrew is the first-class path on macOS — the platform where the
-interactive-terminal use case is most common — and the only channel that
-installs the hard tmux >= 3.2 runtime dependency in the same command. How it
-is wired:
+Homebrew installs pairmux and the hard tmux >= 3.2 runtime dependency in the
+same command. How it is wired:
 
 - The tap repo is [`treeleaves30760/homebrew-pairmux`](https://github.com/treeleaves30760/homebrew-pairmux);
   a repo-scoped PAT lives in the `HOMEBREW_TAP_GITHUB_TOKEN` Actions secret
@@ -90,8 +122,8 @@ is wired:
 
 Signing and notarization of the macOS binaries remain recommended for a wider
 stable release, together with an SBOM and build provenance, but they are
-deliberately decoupled from shipping the tap: the cask installs from the same
-checksummed tarball `install.sh` already uses.
+deliberately decoupled from shipping the tap: the cask still installs from
+checksummed GitHub tarballs, independently of the PyPI-based `install.sh`.
 
 ## Recovering a partially published release
 
@@ -99,13 +131,16 @@ Wheels embed the Go binary whose build stamps `mod_timestamp` from the commit,
 so **artifacts are not reproducible across commits** and PyPI forbids filename
 reuse. Consequences, learned on v0.2.0:
 
-- Once the PyPI step has succeeded, **never delete/re-point the tag and rerun
-  the workflow** — the rerun rebuilds different bytes and dies at PyPI with
-  "File already exists". Complete the remaining steps manually instead:
-  undraft with `gh release edit vX.Y.Z --draft=false`, download the run's
+- Once the PyPI step has succeeded, **never delete/re-point the tag, rebuild
+  the published wheels, or rerun the full release workflow**. A retag/rebuild
+  can produce different bytes and PyPI rejects reused filenames with
+  "File already exists". Complete the remaining steps manually with the
+  original validated artifacts instead: undraft with
+  `gh release edit vX.Y.Z --draft=false`, download the run's
   `validated-homebrew-cask` artifact, verify its sha256 values against the
   release's `checksums.txt`, and push it to the tap with the contents API
-  (same call as the workflow step).
+  (same call as the workflow step). If new bytes are needed, publish a new
+  version rather than changing the old tag or PyPI version.
 - Deleting a release's tag flips the published release back to **draft**;
   restoring the tag does not un-draft it.
 - A failed publish job cannot simply be re-run: its preflight refuses a tag
@@ -120,11 +155,36 @@ reuse. Consequences, learned on v0.2.0:
 - Smoke-test after recovery: `brew tap treeleaves30760/pairmux` and
   `brew fetch --cask treeleaves30760/pairmux/pairmux` must verify checksums.
 
-## APT repository
+## Websites and installer delivery
 
-The signed APT repository lives in
-[`pairmux-apt`](https://github.com/treeleaves30760/pairmux-apt): key custody,
-metadata generation from every non-draft stable release, atomic Pages
-publishing, and container-tested key enrollment are documented in that repo's
-`OPERATIONS.md`. Nothing APT-specific remains in this repository's release
-flow beyond producing the `.deb` assets.
+The two sites have separate deployment paths:
+
+- **Cloudflare Pages landing:** `https://pairmux.treeleaves30760.com`, using
+  Git integration on `main`, repository-root build command
+  `node landing/build.mjs`, output `landing/dist`. The build copies the root
+  `install.sh` and `install.ps1`; there is no second installer implementation.
+  Build watch paths must include both installers as well as `landing/**`.
+- **GitHub Pages docs:** `https://pairmux-docs.treeleaves30760.com/`, built
+  from `website/` by `.github/workflows/docs.yml`. Docusaurus uses `baseUrl: '/'`
+  and preserves the existing page slugs and strict broken-link checks.
+
+Follow [website/README.md](./website/README.md#deployment-and-custom-domains)
+for coordinated custom-domain registration, DNS, HTTPS, and deploy verification.
+Cloudflare Pages needs its custom domain registered in the project before a
+CNAME can serve it. GitHub Actions Pages ignores repository `CNAME` files;
+configure the docs custom domain in Pages settings/API instead.
+
+## APT / Debian retirement
+
+v0.5.3 removes `.deb` generation and APT distribution guidance, but retains
+RPMs, tarballs, Homebrew, PyPI, and the `apt install tmux` dependency path.
+The [migration guide](https://pairmux-docs.treeleaves30760.com/migrating-from-apt)
+covers the former source, origin pin, keyring package/file, and PATH shadowing.
+The installer does not run sudo or clean up system-package configuration.
+
+The external retirement must be coordinated after the new sites and guide are
+available: stop the old publisher before retiring its Pages/repository and
+removing only the approved historical `.deb` assets. Keep historical tags,
+checksums, other release assets, and published PyPI versions unchanged. Old
+checksums may still list `.deb` hashes as a historical record; do not apply the
+new seven-asset rule retroactively or re-publish an existing PyPI version.

@@ -1,5 +1,6 @@
 bin/
 dist/
+landing/dist/
 plans/
 *.test
 __pycache__/
