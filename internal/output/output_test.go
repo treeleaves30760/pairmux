@@ -20,6 +20,16 @@ func TestEmitJSONGolden(t *testing.T) {
 		want string
 	}{
 		{
+			name: "update newer stable",
+			env:  Envelope{OK: true, Status: "updated", Output: "pairmux 0.5.3 -> 0.6.0\nsource: https://pypi.org/simple\ninstalled: /custom bin's/pairmux"},
+			want: strings.ReplaceAll(`{"schema":"pairmux.v1","ok":true,"status":"updated","output":"pairmux 0.5.3 -> 0.6.0\nsource: https://pypi.org/simple\ninstalled: /custom bin's/pairmux"}`, ">", "\\u003e") + "\n",
+		},
+		{
+			name: "update same version refreshed",
+			env:  Envelope{OK: true, Status: "refreshed", Output: "pairmux 0.6.0 -> 0.6.0\nsource: https://pypi.org/simple\ninstalled: /bin/pairmux"},
+			want: strings.ReplaceAll(`{"schema":"pairmux.v1","ok":true,"status":"refreshed","output":"pairmux 0.6.0 -> 0.6.0\nsource: https://pypi.org/simple\ninstalled: /bin/pairmux"}`, ">", "\\u003e") + "\n",
+		},
+		{
 			name: "run done exit 0",
 			env: Envelope{
 				OK: true, Status: "done", Terminal: "web", Mode: "hooks",
@@ -91,6 +101,18 @@ func TestFailGolden(t *testing.T) {
 	}
 }
 
+func TestUpdateFailureGolden(t *testing.T) {
+	var buf bytes.Buffer
+	hint := "Install uv and retry pairmux update."
+	if rc := Fail(&buf, true, CodeUpdate, "uv failed\ndisk full", hint); rc != 1 {
+		t.Fatalf("Fail exit code=%d", rc)
+	}
+	want := `{"schema":"pairmux.v1","ok":false,"status":"error","next":["Install uv and retry pairmux update."],"error":{"code":"E_UPDATE","message":"uv failed\ndisk full","hint":"Install uv and retry pairmux update."}}` + "\n"
+	if buf.String() != want || strings.Count(buf.String(), "\n") != 1 {
+		t.Fatalf("E_UPDATE JSON=%q, want %q", buf.String(), want)
+	}
+}
+
 func TestErrorCodeConstants(t *testing.T) {
 	want := map[string]string{
 		CodeNoTerminal: "E_NO_TERMINAL",
@@ -99,6 +121,7 @@ func TestErrorCodeConstants(t *testing.T) {
 		CodeDead:       "E_DEAD",
 		CodeBadArgs:    "E_BAD_ARGS",
 		CodeTmux:       "E_TMUX",
+		CodeUpdate:     "E_UPDATE",
 		CodeInternal:   "E_INTERNAL",
 	}
 	for got, exp := range want {

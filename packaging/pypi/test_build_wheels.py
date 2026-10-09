@@ -102,22 +102,68 @@ class BuildWheelsTest(unittest.TestCase):
     def test_markdown_description_distinguishes_install_modes_and_sources(self) -> None:
         description = build_wheels.DESCRIPTION_PATH.read_text(encoding="utf-8")
         for command in (
+            "uv tool install pairmux",
+            "pairmux version",
+            "pairmux doctor",
+            "pairmux update",
             "uvx pairmux version",
             "uvx pairmux doctor",
-            "uv tool install pairmux",
             "curl -fsSL https://pairmux.treeleaves30760.com/install.sh | bash",
         ):
             with self.subTest(command=command):
                 self.assertIn(command, description)
         self.assertIn("temporary tool environment", description)
         self.assertIn("persistent", description)
+        self.assertIn("retains your environment and uv configuration", description)
         self.assertIn("https://pypi.org/project/pairmux/", description)
+        self.assertIn("https://pypi.org/simple", description)
+        self.assertIn("clears all inherited `UV_*` settings", description)
+        self.assertIn("no persistent cache or source builds", description)
         self.assertIn("Astral upstream", description)
         self.assertIn("tmux 3.2 or newer, installed separately", description)
         self.assertNotIn("pairmux-apt", description)
         self.assertNotIn(".deb", description)
         self.assertNotIn("apt install pairmux", description)
         self.assertNotIn("https://treeleaves30760.github.io/pairmux/", description)
+
+    def test_markdown_description_prefers_persistent_install_then_update(self) -> None:
+        description = build_wheels.DESCRIPTION_PATH.read_text(encoding="utf-8")
+        self.assertIn(
+            "```bash\nuv tool install pairmux\npairmux version\npairmux doctor\n```",
+            description,
+        )
+        self.assertLess(
+            description.index("uv tool install pairmux"),
+            description.index("pairmux update"),
+        )
+        self.assertLess(
+            description.index("pairmux update"),
+            description.index("uvx pairmux version"),
+        )
+        self.assertIn("### Optional temporary run with uvx", description)
+        self.assertIn("`uvx` remains supported", description)
+
+    def test_markdown_description_limits_update_to_v060_persistent_uv(self) -> None:
+        description = build_wheels.DESCRIPTION_PATH.read_text(encoding="utf-8")
+        for text in (
+            "### Update (v0.6.0+)",
+            "From **v0.6.0** onward",
+            "verified persistent uv tool installation",
+            "**v0.5.3 and older have no `update` command.**",
+            "uv tool install --upgrade pairmux",
+            "when available",
+            "Temporary runs cannot use `pairmux update`",
+            "latest compatible stable",
+            "`updated`",
+            "`refreshed`",
+            "`E_UPDATE`",
+            "without a guaranteed rollback",
+            "Homebrew, RPM, pipx/pip, manual/development installs, or temporary uvx",
+            "does not touch tmux",
+            "global `--json` is supported",
+        ):
+            with self.subTest(text=text):
+                self.assertIn(text, description)
 
     def test_scan_dist_accepts_goreleaser_variants(self) -> None:
         with tempfile.TemporaryDirectory() as td:

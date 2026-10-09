@@ -167,19 +167,26 @@ test('the handoff example uses actual README commands and does not simulate a li
   assert.match(html, /Not another exec API/);
 });
 
-test('install commands distinguish a uvx quick run from a persistent uv tool install', () => {
+test('persistent install is primary, update is version-gated, and uvx remains optional', () => {
   const expected = new Map([
+    ['tool-command', 'uv tool install pairmux'],
+    ['update-command', 'pairmux update'],
     ['installer-command', `curl -fsSL ${origin}/install.sh | bash`],
-    ['quick-command', 'uvx --default-index https://pypi.org/simple pairmux@latest version'],
-    ['tool-command', 'uv tool install --default-index https://pypi.org/simple pairmux'],
   ]);
   for (const [id, command] of expected) assert.ok(html.includes(`<code id="${id}">${command}</code>`), id);
-  assert.match(html, /Quick run, without a persistent install/);
-  assert.match(html, /Install for everyday use/);
+  assert.deepEqual([...html.matchAll(/<code id="([^"]+)">/g)].map((match) => match[1]), [...expected.keys()]);
+  assert.match(html, /primary-command[\s\S]*?id="tool-command"/);
+  assert.match(html, /Update your uv installation \(v0\.6\.0\+\)/);
+  assert.match(html, /v0\.5\.3 or earlier, once v0\.6\.0 is available[\s\S]*?<code>uv tool install --upgrade pairmux<\/code>/);
+  assert.match(html, /not Homebrew, RPM, or manual installs/);
+  assert.match(html, /same version is reinstalled/);
+  assert.match(html, /optional quick run without installing a command[\s\S]*?<code>uvx pairmux version<\/code>/);
+  assert.doesNotMatch(html, /id="quick-command"/);
   assert.match(html, /Python 3\.9 or newer for the uv tool environment/);
   assert.match(html, /tmux 3\.2 or newer to run terminals/);
   assert.match(html, /official Astral sources, not PyPI/);
-  assert.match(html, /manual commands set PyPI as the default index; they can still honor extra indexes and other source overrides/);
+  assert.match(html, /Manual uv commands honor your normal environment and configuration/);
+  assert.match(html, /built-in updater and shell installer instead pin pairmux’s source to public PyPI/);
   assert.match(html, /Read install\.sh before running it/);
 });
 

@@ -62,6 +62,7 @@ type tenv struct {
 	home    string
 	shell   string
 	tmuxTmp string
+	writers *cleanupTracker
 }
 
 func newEnv(t *testing.T, shell string) tenv {
@@ -74,18 +75,13 @@ func newEnv(t *testing.T, shell string) tenv {
 	}
 	n := atomic.AddInt32(&sockSeq, 1)
 	e := tenv{
-		state:  t.TempDir(),
-		socket: fmt.Sprintf("pmx-it-%d-%d", os.Getpid(), n),
-		home:   t.TempDir(),
-		shell:  shell,
+		state:   t.TempDir(),
+		socket:  fmt.Sprintf("pmx-it-%d-%d", os.Getpid(), n),
+		home:    t.TempDir(),
+		shell:   shell,
+		writers: &cleanupTracker{},
 	}
-	t.Cleanup(func() {
-		cmd := exec.Command("tmux", "-L", e.socket, "kill-server")
-		if e.tmuxTmp != "" {
-			cmd.Env = append(os.Environ(), "TMUX_TMPDIR="+e.tmuxTmp)
-		}
-		_ = cmd.Run()
-	})
+	t.Cleanup(func() { cleanupEnv(t, e) })
 	return e
 }
 
@@ -93,6 +89,14 @@ func newEnv(t *testing.T, shell string) tenv {
 // envelope, the process exit code, and raw stdout.
 func pmx(t *testing.T, e tenv, args ...string) (output.Envelope, int) {
 	t.Helper()
+	if err := trackCleanupCommand(e, args); err != nil {
+		t.Fatalf("capture writers before %v: %v", args, err)
+	}
+	defer func() {
+		if err := trackCleanupCommand(e, args); err != nil {
+			t.Errorf("capture writers after %v: %v", args, err)
+		}
+	}()
 	cmd := exec.Command(binPath, append([]string{"--json"}, args...)...)
 	cmd.Env = append(os.Environ(),
 		"PAIRMUX_STATE_DIR="+e.state,

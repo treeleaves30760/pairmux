@@ -34,7 +34,7 @@ Two fields are always present — `schema` and `ok`. Everything else is omitted 
 | `mode` | string | Stored completion-detection mode: `hooks` or `sentinel`. `hooks-no-C` is a `doctor` diagnostic tier, not an envelope mode. |
 | `exit_code` | int | The command's exit code (`run`, on `done`). |
 | `duration_ms` | int | Wall-clock duration in milliseconds (`run`, on `done`). |
-| `output` | string | Shaped output: carriage-returns collapsed and ANSI stripped. `run` and `log --cmd` also drop the echoed command. |
+| `output` | string | Shaped terminal output: carriage-returns collapsed and ANSI stripped. `run` and `log --cmd` also drop the echoed command. Non-terminal commands use it for text results, including the update's old/new version, source index, and installed path. |
 | `truncated` | object | Present when `output` was elided; see below. |
 | `terminals` | array | The `ls` listing (one object per terminal). |
 | `notes` | array of string | Unseen human messages left via `pairmux note`. |
@@ -77,7 +77,7 @@ Terminal statuses are returned directly by `peek`, appear in each `ls` row, and 
 | `dead` | The pane is gone; the journal is retained. |
 | `unknown` | The pane is live but pairmux cannot yet derive a confident state, for example during fresh sentinel activity or when the journal cannot be read. Usually transient; observe again before writing. |
 
-Per-command action statuses are separate from terminal state. An interactive-shell `new` returns `created`; `new --cmd` immediately returns the program terminal's derived `running` or `dead` state. `run` returns `done`, `running`, or `awaiting-input`; `peek` returns the derived terminal status; `send`, `note`, and `kill` return `sent`, `noted`, and `killed`. The outer `log`/`ls`/`version` status is `ok`; `doctor` returns `ok` or `issues`; and `skill install` returns `installed` or `dry-run`. `wait` outcomes are `idle`, `awaiting-input`, `pattern-found`, `human-done`, `dead`, or `timeout`.
+Per-command action statuses are separate from terminal state. An interactive-shell `new` returns `created`; `new --cmd` immediately returns the program terminal's derived `running` or `dead` state. `run` returns `done`, `running`, or `awaiting-input`; `peek` returns the derived terminal status; `send`, `note`, and `kill` return `sent`, `noted`, and `killed`. The outer `log`/`ls`/`version` status is `ok`; `doctor` returns `ok` or `issues`; `skill install` returns `installed` or `dry-run`; and `update` (v0.6.0+) returns `updated` or `refreshed`. `wait` outcomes are `idle`, `awaiting-input`, `pattern-found`, `human-done`, `dead`, or `timeout`.
 
 ### Errors
 
@@ -99,6 +99,7 @@ pairmux --json peek nonexistent
 | `E_DEAD` | The terminal's pane is gone. |
 | `E_BAD_ARGS` | A usage or flag error (invalid name/socket/key, bad regex, wrong terminal kind). |
 | `E_TMUX` | An underlying tmux command failed. |
+| `E_UPDATE` | v0.6.0+: persistent uv ownership, supported version, uv execution, or post-update verification failed. Follow the recovery hint. |
 | `E_INTERNAL` | An unexpected internal error. |
 
 ---
@@ -522,6 +523,73 @@ pairmux --json version
 ```json
 {"schema":"pairmux.v1","ok":true,"status":"ok","output":"0.1.0-dev"}
 ```
+
+### update (v0.6.0+)
+
+Update **only the currently running, verified persistent uv tool installation** of pairmux,
+including one created by the Bash/WSL installer. No tmux installation or terminal access is needed.
+
+```text
+pairmux update
+```
+
+There are no command-specific flags or positional arguments; global `--json` is supported. No
+force, version-selection, source-selection, bootstrap, sudo, or automatic-update mode is provided.
+The command never installs or updates uv, edits shell profiles, or touches tmux terminals. It does
+not convert or change Homebrew, RPM, pipx/pip, manual/development installs, or temporary uvx runs.
+
+**v0.5.3 and older lack this command.** First use `uv tool install --upgrade pairmux` with normal
+uv configuration to obtain v0.6.0+ when available. Other installation types should use their own
+manager or manual replacement, not this command.
+
+**Ownership checks.** The resolved running executable, its regular non-symlink `uv-receipt.toml`,
+and `uv tool list --show-paths` must agree on one persistent pairmux tool and its single entrypoint.
+The entrypoint must be a symlink resolving to that executable. Verified custom tool/bin directories
+are retained, not inherited `UV_TOOL_DIR`/`UV_TOOL_BIN_DIR` guesses. Missing, malformed, oversized,
+ambiguous, escaped/multiline-path, or control-character receipt/listing data fails closed. Paths
+containing ` (` are unsupported because uv's unquoted name/path display would be ambiguous. The
+receipt and entrypoint are checked again before reinstalling; these checks are not a guarantee
+against all races or a network-free/write-free preflight (uv's list query may take its tool-root
+lock).
+
+**Source and version policy.** uv must already be installed. The updater clears every inherited
+`UV_*` setting, ignores uv configuration, and reinstalls only wheels from
+**`https://pypi.org/simple`**, with persistent cache disabled and no source builds. It replaces old
+exact pins, constraints, indexes, and extras rather than retaining them. This differs from an
+ordinary `uv tool install pairmux`, which uses normal environment/configuration. uv may separately
+obtain managed Python from Astral upstream; that download is not from PyPI.
+
+The selected wheel is the latest compatible **stable** release at or above the running version's
+numeric core. Recognized alpha/beta/rc versions can advance to their core's final or a later stable
+release, never an older stable core. Dev/snapshot or unrecognized versions are refused. After uv
+succeeds, the command runs the verified installed executable's `version` to check the result.
+
+**Result and recovery.** A version change returns `updated`; a same-version reinstall returns
+`refreshed`, not a no-op. `output` contains old/new versions, the fixed source index, and the
+absolute installed entrypoint; no new envelope fields are added. For example, a same-version run
+after v0.6.0 is available:
+
+```bash
+pairmux --json update
+```
+
+```json
+{"schema":"pairmux.v1","ok":true,"status":"refreshed","output":"pairmux 0.6.0 -> 0.6.0\nsource: https://pypi.org/simple\ninstalled: /home/alice/.local/bin/pairmux"}
+```
+
+Ownership, unsupported-version, missing-uv, subprocess, and post-update verification failures emit
+`ok:false`, `status:"error"`, and `error.code:"E_UPDATE"` with an actionable `error.hint` mirrored
+into `next`. Automatic rollback is not guaranteed; inspect `pairmux version` and use the original
+manager, or manually recover a uv install with `uv tool install --upgrade pairmux` (normal uv
+configuration applies). The updater never bootstraps uv as error recovery. For example, if uv is
+missing:
+
+```json
+{"schema":"pairmux.v1","ok":false,"status":"error","next":["Install uv from https://docs.astral.sh/uv/getting-started/installation/ and retry pairmux update."],"error":{"code":"E_UPDATE","message":"uv was not found on PATH or in ~/.local/bin","hint":"Install uv from https://docs.astral.sh/uv/getting-started/installation/ and retry pairmux update."}}
+```
+
+Exit codes are **0** for `updated`/`refreshed`, **1** for `E_UPDATE`, and **2** for invalid arguments
+(`E_BAD_ARGS`). uv's subprocess output is captured rather than mixed into the single JSON envelope.
 
 ### skill install
 

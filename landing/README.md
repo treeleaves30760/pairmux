@@ -102,11 +102,17 @@ uv bootstrap and a Python download, when needed, use official Astral upstream
 sources rather than PyPI. tmux 3.2+ is a separate OS dependency; Python 3.9+ is needed
 for the uv tool environment. Windows uses WSL, not a native pairmux binary.
 
-The manual `uvx --default-index https://pypi.org/simple pairmux@latest version` is a
-quick run, not a persistent installation. `uv tool install --default-index
-https://pypi.org/simple pairmux` is the persistent alternative. Both set the default
-index but may still honor extra indexes and other source overrides in the user's
-environment/configuration; do not describe those manual commands as source-isolated.
+The primary command is `uv tool install pairmux`, followed by `pairmux update`
+for persistent uv installations on v0.6.0 or later. Once v0.6.0 is available,
+earlier versions first need `uv tool install --upgrade pairmux` to obtain the new
+command. Homebrew, RPM,
+manual installs, and temporary uvx environments are not update targets.
+
+Manual uv commands honor the user's environment/configuration; do not describe
+them as source-isolated. The updater, like the shell installer, resets saved pins
+and source settings and reinstalls from public PyPI, even when the version is
+unchanged. `uvx pairmux version` remains an optional quick run, not a persistent
+installation. Keep the version gate visible until v0.6.0 is published.
 
 ## Cloudflare references
 

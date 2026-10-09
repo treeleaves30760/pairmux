@@ -7,6 +7,9 @@ description: Install the canonical pairmux skill and benchmark it across OpenCod
 
 pairmux embeds one canonical `SKILL.md` package. It teaches agents when to use pairmux, the
 `new -> run -> wait/send/log` loop, secret handoff, and how to interpret `pairmux.v1` envelopes.
+It recommends a persistent `uv tool install pairmux` setup and, from v0.6.0, `pairmux update`
+only with explicit user authorization; agents must not install or self-update during terminal
+workflows on their own. See [Getting Started](./getting-started.mdx#install) for CLI installation.
 
 ## Install
 

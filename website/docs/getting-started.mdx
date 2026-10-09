@@ -37,20 +37,10 @@ the managed session so a human can collaborate in the same pane.
 ## Install
 
 <Tabs groupId="install">
-<TabItem value="uv" label="uvx / uv" default>
+<TabItem value="uv" label="uv tool install" default>
 
-With [uv](https://docs.astral.sh/uv/getting-started/installation/) installed, run pairmux without
-adding a persistent `pairmux` command to your PATH:
-
-```bash
-uvx pairmux version
-uvx pairmux doctor
-```
-
-`uvx` runs the tool in an isolated environment. It can reuse a cached environment or an existing
-uv-managed installation; a quick run does not promise a fresh download or the latest version every
-time. For a persistent command, install the tool and ensure uv's tool executable directory is on
-your PATH:
+With [uv](https://docs.astral.sh/uv/getting-started/installation/) installed, add a persistent
+`pairmux` command:
 
 ```bash
 uv tool install pairmux
@@ -58,15 +48,23 @@ pairmux version
 pairmux doctor
 ```
 
+Ensure uv's tool executable directory is on PATH; `command -v pairmux` helps check whether an
+older installation shadows it. This ordinary uv install retains your environment and uv
+configuration, including index overrides, and may reuse cached downloads.
+
+From **v0.6.0** onward, use `pairmux update` for a verified persistent uv installation. v0.5.3 and
+older first need `uv tool install --upgrade pairmux` to obtain v0.6.0+ when available. See
+[Update](#update-v060) for the source policy and recovery guidance.
+
 The [PyPI](https://pypi.org/project/pairmux/) wheels bundle the native Go binary and require Python
-3.9+ to install. uv can obtain a managed Python if needed; the installed binary itself does not
-need Python. Supported wheels target macOS 12+ and `manylinux_2_17` (glibc 2.17+) on x86-64 and
-ARM64. You can also use `pipx install pairmux`, or `python -m pip install pairmux` inside a dedicated
-Python 3.9+ virtual environment.
+3.9+ to install. uv can obtain managed Python from Astral upstream if needed; the installed binary
+itself does not need Python. Supported wheels target macOS 12+ and `manylinux_2_17` (glibc 2.17+) on
+x86-64 and ARM64. You can also use `pipx install pairmux`, or `python -m pip install pairmux` inside a
+dedicated Python 3.9+ virtual environment.
 
 uv and pipx do not install tmux. Use `brew install tmux`, `sudo apt install tmux` on Debian/Ubuntu,
-or your distribution's package manager for **tmux >= 3.2**. These direct uv commands respect your
-normal uv configuration; use the website installer below for its explicit PyPI-only source policy.
+or your distribution's package manager for **tmux >= 3.2**. Use the alternative installer below
+for its explicit public-PyPI-only wheel source policy.
 
 </TabItem>
 <TabItem value="brew" label="Homebrew">
@@ -80,16 +78,16 @@ brew install --cask treeleaves30760/pairmux/pairmux
 ```
 
 </TabItem>
-<TabItem value="curl" label="PyPI installer">
+<TabItem value="curl" label="Alternative installer">
 
 ```bash
 curl -fsSL https://pairmux.treeleaves30760.com/install.sh | bash
 ```
 
-The Bash installer uses uv to install the pairmux wheel from **PyPI**, not a GitHub tarball. It
-bootstraps uv from [Astral's official installer](https://astral.sh/uv/install.sh) if absent, and
-lets uv obtain a compatible managed Python if necessary. Those uv/Python bootstrap downloads are
-separate from the pairmux wheel's PyPI source.
+The Bash installer uses a persistent uv tool installation of the pairmux wheel from **PyPI**,
+not a GitHub tarball. It bootstraps uv from [Astral's official installer](https://astral.sh/uv/install.sh)
+if absent, and lets uv obtain a compatible managed Python if necessary. Those uv/Python bootstrap
+downloads are separate from the pairmux wheel's PyPI source.
 
 It installs to `~/.local/bin` by default, uses no sudo, does not write shell profiles, and only
 checks for tmux rather than installing it. It clears inherited `UV_*` settings and ignores uv
@@ -104,11 +102,12 @@ For a complete download before execution, inspect the script first:
 installer_dir=$(mktemp -d) &&
 curl -fsSL https://pairmux.treeleaves30760.com/install.sh -o "$installer_dir/install.sh" &&
 less "$installer_dir/install.sh" &&
-bash "$installer_dir/install.sh" --version v0.5.3 --dry-run
+bash "$installer_dir/install.sh" --version v0.6.0 --dry-run
 ```
 
-Replace `v0.5.3` with your chosen published version, or omit `--version` for the latest stable PyPI
-release. Remove `--dry-run` only after a successful download and review to perform the installation.
+Use the `v0.6.0` pin only after publication; until then choose a published version or omit `--version`
+for the latest stable PyPI release. Remove `--dry-run` only after a successful download and review
+to perform the installation.
 The downloaded installer's `--dry-run` does not access the network or write files. The pipe form is
 a convenience, not a complete-download-before-execution check.
 
@@ -201,6 +200,46 @@ install tmux there too (`sudo apt install tmux` on Debian/Ubuntu) if it is not a
 
 </TabItem>
 </Tabs>
+
+### Optional temporary run with uvx
+
+Try pairmux without adding a persistent command to PATH:
+
+```bash
+uvx pairmux version
+uvx pairmux doctor
+```
+
+`uvx` remains supported. It uses a temporary tool environment, which uv may cache, or reuses an
+existing uv-managed installation. It does not promise a fresh download or the latest version on
+every invocation; temporary runs cannot use `pairmux update`.
+
+## Update (v0.6.0+)
+
+From **v0.6.0** onward, update the currently running, verified persistent uv tool installation,
+including one created by the Bash/WSL installer:
+
+```bash
+pairmux update
+```
+
+**v0.5.3 and older have no `update` command.** First run `uv tool install --upgrade pairmux` with
+your normal uv configuration to obtain v0.6.0+ when available; then use the new command.
+
+The updater needs uv installed; it never bootstraps or updates uv. It clears all inherited `UV_*`
+settings, ignores uv configuration, and reinstalls the latest compatible **stable wheel** from
+**`https://pypi.org/simple`**, with no persistent cache or source builds. Old exact pins, constraints,
+indexes, and extras are replaced. It never selects below the running version's numeric core;
+recognized alpha/beta/rc builds may advance to that core's final or a later stable release, while
+dev/snapshot builds are refused.
+
+A version change returns `updated`; a same-version reinstall returns `refreshed`, not a no-op.
+Failures return `E_UPDATE` with a recovery hint, without guaranteed rollback. Recover with the
+original manager, or `uv tool install --upgrade pairmux` for uv installs (normal configuration
+applies). Homebrew, RPM, pipx/pip, manual/development installs, and temporary uvx runs are unchanged;
+tmux is untouched. There are no command-specific options, automatic updates, or sudo. Global
+`--json` is supported; see the [CLI reference](./cli-reference.md#update-v060) for verification,
+JSON, and exit behavior.
 
 ## Migrating from APT / Debian packages
 

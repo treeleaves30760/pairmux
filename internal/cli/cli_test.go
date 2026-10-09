@@ -281,7 +281,7 @@ func TestHelpText(t *testing.T) {
 	c.printHelp()
 	s := buf.String()
 	for _, cmd := range []string{"new", "run", "peek", "wait", "send", "log", "ls", "kill",
-		"attach", "watch", "note", "doctor", "skill install", "mcp serve"} {
+		"attach", "watch", "note", "doctor", "update", "skill install", "mcp serve"} {
 		if !strings.Contains(s, cmd) {
 			t.Errorf("help missing %q", cmd)
 		}
@@ -296,6 +296,33 @@ func TestHelpText(t *testing.T) {
 	}
 	if lines := strings.Count(s, "\n"); lines > 40 {
 		t.Errorf("help has %d lines, want <= 40", lines)
+	}
+}
+
+func TestUpdateDispatchGlobalJSONAndUsage(t *testing.T) {
+	for _, args := range [][]string{
+		{"--json", "update", "--all"}, {"update", "--dry-run", "--json"}, {"update", "--version", "0.6.0", "--json"},
+		{"update", "pairmux", "--json"}, {"update", "--json", "--", "--json"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			rest, jsonMode, _ := stripGlobals(args, false, "")
+			var buf bytes.Buffer
+			// A nil tmux dependency pins that update never contacts a session.
+			c := &Ctx{JSON: jsonMode, Stdout: &buf}
+			if rc := c.dispatch(rest); rc != 2 {
+				t.Fatalf("dispatch rc=%d: %s", rc, buf.String())
+			}
+			e := decode(t, &buf)
+			if !jsonMode || e.OK || e.Error == nil || e.Error.Code != output.CodeBadArgs || !strings.Contains(e.Error.Message, "pairmux update") || strings.Count(buf.String(), "\n") != 1 {
+				t.Fatalf("update usage envelope=%+v", e)
+			}
+		})
+	}
+	for _, args := range [][]string{{"--json", "update"}, {"update", "--json"}} {
+		rest, jsonMode, _ := stripGlobals(args, false, "")
+		if !jsonMode || !reflect.DeepEqual(rest, []string{"update"}) {
+			t.Fatalf("update global flags=%q %v", rest, jsonMode)
+		}
 	}
 }
 
