@@ -129,11 +129,12 @@ Prefer to inspect the script first? Download it successfully before reviewing an
 installer_dir=$(mktemp -d) &&
 curl -fsSL https://pairmux.treeleaves30760.com/install.sh -o "$installer_dir/install.sh" &&
 less "$installer_dir/install.sh" &&
-bash "$installer_dir/install.sh" --version v0.5.3 --dry-run
+bash "$installer_dir/install.sh" --version v0.6.0 --dry-run
 ```
 
-Replace `v0.5.3` with your chosen published version, or omit `--version` for the latest stable PyPI
-release. Remove `--dry-run` only after a successful download and review to perform the installation.
+Use the `v0.6.0` pin only after publication; until then choose a published version or omit `--version`
+for the latest stable PyPI release. Remove `--dry-run` only after a successful download and review
+to perform the installation.
 The downloaded installer's `--dry-run` prints its plan without network access or writes; it does not
 install anything. `PAIRMUX_INSTALL_DIR` selects the uv tool executable directory. The
 pipeline is a convenience, not a complete-download-before-execution check. It cannot update the
@@ -190,7 +191,7 @@ one-liner sets up: it finds WSL, checks it has a distribution, and runs the Bash
 it. Configure it through the environment, since a piped script takes no arguments:
 
 ```powershell
-$env:PAIRMUX_VERSION   = 'v0.5.3'   # optional: a published version
+$env:PAIRMUX_VERSION   = 'v0.6.0'   # optional: after v0.6.0 is published
 $env:PAIRMUX_WSL_DISTRO = 'Ubuntu'  # optional: a distribution other than the default
 irm https://pairmux.treeleaves30760.com/install.ps1 | iex
 ```
@@ -223,9 +224,8 @@ The former setup created `/etc/apt/sources.list.d/pairmux.sources`,
 the `pairmux-archive-keyring` package. Review and disable/remove only those pairmux-specific entries,
 and review removal of the old `pairmux` and keyring packages without removing tmux. Follow the
 [APT migration guide](https://pairmux-docs.treeleaves30760.com/migrating-from-apt)
-for read-only inspection, safe cleanup ordering, and PATH checks. While the documentation
-custom-domain HTTPS certificate is pending, use the
-[migration guide source](https://github.com/treeleaves30760/pairmux/blob/main/website/docs/migrating-from-apt.md).
+for read-only inspection, safe cleanup ordering, and PATH checks. The documentation site is
+available over HTTPS.
 The installer does not perform system-package cleanup or overwrite commands owned by other installers.
 
 ### Build this checkout

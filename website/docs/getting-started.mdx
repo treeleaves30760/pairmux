@@ -102,11 +102,12 @@ For a complete download before execution, inspect the script first:
 installer_dir=$(mktemp -d) &&
 curl -fsSL https://pairmux.treeleaves30760.com/install.sh -o "$installer_dir/install.sh" &&
 less "$installer_dir/install.sh" &&
-bash "$installer_dir/install.sh" --version v0.5.3 --dry-run
+bash "$installer_dir/install.sh" --version v0.6.0 --dry-run
 ```
 
-Replace `v0.5.3` with your chosen published version, or omit `--version` for the latest stable PyPI
-release. Remove `--dry-run` only after a successful download and review to perform the installation.
+Use the `v0.6.0` pin only after publication; until then choose a published version or omit `--version`
+for the latest stable PyPI release. Remove `--dry-run` only after a successful download and review
+to perform the installation.
 The downloaded installer's `--dry-run` does not access the network or write files. The pipe form is
 a convenience, not a complete-download-before-execution check.
 

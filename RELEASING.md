@@ -22,11 +22,11 @@ performed locally; CI verified the Linux wheel runtime and RPM file listing.
 **2026-10-08 deployment status:** the Cloudflare landing and both installers are
 live and verified. The public APT repository/Pages and 16 historical `.deb`
 assets have been removed; all 56 surviving assets and historical tags are
-unchanged. Documentation DNS and deployment have succeeded, but its GitHub
-Pages HTTPS certificate is still pending. The operator explicitly approved
-proceeding with v0.5.3 without waiting for documentation HTTPS; do not claim the
-documentation HTTPS endpoint is available yet. The [APT migration guide source](./website/docs/migrating-from-apt.md)
-is available on GitHub while provisioning finishes.
+unchanged. Documentation DNS and deployment succeeded at that checkpoint,
+but its GitHub Pages HTTPS certificate was then pending. The operator explicitly
+approved proceeding with v0.5.3 without waiting for it. This historical status
+is superseded by the 2026-10-09 HTTPS confirmation below; the
+[APT migration guide source](./website/docs/migrating-from-apt.md) remains available.
 
 **v0.6.0 preparation.** Persistent `uv tool install pairmux` is the primary install
 path. The new `pairmux update` command is limited to the verified running uv tool
@@ -68,9 +68,19 @@ no commit, push, tag or publication. Documentation
 HTTPS remains deferred; the newer fixed-source actionlint authorization above
 superseded its historical execution restriction for those checks. A later
 permission check again blocked a local actionlint run, even after the original
-source-specific consent was located. That new execution block is unresolved:
-do not retry via an agent or trigger CI/publication as a bypass. Previously
-green checks remain historical evidence, not validation of later workflow edits.
+source-specific consent was located. At that checkpoint the new block remained
+unresolved; no agent or CI/publication was used to bypass it. Previously green
+checks remain historical evidence, not validation of later workflow edits.
+
+**Renewed authorization (2026-10-09):** the operator explicitly reauthorized
+fixed-source `github.com/rhysd/actionlint/cmd/actionlint@v1.7.7` execution locally
+and in CI, and instructed completion of the v0.6.0 release. The local exact-source
+version and workflow lint checks passed after this new authorization. Final-head
+CI and publication must still succeed before they are recorded as complete.
+The operator also completed documentation HTTPS; a public read of the Getting
+Started page succeeded. Documentation HTTPS is no longer a deferred prerequisite.
+Companion skills PR #2 was merged after its final-head CI and independent reviews
+passed, with explicit authorization to proceed without another human reviewer.
 
 ## Release channels
 
@@ -140,8 +150,9 @@ issue tracker, release archive, and source of the changelog.
    publishing authorization from the upload result, and preserve the original
    artifacts for recovery if any wheel is accepted. For the v0.5.3 migration,
    the landing and migration guide source are available and the former APT
-   publisher is retired. Documentation HTTPS is the explicitly deferred
-   deployment item noted above, not a prerequisite silently marked complete.
+   publisher is retired. Documentation HTTPS was deferred during that release
+   and confirmed complete on 2026-10-09; do not infer new CLI publication from
+   website availability.
 5. Create and push the next annotated SemVer tag from validated `main`.
    Confirm that tag and PyPI version do not already exist. `v0.5.3` is already
    published and must not be recreated or moved.
@@ -194,8 +205,8 @@ isolated terminal command with `done`, exit 0 and one unique marker line.
 All jobs preserve logs/provenance even on failure. The new helpers passed
 local model-free tests and the common runtime probe against the unchanged
 installed v0.5.2, but actual hosted/public channel acceptance is still pending.
-The unresolved actionlint execution block above also means the new workflow
-has not been linted or dispatched; do not represent prepared checks as passes.
+The workflow passed exact-source actionlint after the renewed authorization;
+it has not yet been dispatched. Do not represent prepared checks as passes.
 Review also reproduced and fixed relative uv discovery with `PATH=.` and
 `GODEBUG=execerrdot=0`; lookup results are now rejected before path resolution,
 with zero subprocess calls in the regression. Post-fix local Go vet/race and real tmux integration,

@@ -34,8 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alternative, and uvx remains available for optional quick runs.
 - The canonical Agent Skill covers setup and update authorization; agents must not autonomously
   install or self-update during terminal workflows.
-- Installation examples now pin the published v0.5.3 migration release. Current APT guidance
-  records completed retirement, with a GitHub source fallback while documentation HTTPS is pending.
+- Installation examples pin the v0.6.0 release. Current APT guidance records completed retirement,
+  and documentation HTTPS was completed by the operator on 2026-10-09.
 - The release guide records verified GitHub/PyPI/Homebrew publication and isolated runtime checks,
   distinguishes the remaining clean-machine/WSL/RPM installation gaps, and makes the next-tag
   checklist generic so it cannot suggest recreating v0.5.3.
