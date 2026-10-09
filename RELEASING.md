@@ -82,6 +82,34 @@ Started page succeeded. Documentation HTTPS is no longer a deferred prerequisite
 Companion skills PR #2 was merged after its final-head CI and independent reviews
 passed, with explicit authorization to proceed without another human reviewer.
 
+**v0.6.0 published and accepted (2026-10-09).** Core PR #8 merged at commit
+`8717fa1e6399e188e16d8f51febcedb7bc550973` after final-head
+[CI 37938342527](https://github.com/treeleaves30760/pairmux/actions/runs/37938342527)
+and independent reviews; merged-main
+[CI 37945556049](https://github.com/treeleaves30760/pairmux/actions/runs/37945556049)
+also passed. The annotated tag remains fixed to that commit.
+[Release run 37949714403](https://github.com/treeleaves30760/pairmux/actions/runs/37949714403)
+built once and completed validation, GitHub publication, four-wheel PyPI upload
+and Homebrew update. All seven public native assets, four wheels and the rendered
+Cask match the original preserved validated bytes, including wheel RECORD,
+metadata and native-binary identity. The nine historical releases/tags/PyPI
+versions and 63 historical native assets remained unchanged. Public installers
+match the reviewed source bytes; documentation HTTPS and main deployment passed.
+
+[Published-release acceptance 37950571238](https://github.com/treeleaves30760/pairmux/actions/runs/37950571238)
+passed all six jobs. Ubuntu 24.04 x86-64 and macOS 14 ARM64 installed from public
+PyPI, bootstrapped 0.5.3 to 0.6.0, performed real same-version self-refresh with a
+new executable inode and preserved held-old bytes, and ran the public Bash
+installer. Fresh macOS Homebrew installed the public Cask and its previously
+absent tmux dependency. Official Fedora 44 x86-64 userspace performed actual DNF
+installation and dependency resolution. Windows 2025 imported checksum-verified
+official Canonical Ubuntu 24.04 as actual WSL1, used a non-root default user and
+executed the production PowerShell installer. Nine installed-binary `doctor` and
+live `new` → `run` → `done` round trips passed; Homebrew/RPM refused non-uv update.
+This is not WSL2, bare-metal Fedora or ARM64 RPM runtime coverage. The user's
+installed v0.5.2 binary and receipt remain unchanged. No tag or artifact was
+rebuilt or overwritten after PyPI publication.
+
 ## Release channels
 
 | Channel | Implementation | Release operation |
@@ -202,11 +230,13 @@ isolated terminal command with `done`, exit 0 and one unique marker line.
   `install.ps1`, and Linux runtime/cleanup. Unsupported runner features fail;
   mocks and WSL2 are not substitutes.
 
-All jobs preserve logs/provenance even on failure. The new helpers passed
+All jobs preserve logs/provenance even on failure. The helpers first passed
 local model-free tests and the common runtime probe against the unchanged
-installed v0.5.2, but actual hosted/public channel acceptance is still pending.
-The workflow passed exact-source actionlint after the renewed authorization;
-it has not yet been dispatched. Do not represent prepared checks as passes.
+installed v0.5.2, and exact-source actionlint after renewed authorization.
+Actual hosted/public channel acceptance then passed in
+[run 37950571238](https://github.com/treeleaves30760/pairmux/actions/runs/37950571238)
+for v0.6.0 with the coverage and limitations recorded above. Prepared checks are
+not substituted for those actual installation results.
 Review also reproduced and fixed relative uv discovery with `PATH=.` and
 `GODEBUG=execerrdot=0`; lookup results are now rejected before path resolution,
 with zero subprocess calls in the regression. Post-fix local Go vet/race and real tmux integration,
@@ -215,7 +245,8 @@ installer mocks/ShellCheck, 24 landing tests/build, and GoReleaser configuration
 checks passed. The helper regressions include no-op refresh, held-byte mutation,
 wrong actual-version bytes under channel-latest disagreement, and unverifiable
 historical upgrades; focused post-fix review found no remaining actionable defect.
-Those results do not replace pending final-head hosted CI. At `aea81e2`,
+At that checkpoint, those results did not replace the final-head hosted CI
+gate. At `aea81e2`,
 [CI run 37880838961](https://github.com/treeleaves30760/pairmux/actions/runs/37880838961)
 passed both real uv 0.11.16 suites and Windows parsing but failed Linux ShellCheck
 on the runtime-helper argument guard and a Linux tmux test's temporary HOME
@@ -227,8 +258,8 @@ Controlled history-writer and malformed-endpoint regressions were red before
 the fixes and green afterward; the final focused race suite passed 20 repeats,
 independent review found no outstanding defect, and the final full tagged
 vet/race suite passed locally (87.725 seconds). Production behavior and existing
-assertions are unchanged. Current-head hosted CI still must pass; the failed
-run is not a release gate pass. The separately authorized
+assertions are unchanged. At that checkpoint, current-head hosted CI still had
+to pass; the failed run was not a release gate pass. The separately authorized
 [tap credential run 37886587406](https://github.com/treeleaves30760/pairmux/actions/runs/37886587406)
 passed read/write and probe deletion, with its final survivor check confirming
 cleanup. The public Bash installer still lagged the checkout's ambiguous-uv
