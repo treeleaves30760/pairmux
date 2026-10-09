@@ -215,7 +215,18 @@ installer mocks/ShellCheck, 24 landing tests/build, and GoReleaser configuration
 checks passed. The helper regressions include no-op refresh, held-byte mutation,
 wrong actual-version bytes under channel-latest disagreement, and unverifiable
 historical upgrades; focused post-fix review found no remaining actionable defect.
-Those results do not replace pending final-head hosted CI.
+Those results do not replace pending final-head hosted CI. At `aea81e2`,
+[CI run 37880838961](https://github.com/treeleaves30760/pairmux/actions/runs/37880838961)
+passed both real uv 0.11.16 suites and Windows parsing but failed Linux ShellCheck
+on the runtime-helper argument guard and a Linux tmux test's temporary HOME
+teardown race. The guard now uses an equivalent explicit conditional; the race
+requires owned pane writers to finish before temporary-directory cleanup. The
+failed run is not a release gate pass. The separately authorized
+[tap credential run 37886587406](https://github.com/treeleaves30760/pairmux/actions/runs/37886587406)
+passed read/write and probe deletion, with its final survivor check confirming
+cleanup. The public Bash installer still lagged the checkout's ambiguous-uv
+listing guard at that checkpoint; verify deployment bytes again after `main`
+publication rather than treating the local build as deployed.
 
 ### Rotating `HOMEBREW_TAP_GITHUB_TOKEN`
 

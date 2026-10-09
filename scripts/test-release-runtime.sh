@@ -3,7 +3,10 @@
 # Usage: test-release-runtime.sh /absolute/pairmux X.Y.Z /absolute/log-dir [--reject-update]
 set -euo pipefail
 
-[ "$#" -ge 3 ] && [ "$#" -le 4 ] || { printf 'usage: %s EXE VERSION LOG_DIR [--reject-update]\n' "$0" >&2; exit 2; }
+if [ "$#" -lt 3 ] || [ "$#" -gt 4 ]; then
+  printf 'usage: %s EXE VERSION LOG_DIR [--reject-update]\n' "$0" >&2
+  exit 2
+fi
 exe=$1
 expected=${2#v}
 logs=$3

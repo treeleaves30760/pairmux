@@ -47,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   removes the actual recorded path. Rare paths containing ` (` fail closed.
 - The updater rejects relative uv PATH lookup results before resolving symlinks, including when
   `GODEBUG=execerrdot=0` disables Go's usual current-directory lookup protection.
+- The public runtime acceptance helper uses explicit argument-count guards compatible with Linux
+  CI's ShellCheck, retaining the same failure status and validation behavior.
 
 ## [0.5.3] - 2026-10-08
 
