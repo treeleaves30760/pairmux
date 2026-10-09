@@ -24,7 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   macOS Homebrew installations, Fedora RPM transactions and Windows-hosted WSL1 installations.
   Each channel must pass doctor and an isolated live terminal round trip using its installed binary.
   Public uv refresh requires a genuine executable replacement, preserved held-old bytes and the
-  actual upgraded release's verified native/wheel identity; hosted execution is still pending.
+  actual upgraded release's verified native/wheel identity. Published-release acceptance run
+  [37950571238](https://github.com/treeleaves30760/pairmux/actions/runs/37950571238) passed all six
+  jobs on 2026-10-09: public uv/Bash on Ubuntu 24.04 x86-64 and macOS 14 ARM64, fresh Homebrew with
+  tmux dependency installation, Fedora 44 x86-64 userspace DNF installation, and actual Canonical
+  Ubuntu 24.04 WSL1/non-root installation on Windows 2025. Nine installed-binary terminal round trips
+  passed; this does not claim WSL2, bare-metal Fedora or ARM64 RPM runtime coverage.
 
 ### Changed
 
@@ -36,9 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   install or self-update during terminal workflows.
 - Installation examples pin the v0.6.0 release. Current APT guidance records completed retirement,
   and documentation HTTPS was completed by the operator on 2026-10-09.
-- The release guide records verified GitHub/PyPI/Homebrew publication and isolated runtime checks,
-  distinguishes the remaining clean-machine/WSL/RPM installation gaps, and makes the next-tag
-  checklist generic so it cannot suggest recreating v0.5.3.
+- The release guide records verified GitHub/PyPI/Homebrew publication and actual public installation
+  acceptance, preserves the historical v0.5.3 clean-machine/WSL/RPM gaps, and makes the next-tag
+  checklist generic so it cannot suggest recreating a published tag.
 
 ### Fixed
 
