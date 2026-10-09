@@ -137,16 +137,16 @@ func TestSameSocketNameInDifferentTmuxRootsIsIsolated(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+		t.Cleanup(func() {
+			if err := os.RemoveAll(dir); err != nil {
+				t.Errorf("remove owned tmux root: %v", err)
+			}
+		})
 		return dir
 	}
 	newEndpoint := func(tmp string) tenv {
-		e := tenv{state: sharedState, socket: socket, home: t.TempDir(), shell: bashShell, tmuxTmp: tmp}
-		t.Cleanup(func() {
-			cmd := exec.Command("tmux", "-L", socket, "kill-server")
-			cmd.Env = append(os.Environ(), "TMUX_TMPDIR="+tmp)
-			_ = cmd.Run()
-		})
+		e := tenv{state: sharedState, socket: socket, home: t.TempDir(), shell: bashShell, tmuxTmp: tmp, writers: &cleanupTracker{}}
+		t.Cleanup(func() { cleanupEnv(t, e) })
 		return e
 	}
 	eA := newEndpoint(shortTmp())
@@ -181,8 +181,8 @@ func TestLegacyDefaultLiveTerminalRemainsOperable(t *testing.T) {
 	if err := exec.Command("tmux", "-L", core.DefaultSocket, "list-sessions").Run(); err == nil {
 		t.Skip("default pairmux tmux server already exists")
 	}
-	e := tenv{state: t.TempDir(), socket: core.DefaultSocket, home: t.TempDir(), shell: bashShell}
-	t.Cleanup(func() { _ = exec.Command("tmux", "-L", core.DefaultSocket, "kill-server").Run() })
+	e := tenv{state: t.TempDir(), socket: core.DefaultSocket, home: t.TempDir(), shell: bashShell, writers: &cleanupTracker{}}
+	t.Cleanup(func() { cleanupEnv(t, e) })
 
 	if env, code := pmx(t, e, "new", "--name", "legacy"); code != 0 || !env.OK {
 		t.Fatalf("new legacy: code=%d env=%+v", code, env)
@@ -215,7 +215,15 @@ type concurrentResult struct {
 	out  string
 }
 
-func invokePmx(e tenv, args ...string) concurrentResult {
+func invokePmx(e tenv, args ...string) (result concurrentResult) {
+	if err := trackCleanupCommand(e, args); err != nil {
+		return concurrentResult{err: err}
+	}
+	defer func() {
+		if err := trackCleanupCommand(e, args); err != nil {
+			result.err = errors.Join(result.err, err)
+		}
+	}()
 	cmd := exec.Command(binPath, append([]string{"--json"}, args...)...)
 	cmd.Env = append(os.Environ(),
 		"PAIRMUX_STATE_DIR="+e.state,

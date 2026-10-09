@@ -219,9 +219,16 @@ Those results do not replace pending final-head hosted CI. At `aea81e2`,
 [CI run 37880838961](https://github.com/treeleaves30760/pairmux/actions/runs/37880838961)
 passed both real uv 0.11.16 suites and Windows parsing but failed Linux ShellCheck
 on the runtime-helper argument guard and a Linux tmux test's temporary HOME
-teardown race. The guard now uses an equivalent explicit conditional; the race
-requires owned pane writers to finish before temporary-directory cleanup. The
-failed run is not a release gate pass. The separately authorized
+teardown race. The guard now uses an equivalent explicit conditional. The
+test-only cleanup tracker retains owned process birth identities across pane
+removal and server shutdown, waits for live exit writers before removing HOME,
+and skips tmux instrumentation for intentionally malformed socket fixtures.
+Controlled history-writer and malformed-endpoint regressions were red before
+the fixes and green afterward; the final focused race suite passed 20 repeats,
+independent review found no outstanding defect, and the final full tagged
+vet/race suite passed locally (87.725 seconds). Production behavior and existing
+assertions are unchanged. Current-head hosted CI still must pass; the failed
+run is not a release gate pass. The separately authorized
 [tap credential run 37886587406](https://github.com/treeleaves30760/pairmux/actions/runs/37886587406)
 passed read/write and probe deletion, with its final survivor check confirming
 cleanup. The public Bash installer still lagged the checkout's ambiguous-uv

@@ -49,6 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GODEBUG=execerrdot=0` disables Go's usual current-directory lookup protection.
 - The public runtime acceptance helper uses explicit argument-count guards compatible with Linux
   CI's ShellCheck, retaining the same failure status and validation behavior.
+- The tmux integration test harness waits for owned shell/job exit writers before deleting its
+  temporary HOME/state, retaining process birth identities across pane removal and endpoint shutdown
+  instead of racing late history writes. Production terminal behavior is unchanged.
 
 ## [0.5.3] - 2026-10-08
 
