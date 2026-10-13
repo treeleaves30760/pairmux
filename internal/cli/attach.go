@@ -4,9 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
-	"syscall"
+	"strings"
 
+	"github.com/treeleaves30760/pairmux/internal/mux"
+	"github.com/treeleaves30760/pairmux/internal/muxd"
 	"github.com/treeleaves30760/pairmux/internal/output"
 	"github.com/treeleaves30760/pairmux/internal/state"
 )
@@ -14,11 +15,15 @@ import (
 // isTTY reports whether pairmux's stdout is an interactive terminal. A terminal
 // is a character device, which pipes and regular files are not; the check is
 // intentionally dependency-free (no ioctl, no build tags) so it compiles the
-// same on darwin and linux. It is a package var so tests can override it. The
-// rare false positive (/dev/null is also a char device) is harmless: attach
-// then execs tmux, which itself refuses a non-terminal.
+// same everywhere. It is a package var so tests can override it. The rare
+// false positive (/dev/null is also a char device) is harmless: tmux refuses a
+// non-terminal itself, and the built-in attach fails to switch it to raw mode.
 var isTTY = func() bool {
-	fi, err := os.Stdout.Stat()
+	return isCharDevice(os.Stdout) && isCharDevice(os.Stdin)
+}
+
+func isCharDevice(f *os.File) bool {
+	fi, err := f.Stat()
 	if err != nil {
 		return false
 	}
@@ -31,10 +36,20 @@ var insideTmux = func() bool {
 	return os.Getenv("TMUX") != ""
 }
 
-// cmdAttach hands the human a live tmux client on the pairmux session, replacing
-// the pairmux process with tmux via exec. It refuses when the current process is
-// a poor place to take over the screen (already nested in tmux, or stdout is not
-// a terminal) and, when a name is given, focuses that window first.
+// insideBuiltinPane returns the "<socket>/<pane>" identity of the built-in pane
+// this process runs in, or "".
+var insideBuiltinPane = func() string {
+	return os.Getenv(muxd.BuiltinPaneEnv)
+}
+
+// builtinAttach runs the built-in attach client. Package var for test override.
+var builtinAttach = muxd.Attach
+
+// cmdAttach hands the human a live view of a terminal they can type into. On
+// tmux it replaces the pairmux process with a tmux client on the pairmux
+// session; on the built-in backend it attaches this terminal to the pane
+// directly (detach with Ctrl-b d, as in tmux). It refuses when the current
+// process is a poor place to take over the screen.
 func (c *Ctx) cmdAttach(args []string) int {
 	pos, err := parseFlags(args, flagSpec{})
 	if err != nil {
@@ -54,50 +69,96 @@ func (c *Ctx) cmdAttach(args []string) int {
 			return rc
 		}
 	}
+	builtin := c.Mux.Backend() == mux.BackendBuiltin
 
-	// Environment refusals: politely decline rather than nest tmux or exec into
-	// a pipe. Both are E_BAD_ARGS with a concrete escape hatch.
-	if insideTmux() {
+	// Environment refusals: politely decline rather than nest tmux or take
+	// over a pipe. Both are E_BAD_ARGS with a concrete escape hatch.
+	if !builtin && insideTmux() {
 		return c.fail(output.CodeBadArgs,
 			"already inside tmux ($TMUX is set); attaching here would nest tmux",
 			"detach from the current tmux client, then run pairmux attach from the outer shell (or use another terminal)")
 	}
 	if !isTTY() {
 		return c.fail(output.CodeBadArgs,
-			"attach needs an interactive terminal, but stdout is not a tty",
+			"attach needs an interactive terminal, but stdin/stdout is not a tty",
 			"run pairmux attach from an interactive shell")
 	}
 
+	if name == "" && builtin {
+		// The built-in server has no session for a client to land in; attach
+		// targets one terminal, so an unambiguous one is chosen for the human.
+		picked, rc, failed := c.pickAttachTarget()
+		if failed {
+			return rc
+		}
+		name = picked
+	}
+
+	var paneID string
 	if name != "" {
-		term, err := state.ResolveAt(c.Tmux, c.StateDir, name)
+		term, err := state.ResolveAt(c.Mux, c.StateDir, name)
 		if err != nil {
 			if errors.Is(err, state.ErrNotFound) {
 				return c.noTerminal(name)
 			}
-			return c.tmuxErr(err)
+			return c.muxErr(err)
 		}
 		if !term.Alive {
 			return c.fail(output.CodeDead,
 				fmt.Sprintf("terminal %q is dead", name),
 				"journal retained at "+term.Dir+" — pairmux log "+name)
 		}
-		// Focus the requested window so the attach lands on it.
-		if err := c.Tmux.SelectWindow(name); err != nil {
-			return c.tmuxErr(err)
+		paneID = term.PaneID
+		if !builtin {
+			// Focus the requested window so the attach lands on it.
+			if err := c.Mux.SelectWindow(name); err != nil {
+				return c.muxErr(err)
+			}
 		}
-	} else if !c.Tmux.HasSession() {
+	} else if !c.Mux.HasSession() {
 		return c.fail(output.CodeNoTerminal, "no pairmux session to attach to", "pairmux new")
 	}
 
-	tmuxPath, err := exec.LookPath("tmux")
+	if !builtin {
+		return c.execTmuxAttach()
+	}
+	if insideBuiltinPane() == c.Mux.SocketName()+"/"+paneID {
+		return c.fail(output.CodeBadArgs,
+			fmt.Sprintf("this shell is running inside terminal %q; attaching it to itself would loop", name),
+			"run pairmux attach from another terminal")
+	}
+	res, err := builtinAttach(c.Mux.SocketName(), paneID)
 	if err != nil {
-		return c.fail(output.CodeTmux, "tmux not found on PATH: "+err.Error(), "install tmux >= 3.2")
+		return c.muxErr(err)
 	}
+	if res.Detached {
+		fmt.Fprintf(c.Stdout, "[detached from %s] tell the agent what you did: pairmux note %s \"...\"\n", name, name)
+	} else if res.Message != "" {
+		fmt.Fprintf(c.Stdout, "[%s]\n", res.Message)
+	}
+	return 0
+}
 
-	// Replace this process with tmux; on success nothing below runs and the
-	// human sees a full-screen tmux (so we deliberately print nothing first).
-	if err := syscall.Exec(tmuxPath, c.Tmux.AttachArgv(), os.Environ()); err != nil {
-		return c.fail(output.CodeTmux, "exec tmux attach: "+err.Error(), "pairmux ls")
+// pickAttachTarget chooses the terminal a name-less built-in attach opens:
+// the only live one. Several live terminals are listed for the human to pick.
+func (c *Ctx) pickAttachTarget() (string, int, bool) {
+	terms, err := state.ListAt(c.Mux, c.StateDir)
+	if err != nil {
+		return "", c.muxErr(err), true
 	}
-	return 0 // unreachable: a successful Exec has replaced this process
+	var live []string
+	for _, t := range terms {
+		if t.Alive {
+			live = append(live, t.Name)
+		}
+	}
+	switch len(live) {
+	case 0:
+		return "", c.fail(output.CodeNoTerminal, "no live terminal to attach to", "pairmux new"), true
+	case 1:
+		return live[0], 0, false
+	}
+	return "", c.fail(output.CodeBadArgs,
+		"several terminals are running; name one: "+strings.Join(live, ", "),
+		"pairmux attach "+live[0]), true
 }

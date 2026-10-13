@@ -10,12 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/treeleaves30760/pairmux/internal/core"
+	"github.com/treeleaves30760/pairmux/internal/mux"
 )
 
 // runner executes a fully-formed tmux argv (argv[0] == "tmux") and returns
@@ -34,12 +34,10 @@ type Client struct {
 // conservative portable grammar.
 var ErrInvalidSocket = errors.New("tmux: invalid socket name")
 
-var socketNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
-
 // ValidSocketName reports whether socket is safe to pass to tmux -L. tmux
 // accepts path separators (including ../), so argv separation alone does not
 // prevent socket-directory traversal.
-func ValidSocketName(socket string) bool { return socketNameRe.MatchString(socket) }
+func ValidSocketName(socket string) bool { return mux.ValidSocketName(socket) }
 
 // New returns a Client for the given socket; "" selects core.DefaultSocket.
 func New(socket string) *Client {
@@ -48,6 +46,18 @@ func New(socket string) *Client {
 	}
 	return &Client{Socket: socket, runner: execRunner}
 }
+
+var _ mux.Mux = (*Client)(nil)
+
+// Backend reports mux.BackendTmux.
+func (c *Client) Backend() string { return mux.BackendTmux }
+
+// SocketName is the -L socket name.
+func (c *Client) SocketName() string { return c.Socket }
+
+// AtomicJournal is false: tmux starts a pane's command before pipe-pane can be
+// attached, which is why NewWindowReq.Gate exists.
+func (c *Client) AtomicJournal() bool { return false }
 
 // run prepends the "tmux -L <socket>" prefix and dispatches to the runner.
 func (c *Client) run(args ...string) (string, error) {
@@ -106,22 +116,9 @@ func (c *Client) EnsureSession() error {
 	return createErr
 }
 
-// NewWindowReq describes a window (one terminal) to create.
-type NewWindowReq struct {
-	Name string            // window name
-	Dir  string            // cwd; "" inherits
-	Env  map[string]string // -e KEY=VAL for each entry
-	Argv []string          // command; empty runs the default shell
-	// Gate is a FIFO the pane blocks on before the command starts. tmux runs a
-	// pane's command the moment the window exists, which is before pipe-pane can
-	// be attached to it — anything printed in that window is never journalled,
-	// and a program whose first act is to prompt can therefore be invisible to
-	// pairmux entirely. Holding the pane on a read the caller releases after
-	// wiring the journal removes the race rather than narrowing it. Ignored when
-	// Argv is empty: a shell prints nothing until its rc files run, and hooks
-	// mode already nudges a prompt cycle to cover the same gap.
-	Gate string
-}
+// NewWindowReq describes a window (one terminal) to create; see mux.NewWindowReq.
+// Journal is ignored here (AtomicJournal is false).
+type NewWindowReq = mux.NewWindowReq
 
 // NewWindow creates a detached window in the pairmux session and returns its
 // pane id (e.g. "%3").
@@ -187,14 +184,8 @@ func (c *Client) SetPaneOption(paneID, opt, val string) error {
 	return err
 }
 
-// PaneInfo describes one managed pane.
-type PaneInfo struct {
-	PaneID     string
-	Window     string
-	Name       string
-	CurrentCmd string
-	Dead       bool
-}
+// PaneInfo describes one managed pane; see mux.PaneInfo.
+type PaneInfo = mux.PaneInfo
 
 // tmux may sanitize control characters in format output under a non-UTF-8
 // locale (notably Alpine's default C locale), turning tabs into underscores.

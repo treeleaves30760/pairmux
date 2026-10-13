@@ -263,12 +263,12 @@ func waitNames(pos []string) ([]string, error) {
 // a name that does not resolve is the caller's mistake, not a condition that
 // might yet come true on the others.
 func (c *Ctx) armWaitTarget(name string, human, doneFlag, noteFlag bool) (t *waitTarget, rc int, failed bool) {
-	term, err := state.ResolveAt(c.Tmux, c.StateDir, name)
+	term, err := state.ResolveAt(c.Mux, c.StateDir, name)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return nil, c.noTerminal(name), true
 		}
-		return nil, c.tmuxErr(err), true
+		return nil, c.muxErr(err), true
 	}
 	if !term.Alive {
 		return nil, c.fail(output.CodeDead, fmt.Sprintf("terminal %q is dead", name), "pairmux new"), true
@@ -448,14 +448,14 @@ func (c *Ctx) pollWaitTarget(t *waitTarget, spec waitPollSpec) (env output.Envel
 		// Liveness can change while wait blocks. Refresh it only once output
 		// is quiet, then distinguish true idle from a quiet running command,
 		// an input prompt, or a pane that died during the wait.
-		current, err := state.ResolveAt(c.Tmux, c.StateDir, t.name)
+		current, err := state.ResolveAt(c.Mux, c.StateDir, t.name)
 		if err != nil {
 			if errors.Is(err, state.ErrNotFound) {
 				return output.Envelope{Status: string(core.StatusDead), Output: waitCurrentTail(t.j), Next: []string{
 					fmt.Sprintf("pairmux log %s", t.name), "pairmux new",
 				}}, true, 0, false
 			}
-			return output.Envelope{}, false, c.tmuxErr(err), true
+			return output.Envelope{}, false, c.muxErr(err), true
 		}
 		status, prompt, terminal := terminalStatusAfterQuiet(t.j, current.Alive, t.term.Mode,
 			current.Meta.Shell == "", spec.idleFor, t.term.Meta.Tty)
@@ -551,9 +551,9 @@ func waitRetryHint(names []string, flags []string, timeout time.Duration) string
 // pane, where the agent needs the tail to work out what happened at all.
 func (c *Ctx) answeredEnvelope(t *waitTarget) (output.Envelope, bool, int, bool) {
 	alive := true
-	if current, err := state.ResolveAt(c.Tmux, c.StateDir, t.name); err != nil {
+	if current, err := state.ResolveAt(c.Mux, c.StateDir, t.name); err != nil {
 		if !errors.Is(err, state.ErrNotFound) {
-			return output.Envelope{}, false, c.tmuxErr(err), true
+			return output.Envelope{}, false, c.muxErr(err), true
 		}
 		alive = false
 	} else {

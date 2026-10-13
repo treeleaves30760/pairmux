@@ -7,12 +7,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/treeleaves30760/pairmux/internal/core"
 	"github.com/treeleaves30760/pairmux/internal/detect"
+	"github.com/treeleaves30760/pairmux/internal/flock"
 	"github.com/treeleaves30760/pairmux/internal/journal"
+	"github.com/treeleaves30760/pairmux/internal/muxd"
 	"github.com/treeleaves30760/pairmux/internal/output"
 	"github.com/treeleaves30760/pairmux/internal/state"
 )
@@ -38,6 +39,8 @@ func (c *Ctx) cmdWatch(args []string) int {
 			"watch needs an interactive terminal, but stdout is not a tty",
 			"run pairmux watch from an interactive shell")
 	}
+
+	defer muxd.EnableVT()()
 
 	// Catch SIGINT so our deferred cleanup runs and the terminal is left on a
 	// clean line (the default SIGINT handler would exit before any defer).
@@ -88,7 +91,7 @@ type watchRow struct {
 // replicates commands.go's unexported lockHolderPID (file-ownership rules keep
 // watch.go self-contained): journal.LockHolder alone would be a stale display,
 // because the pid TEXT persists in write.lock after the flock is released, so
-// heldness is probed with a non-blocking shared flock on a read-only descriptor
+// heldness is probed with a non-blocking shared lock on a read-only descriptor
 // (nothing is written; an instant success is released immediately).
 func probeLockHolder(dir string) int {
 	f, err := os.Open(filepath.Join(dir, "write.lock"))
@@ -96,8 +99,8 @@ func probeLockHolder(dir string) int {
 		return 0 // never locked (or unreadable): free as far as we can tell
 	}
 	defer f.Close()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err == nil {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	if err := flock.TryLock(f, false); err == nil {
+		_ = flock.Unlock(f)
 		return 0
 	}
 	if pid, ok := journal.LockHolder(dir); ok {
@@ -114,9 +117,9 @@ func (c *Ctx) renderWatchFrame() {
 	var b strings.Builder
 	b.WriteString("\x1b[2J\x1b[H") // clear screen + cursor home
 	fmt.Fprintf(&b, "pairmux watch — %s — socket %s  (Ctrl-C to quit)\n\n",
-		time.Now().Format("15:04:05"), c.Tmux.Socket)
+		time.Now().Format("15:04:05"), c.Mux.SocketName()+" ("+c.Mux.Backend()+")")
 
-	terms, err := state.ListAt(c.Tmux, c.StateDir)
+	terms, err := state.ListAt(c.Mux, c.StateDir)
 	if err != nil {
 		fmt.Fprintf(&b, "  error listing terminals: %v\n", err)
 		fmt.Fprint(c.Stdout, b.String())

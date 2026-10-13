@@ -148,7 +148,7 @@ func TestLastLines(t *testing.T) {
 // newTestCtx returns a Ctx writing JSON into buf. The tmux client points at a
 // socket that is never contacted (these cases fail before any tmux call).
 func newTestCtx(buf *bytes.Buffer, jsonMode bool) *Ctx {
-	return &Ctx{Tmux: tmux.New("pmx-unit-nonexistent"), JSON: jsonMode, StateDir: "/nonexistent", Stdout: buf}
+	return &Ctx{Mux: tmux.New("pmx-unit-nonexistent"), JSON: jsonMode, StateDir: "/nonexistent", Stdout: buf}
 }
 
 func decode(t *testing.T, buf *bytes.Buffer) output.Envelope {
@@ -686,7 +686,7 @@ func TestTmuxErrSocketHint(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			c := newTestCtx(&buf, true)
-			if rc := c.tmuxErr(errors.New(tt.errText)); rc != 1 {
+			if rc := c.muxErr(errors.New(tt.errText)); rc != 1 {
 				t.Fatalf("rc = %d, want 1", rc)
 			}
 			e := decode(t, &buf)

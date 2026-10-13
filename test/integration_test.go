@@ -3,6 +3,9 @@
 // Package integration drives the built pairmux binary against a real tmux
 // server and asserts on the parsed JSON envelopes. It is gated behind the
 // `integration` build tag and skips cleanly when tmux is unavailable.
+//
+// PAIRMUX_IT_BACKEND=builtin runs the same suite against pairmux's built-in
+// multiplexer instead (no tmux needed); tests that drive tmux directly skip.
 package integration
 
 import (
@@ -13,24 +16,60 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/treeleaves30760/pairmux/internal/core"
+	"github.com/treeleaves30760/pairmux/internal/mux"
 	"github.com/treeleaves30760/pairmux/internal/output"
+	"github.com/treeleaves30760/pairmux/internal/state"
 )
 
 var (
 	binPath  string
 	haveTmux bool
 	sockSeq  int32
+	// itBackend is the backend under test: mux.BackendTmux unless
+	// PAIRMUX_IT_BACKEND=builtin.
+	itBackend = mux.BackendTmux
 )
+
+func builtinIT() bool { return itBackend == mux.BackendBuiltin }
+
+// requireTmuxBackend skips a test that drives tmux itself (or tmux-only
+// behaviour such as the legacy state layout) during a built-in backend run.
+func requireTmuxBackend(t *testing.T) {
+	t.Helper()
+	if builtinIT() {
+		t.Skip("drives tmux directly; not applicable to the built-in backend run")
+	}
+	if !haveTmux {
+		t.Skip("tmux not installed; skipping integration tests")
+	}
+}
+
+// endpointDir is the state namespace pmx uses for e, under either backend.
+func endpointDir(e tenv) string {
+	if builtinIT() {
+		return state.BuiltinEndpointDir(e.state, e.tmuxTmp, e.socket)
+	}
+	return state.EndpointDir(e.state, e.tmuxTmp, os.Getuid(), e.socket)
+}
 
 func TestMain(m *testing.M) {
 	if _, err := exec.LookPath("tmux"); err == nil {
 		haveTmux = true
+	}
+	switch v := os.Getenv("PAIRMUX_IT_BACKEND"); v {
+	case "", mux.BackendTmux:
+	case mux.BackendBuiltin:
+		itBackend = mux.BackendBuiltin
+	default:
+		fmt.Fprintln(os.Stderr, "PAIRMUX_IT_BACKEND must be tmux or builtin, not", v)
+		os.Exit(2)
 	}
 
 	buildDir, err := os.MkdirTemp("", "pmx-it-bin")
@@ -39,6 +78,9 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	binPath = filepath.Join(buildDir, "pairmux")
+	if runtime.GOOS == "windows" {
+		binPath += ".exe"
+	}
 
 	wd, _ := os.Getwd()      // .../pairmux/test
 	repo := filepath.Dir(wd) // .../pairmux
@@ -67,7 +109,7 @@ type tenv struct {
 
 func newEnv(t *testing.T, shell string) tenv {
 	t.Helper()
-	if !haveTmux {
+	if !haveTmux && !builtinIT() {
 		t.Skip("tmux not installed; skipping integration tests")
 	}
 	if shell != "" && !isExec(shell) {
@@ -102,6 +144,7 @@ func pmx(t *testing.T, e tenv, args ...string) (output.Envelope, int) {
 		"PAIRMUX_STATE_DIR="+e.state,
 		"PAIRMUX_SOCKET="+e.socket,
 		"HOME="+e.home,
+		"PAIRMUX_BACKEND="+itBackend,
 	)
 	if e.shell != "" {
 		cmd.Env = append(cmd.Env, "SHELL="+e.shell)

@@ -76,7 +76,7 @@ func TestStateAndTmuxCommandsRejectInvalidSocketBeforeIO(t *testing.T) {
 			var buf bytes.Buffer
 			root := t.TempDir()
 			c := newTestCtx(&buf, true)
-			c.Tmux = tmux.New("../escape")
+			c.Mux = tmux.New("../escape")
 			c.StateDir = root
 			if rc := tt.run(c); rc != 1 {
 				t.Fatalf("rc = %d, want 1; output=%s", rc, buf.String())

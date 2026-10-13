@@ -25,7 +25,7 @@ func (c *Ctx) cmdMCP(args []string) int {
 	}
 	server := mcpserver.New(
 		mcpserver.SubprocessExecutor{Path: executable},
-		c.Tmux.Socket,
+		c.Mux.SocketName(),
 		version.Version,
 		os.Stderr,
 	)

@@ -5,23 +5,25 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/treeleaves30760/pairmux/internal/backend"
+	"github.com/treeleaves30760/pairmux/internal/mux"
 	"github.com/treeleaves30760/pairmux/internal/output"
 	"github.com/treeleaves30760/pairmux/internal/state"
-	"github.com/treeleaves30760/pairmux/internal/tmux"
 )
 
 const terminalNameHint = `names match ^[a-z0-9][a-z0-9_-]{0,31}$`
 const socketNameHint = `socket names match ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`
 
-// rejectInvalidSocket is the global boundary for tmux's -L value. tmux itself
-// accepts ../ in socket names, so every handler that can touch state or tmux
-// calls this before doing either. Client.run repeats the check as defense in
+// rejectInvalidSocket is the global boundary for the endpoint name (tmux's -L
+// value, or the built-in server's socket file name). tmux itself accepts ../
+// in socket names, so every handler that can touch state or the multiplexer
+// calls this before doing either. Both clients repeat the check as defense in
 // depth for future call sites.
 func (c *Ctx) rejectInvalidSocket() (rc int, rejected bool) {
-	if tmux.ValidSocketName(c.Tmux.Socket) {
+	if mux.ValidSocketName(c.Mux.SocketName()) {
 		return 0, false
 	}
-	return c.fail(output.CodeBadArgs, fmt.Sprintf("invalid socket name %q", c.Tmux.Socket), socketNameHint), true
+	return c.fail(output.CodeBadArgs, fmt.Sprintf("invalid socket name %q", c.Mux.SocketName()), socketNameHint), true
 }
 
 // rejectInvalidTerminalName is the common boundary for every command that
@@ -34,11 +36,20 @@ func (c *Ctx) rejectInvalidTerminalName(name string) (rc int, rejected bool) {
 	return c.fail(output.CodeBadArgs, fmt.Sprintf("invalid name %q", name), terminalNameHint), true
 }
 
-// namespaceDir is this invocation's socket-specific state directory. StateDir
-// remains the user-configured root so --socket and PAIRMUX_SOCKET take the same
-// path even though global flag parsing lives outside the state package.
+// namespaceDir is this invocation's endpoint-specific state directory.
+// StateDir remains the user-configured root so --socket and PAIRMUX_SOCKET take
+// the same path even though global flag parsing lives outside the state
+// package; the backend is part of the endpoint, so tmux and built-in terminals
+// of the same name never share state.
 func (c *Ctx) namespaceDir() string {
-	return state.SocketDir(c.StateDir, c.Tmux.Socket)
+	return state.SocketDirFor(c.StateDir, c.Mux.Backend(), c.Mux.SocketName())
+}
+
+// layer returns a client for another endpoint on this invocation's backend.
+// Nested layers always live on their parent's backend: every terminal is
+// created with PAIRMUX_BACKEND set to it.
+func (c *Ctx) layer(socket string) mux.Mux {
+	return backend.OpenKind(c.Mux.Backend(), socket)
 }
 
 func (c *Ctx) terminalDir(name string) string {
@@ -55,11 +66,11 @@ func (c *Ctx) terminalDir(name string) string {
 // is what distinguishes a layer still running from the directory left behind by
 // one that has been killed.
 func (c *Ctx) liveChildLayer(name string) string {
-	socket := state.ChildSocket(c.Tmux.Socket, name)
-	if !isDir(state.SocketDir(c.StateDir, socket)) {
+	socket := state.ChildSocket(c.Mux.SocketName(), name)
+	if !isDir(state.SocketDirFor(c.StateDir, c.Mux.Backend(), socket)) {
 		return ""
 	}
-	if !tmux.New(socket).HasSession() {
+	if !c.layer(socket).HasSession() {
 		return ""
 	}
 	return socket
@@ -77,17 +88,17 @@ const maxLayerDepth = 16
 // to serve one terminal, and its panes are the sub-agents that terminal was
 // driving: left behind they keep running, unattached and unlisted at every
 // layer a human is likely to look at, which for an agent means it keeps
-// spending. Each layer is its own tmux server, so a grandchild does not go with
-// its parent's server — the descent has to be explicit.
+// spending. Each layer is its own server (tmux or built-in), so a grandchild
+// does not go with its parent's server — the descent has to be explicit.
 func (c *Ctx) killLayers(socket, name string, depth int) []string {
 	if depth >= maxLayerDepth {
 		return nil
 	}
 	child := state.ChildSocket(socket, name)
-	if !isDir(state.SocketDir(c.StateDir, child)) {
+	if !isDir(state.SocketDirFor(c.StateDir, c.Mux.Backend(), child)) {
 		return nil
 	}
-	cl := tmux.New(child)
+	cl := c.layer(child)
 	if !cl.HasSession() {
 		return nil
 	}

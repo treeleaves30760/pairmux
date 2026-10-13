@@ -60,12 +60,12 @@ func (c *Ctx) pruneOne(name string, olderThan time.Duration, dryRun bool) int {
 	if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
 		return rc
 	}
-	term, err := state.ResolveAt(c.Tmux, c.StateDir, name)
+	term, err := state.ResolveAt(c.Mux, c.StateDir, name)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return c.noTerminal(name)
 		}
-		return c.tmuxErr(err)
+		return c.muxErr(err)
 	}
 	var cands []pruneCandidate
 	if prev := term.Dir + ".prev"; isDir(prev) {
@@ -85,9 +85,9 @@ func (c *Ctx) pruneOne(name string, olderThan time.Duration, dryRun bool) int {
 // current endpoint namespace, including archives whose base name no longer
 // resolves (they are invisible to ls).
 func (c *Ctx) pruneSweep(olderThan time.Duration, dryRun bool) int {
-	terms, err := state.ListAt(c.Tmux, c.StateDir)
+	terms, err := state.ListAt(c.Mux, c.StateDir)
 	if err != nil {
-		return c.tmuxErr(err)
+		return c.muxErr(err)
 	}
 	var cands []pruneCandidate
 	seen := map[string]bool{}

@@ -1,5 +1,5 @@
-// Package state is the terminal registry: it composes the tmux client and the
-// on-disk journal into a single view of which terminals exist, where their
+// Package state is the terminal registry: it composes the multiplexer client
+// (tmux or the built-in server) and the on-disk journal into a single view of which terminals exist, where their
 // state lives, and whether their panes are still alive. It owns naming rules
 // (validation, auto-naming) and the base state directory resolution.
 package state
@@ -17,7 +17,8 @@ import (
 
 	"github.com/treeleaves30760/pairmux/internal/core"
 	"github.com/treeleaves30760/pairmux/internal/journal"
-	"github.com/treeleaves30760/pairmux/internal/tmux"
+	"github.com/treeleaves30760/pairmux/internal/mux"
+	"github.com/treeleaves30760/pairmux/internal/rundir"
 )
 
 // ErrNotFound is returned by Resolve when neither a managed pane nor a state
@@ -73,6 +74,29 @@ func BaseDir() string {
 // journals, but files are never moved implicitly.
 func SocketDir(root, socket string) string {
 	return EndpointDir(root, os.Getenv("TMUX_TMPDIR"), os.Getuid(), socket)
+}
+
+// SocketDirFor is SocketDir for a specific backend. The built-in server's
+// endpoints get namespaces of their own, keyed by its runtime directory: an
+// endpoint name means a different server under each backend, and sharing one
+// namespace would show a live tmux terminal as a dead built-in one (or the
+// reverse) and let `new` archive its journal.
+func SocketDirFor(root, backend, socket string) string {
+	if backend == mux.BackendBuiltin {
+		return identityDir(root, rundir.Identity(normalizedSocket(socket)))
+	}
+	return SocketDir(root, socket)
+}
+
+// BuiltinEndpointDir is SocketDirFor(root, builtin, socket) with the runtime
+// root explicit, like EndpointDir is for tmux.
+func BuiltinEndpointDir(root, runtimeRoot, socket string) string {
+	return identityDir(root, rundir.IdentityUnder(runtimeRoot, normalizedSocket(socket)))
+}
+
+func identityDir(root, identity string) string {
+	sum := sha256.Sum256([]byte(identity))
+	return filepath.Join(root, ".sockets", fmt.Sprintf("%x", sum[:]))
 }
 
 // EndpointDir is SocketDir with every endpoint input explicit. It is the
@@ -135,15 +159,15 @@ func IsNoServer(err error) bool {
 		(strings.Contains(s, "no such file or directory") || strings.Contains(s, "connection refused"))
 }
 
-// paneLister is the slice of tmux.Client that state needs; declaring it locally
+// paneLister is the slice of mux.Mux that state needs; declaring it locally
 // keeps List/Resolve unit-testable with a fake.
 type paneLister interface {
-	ListManaged() ([]tmux.PaneInfo, error)
+	ListManaged() ([]mux.PaneInfo, error)
 }
 
 // managedPanes lists managed panes, mapping tmux's no-server condition to an
 // empty slice so callers on a fresh machine still succeed.
-func managedPanes(c paneLister) ([]tmux.PaneInfo, error) {
+func managedPanes(c paneLister) ([]mux.PaneInfo, error) {
 	panes, err := c.ListManaged()
 	if err != nil {
 		if IsNoServer(err) {
@@ -157,14 +181,14 @@ func managedPanes(c paneLister) ([]tmux.PaneInfo, error) {
 // Resolve returns the composed view of one terminal in c's socket namespace.
 // It errors with ErrNotFound when neither a managed pane nor compatible state
 // directory exists for name.
-func Resolve(c *tmux.Client, name string) (*Terminal, error) {
+func Resolve(c mux.Mux, name string) (*Terminal, error) {
 	return ResolveAt(c, BaseDir(), name)
 }
 
 // ResolveAt is Resolve rooted at root. root is the un-namespaced state root;
-// the client's socket selects the effective namespace.
-func ResolveAt(c *tmux.Client, root, name string) (*Terminal, error) {
-	return resolveAt(c, root, c.Socket, name)
+// the client's backend and socket select the effective namespace.
+func ResolveAt(c mux.Mux, root, name string) (*Terminal, error) {
+	return resolveAtFor(c, root, c.Backend(), c.SocketName(), name)
 }
 
 func resolve(c paneLister, name string) (*Terminal, error) {
@@ -172,6 +196,10 @@ func resolve(c paneLister, name string) (*Terminal, error) {
 }
 
 func resolveAt(c paneLister, root, socket, name string) (*Terminal, error) {
+	return resolveAtFor(c, root, mux.BackendTmux, socket, name)
+}
+
+func resolveAtFor(c paneLister, root, backend, socket, name string) (*Terminal, error) {
 	if !ValidName(name) {
 		return nil, fmt.Errorf("%w: %q", ErrInvalidName, name)
 	}
@@ -179,7 +207,7 @@ func resolveAt(c paneLister, root, socket, name string) (*Terminal, error) {
 	if err != nil {
 		return nil, err
 	}
-	var pane *tmux.PaneInfo
+	var pane *mux.PaneInfo
 	for i := range panes {
 		if panes[i].Name == name {
 			pane = &panes[i]
@@ -187,7 +215,7 @@ func resolveAt(c paneLister, root, socket, name string) (*Terminal, error) {
 		}
 	}
 
-	dir, dirExists := stateDirForName(root, socket, name)
+	dir, dirExists := stateDirForName(root, backend, socket, name)
 	if pane == nil && !dirExists {
 		return nil, ErrNotFound
 	}
@@ -209,12 +237,12 @@ func resolveAt(c paneLister, root, socket, name string) (*Terminal, error) {
 
 // List returns the union of managed panes and compatible state directories in
 // c's socket namespace. A directory with no live pane appears with Alive=false.
-func List(c *tmux.Client) ([]Terminal, error) { return ListAt(c, BaseDir()) }
+func List(c mux.Mux) ([]Terminal, error) { return ListAt(c, BaseDir()) }
 
 // ListAt is List rooted at root. root is the un-namespaced state root; the
-// client's socket selects the effective namespace.
-func ListAt(c *tmux.Client, root string) ([]Terminal, error) {
-	return listAt(c, root, c.Socket)
+// client's backend and socket select the effective namespace.
+func ListAt(c mux.Mux, root string) ([]Terminal, error) {
+	return listAtFor(c, root, c.Backend(), c.SocketName())
 }
 
 func list(c paneLister) ([]Terminal, error) {
@@ -222,6 +250,10 @@ func list(c paneLister) ([]Terminal, error) {
 }
 
 func listAt(c paneLister, root, socket string) ([]Terminal, error) {
+	return listAtFor(c, root, mux.BackendTmux, socket)
+}
+
+func listAtFor(c paneLister, root, backend, socket string) ([]Terminal, error) {
 	panes, err := managedPanes(c)
 	if err != nil {
 		return nil, err
@@ -233,7 +265,7 @@ func listAt(c paneLister, root, socket string) ([]Terminal, error) {
 		if t, ok := byName[name]; ok {
 			return t
 		}
-		dir, _ := stateDirForName(root, socket, name)
+		dir, _ := stateDirForName(root, backend, socket, name)
 		t := &Terminal{Name: name, Dir: dir}
 		if meta, err := readMeta(t.Dir); err == nil {
 			t.Meta = meta
@@ -256,14 +288,14 @@ func listAt(c paneLister, root, socket string) ([]Terminal, error) {
 
 	// Directories that carry a meta.json but have no live pane are dead
 	// terminals whose journals are retained; include them (Alive stays false).
-	for _, name := range stateDirsAt(SocketDir(root, socket), socket) {
+	for _, name := range stateDirsAt(SocketDirFor(root, backend, socket), socket) {
 		add(name)
 	}
 	// Existing releases stored the conventional default endpoint directly in
 	// root. Keep that state readable, but never move it automatically. Legacy
 	// custom-socket metadata lacks TMUX_TMPDIR/uid and therefore cannot be
 	// attributed to an endpoint safely; it is deliberately not claimed.
-	if usesLegacyDefaultFallback(socket) {
+	if backend == mux.BackendTmux && usesLegacyDefaultFallback(socket) {
 		for _, name := range stateDirsAt(root, socket) {
 			add(name)
 		}
@@ -355,8 +387,8 @@ func usesLegacyDefaultFallback(socket string) bool {
 // stateDirForName returns the canonical directory, or the conventional
 // default endpoint's legacy directory. A canonical directory with an explicit
 // foreign-socket meta.json is not claimed.
-func stateDirForName(root, socket, name string) (string, bool) {
-	canonical := filepath.Join(SocketDir(root, socket), name)
+func stateDirForName(root, backend, socket, name string) (string, bool) {
+	canonical := filepath.Join(SocketDirFor(root, backend, socket), name)
 	if meta, err := readMeta(canonical); err == nil {
 		if MetaMatchesSocket(meta, socket) {
 			return canonical, true
@@ -367,7 +399,7 @@ func stateDirForName(root, socket, name string) (string, bool) {
 		return canonical, true // creation may be between mkdir and meta.json
 	}
 
-	if usesLegacyDefaultFallback(socket) {
+	if backend == mux.BackendTmux && usesLegacyDefaultFallback(socket) {
 		legacy := filepath.Join(root, name)
 		if meta, err := readMeta(legacy); err == nil && MetaMatchesSocket(meta, socket) {
 			return legacy, true
@@ -387,7 +419,7 @@ func isDir(path string) bool {
 	return err == nil && fi.IsDir()
 }
 
-// maxSocketName is tmux.ValidSocketName's length ceiling, restated here because
+// maxSocketName is mux.ValidSocketName's length ceiling, restated here because
 // ChildSocket has to fit inside it rather than just be rejected by it.
 const maxSocketName = 64
 
@@ -413,7 +445,7 @@ func ChildSocket(parent, name string) string {
 		parent = core.DefaultSocket
 	}
 	full := parent + "-" + name
-	if len(full) <= maxSocketName && tmux.ValidSocketName(full) {
+	if len(full) <= maxSocketName && mux.ValidSocketName(full) {
 		return full
 	}
 	sum := sha256.Sum256([]byte(full))

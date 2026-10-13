@@ -5,16 +5,19 @@ package integration
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/treeleaves30760/pairmux/internal/muxd"
 	"github.com/treeleaves30760/pairmux/internal/tmux"
 )
 
@@ -90,7 +93,17 @@ func shutdownEnv(e tenv) error {
 		return err
 	}
 	owned := e.writers.snapshot()
-	if server {
+	if server && builtinIT() {
+		restore := withRuntimeRoot(e)
+		err := builtinClient(e).KillServer()
+		restore()
+		if err != nil && !errors.Is(err, muxd.ErrNoServer) {
+			return fmt.Errorf("kill owned built-in server: %w", err)
+		}
+		if runtime.GOOS == "windows" {
+			return waitBuiltinGone(ctx, e)
+		}
+	} else if server {
 		out, err := cleanupTmux(ctx, e, "kill-server")
 		if err != nil && !cleanupNoServer(err, out) {
 			return fmt.Errorf("kill owned server: %w: %s", err, strings.TrimSpace(out))
@@ -121,6 +134,9 @@ func captureCleanupWriters(ctx context.Context, e tenv) (bool, error) {
 	// Never let harness instrumentation query those endpoints ahead of the CLI.
 	if !tmux.ValidSocketName(e.socket) {
 		return false, nil
+	}
+	if builtinIT() {
+		return captureBuiltinWriters(ctx, e)
 	}
 	out, err := cleanupTmux(ctx, e, "list-panes", "-a", "-F", "#{pid} #{pane_pid} #{pane_dead}")
 	server := err == nil
@@ -162,6 +178,78 @@ func captureCleanupWriters(ctx context.Context, e tenv) (bool, error) {
 	addCleanupDescendants(captured, processes)
 	e.writers.remember(captured, processes)
 	return server, nil
+}
+
+func builtinClient(e tenv) *muxd.Client { return muxd.New(e.socket) }
+
+// captureBuiltinWriters is captureCleanupWriters for the built-in backend: the
+// server process and everything under it (pane programs, their jobs). TMUX_TMPDIR
+// also moves the built-in runtime directory, so a custom root is honoured by
+// running the probe with the same environment the CLI had.
+func captureBuiltinWriters(ctx context.Context, e tenv) (bool, error) {
+	restore := withRuntimeRoot(e)
+	pid, err := builtinClient(e).ServerPID()
+	restore()
+	server := err == nil
+	if err != nil && !errors.Is(err, muxd.ErrNoServer) {
+		return false, fmt.Errorf("probe owned built-in server: %w", err)
+	}
+	if runtime.GOOS == "windows" {
+		return server, nil // no ps; shutdown waits for the server instead
+	}
+	captured := make(map[int]bool)
+	if server {
+		captured[pid] = true
+	}
+	processes, err := cleanupProcesses(ctx)
+	if err != nil {
+		return false, err
+	}
+	for pid, born := range e.writers.snapshot() {
+		if process, ok := processes[pid]; ok && process.born == born && cleanupProcessLiving(process) {
+			captured[pid] = true
+		}
+	}
+	addCleanupDescendants(captured, processes)
+	e.writers.remember(captured, processes)
+	return server, nil
+}
+
+// runtimeRootMu serializes the process-wide TMUX_TMPDIR swap below.
+var runtimeRootMu sync.Mutex
+
+// withRuntimeRoot points this process at e's runtime root (the CLI receives
+// it as TMUX_TMPDIR) for an in-process built-in client call.
+func withRuntimeRoot(e tenv) (restore func()) {
+	runtimeRootMu.Lock()
+	old, had := os.LookupEnv("TMUX_TMPDIR")
+	if e.tmuxTmp != "" {
+		os.Setenv("TMUX_TMPDIR", e.tmuxTmp)
+	}
+	return func() {
+		if had {
+			os.Setenv("TMUX_TMPDIR", old)
+		} else {
+			os.Unsetenv("TMUX_TMPDIR")
+		}
+		runtimeRootMu.Unlock()
+	}
+}
+
+func waitBuiltinGone(ctx context.Context, e tenv) error {
+	for {
+		restore := withRuntimeRoot(e)
+		running := muxd.Running(e.socket)
+		restore()
+		if !running {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("built-in server %q still running: %w", e.socket, ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
 }
 
 func cleanupTmux(ctx context.Context, e tenv, args ...string) (string, error) {
@@ -306,6 +394,7 @@ func TestCleanupTrackerSharesAndPrunesWriterIdentities(t *testing.T) {
 }
 
 func TestCleanupTrackingNeverExecutesMalformedEndpoints(t *testing.T) {
+	requireTmuxBackend(t)
 	bin := t.TempDir()
 	called := filepath.Join(bin, "tmux-called")
 	stub := fmt.Sprintf("#!/bin/sh\nprintf called >> %s\nexit 42\n", cleanupShellQuote(called))
@@ -353,8 +442,9 @@ func TestCleanupWithoutServer(t *testing.T) {
 }
 
 func TestCleanupHonorsCustomTmuxRoots(t *testing.T) {
-	if !haveTmux || !isExec(bashShell) {
-		t.Skip("tmux and bash required")
+	requireTmuxBackend(t)
+	if !isExec(bashShell) {
+		t.Skip("bash required")
 	}
 	shortRoot := func() string {
 		dir, err := os.MkdirTemp("/tmp", "pmx-cleanup-root-")
@@ -394,4 +484,8 @@ func TestCleanupHonorsCustomTmuxRoots(t *testing.T) {
 	if err := shutdownEnv(eB); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func cleanupShellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }

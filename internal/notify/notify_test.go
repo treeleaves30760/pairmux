@@ -1,8 +1,11 @@
 package notify
 
 import (
+	"encoding/base64"
 	"reflect"
+	"strings"
 	"testing"
+	"unicode/utf16"
 )
 
 func TestEscapeAppleScript(t *testing.T) {
@@ -80,7 +83,6 @@ func TestArgvFor(t *testing.T) {
 			title: `ti"tle`, body: `bo\dy`,
 			want: []string{"notify-send", `ti"tle`, `bo\dy`},
 		},
-		{name: "windows unsupported", goos: "windows", wantErr: true},
 		{name: "plan9 unsupported", goos: "plan9", wantErr: true},
 		{name: "empty goos unsupported", goos: "", wantErr: true},
 	}
@@ -100,5 +102,29 @@ func TestArgvFor(t *testing.T) {
 				t.Fatalf("argvFor(%q) = %q, want %q", tt.goos, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestWindowsNotificationIsEncodedAndQuoted(t *testing.T) {
+	argv, err := argvFor("windows", "pair'mux", "line1\nit's \"ready\"")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if argv[0] != "powershell.exe" || argv[len(argv)-2] != "-EncodedCommand" {
+		t.Fatalf("argv = %q", argv)
+	}
+	raw, err := base64.StdEncoding.DecodeString(argv[len(argv)-1])
+	if err != nil || len(raw)%2 != 0 {
+		t.Fatalf("encoded command: %v (%d bytes)", err, len(raw))
+	}
+	units := make([]uint16, len(raw)/2)
+	for i := range units {
+		units[i] = uint16(raw[2*i]) | uint16(raw[2*i+1])<<8
+	}
+	script := string(utf16.Decode(units))
+	for _, want := range []string{`$n.BalloonTipTitle = 'pair''mux'`, `$n.BalloonTipText = 'line1 it''s "ready"'`} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("script lacks %q:\n%s", want, script)
+		}
 	}
 }

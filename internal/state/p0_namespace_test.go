@@ -10,6 +10,7 @@ import (
 
 	"github.com/treeleaves30760/pairmux/internal/core"
 	"github.com/treeleaves30760/pairmux/internal/journal"
+	"github.com/treeleaves30760/pairmux/internal/mux"
 	"github.com/treeleaves30760/pairmux/internal/tmux"
 )
 
@@ -125,5 +126,36 @@ func TestResolveRejectsInvalidNameBeforeTmuxOrState(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("invalid resolves touched state root: %v", entries)
+	}
+}
+
+func TestBuiltinEndpointsHaveTheirOwnNamespaces(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("PAIRMUX_TMPDIR", "")
+	t.Setenv("TMUX_TMPDIR", "")
+	tmuxDir := SocketDirFor(root, mux.BackendTmux, "build")
+	builtinDir := SocketDirFor(root, mux.BackendBuiltin, "build")
+	if tmuxDir != SocketDir(root, "build") {
+		t.Fatalf("tmux namespace changed: %q", tmuxDir)
+	}
+	if builtinDir == tmuxDir {
+		t.Fatal("tmux and built-in endpoints of one name share a namespace")
+	}
+	if filepath.Dir(builtinDir) != filepath.Join(root, ".sockets") {
+		t.Fatalf("built-in namespace %q escaped <root>/.sockets", builtinDir)
+	}
+	if got := BuiltinEndpointDir(root, "", "build"); got != builtinDir {
+		t.Fatalf("BuiltinEndpointDir = %q, want %q", got, builtinDir)
+	}
+	other := t.TempDir()
+	if BuiltinEndpointDir(root, other, "build") == builtinDir {
+		t.Fatal("different runtime roots resolved to one built-in namespace")
+	}
+	t.Setenv("PAIRMUX_TMPDIR", other)
+	if SocketDirFor(root, mux.BackendBuiltin, "build") != BuiltinEndpointDir(root, other, "build") {
+		t.Fatal("PAIRMUX_TMPDIR does not select the built-in namespace")
+	}
+	if SocketDirFor(root, mux.BackendBuiltin, "") != SocketDirFor(root, mux.BackendBuiltin, "pairmux") {
+		t.Fatal("empty socket is not the default endpoint")
 	}
 }

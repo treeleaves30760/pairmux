@@ -12,12 +12,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/treeleaves30760/pairmux/internal/backend"
 	"github.com/treeleaves30760/pairmux/internal/core"
 	"github.com/treeleaves30760/pairmux/internal/detect"
 	"github.com/treeleaves30760/pairmux/internal/journal"
+	"github.com/treeleaves30760/pairmux/internal/mux"
 	"github.com/treeleaves30760/pairmux/internal/output"
+	"github.com/treeleaves30760/pairmux/internal/rundir"
 	"github.com/treeleaves30760/pairmux/internal/shellhooks"
-	"github.com/treeleaves30760/pairmux/internal/tmux"
 )
 
 // doctorCheck is one environment probe result. fix carries an actionable hint;
@@ -32,7 +34,7 @@ type doctorCheck struct {
 // cmdDoctor probes the environment and prints an actionable report. It works on
 // a fresh machine (missing tmux/state dir are reported, not fatal) and never
 // disturbs real terminals: the live tier probe runs on an isolated throwaway
-// tmux socket and temp state dir. The command always completes with ok=true;
+// endpoint of the selected backend and a temp state dir. The command always completes with ok=true;
 // individual check failures surface as "issues" in the report.
 func (c *Ctx) cmdDoctor(args []string) int {
 	if _, err := parseFlags(args, flagSpec{}); err != nil {
@@ -42,11 +44,11 @@ func (c *Ctx) cmdDoctor(args []string) int {
 		return rc
 	}
 
-	tmuxCheck, tmuxOK := c.checkTmux()
+	backendCheck, backendOK := c.checkBackend()
 	checks := []doctorCheck{
-		tmuxCheck,
+		backendCheck,
 		c.checkStateDir(),
-		c.checkLiveProbe(tmuxOK),
+		c.checkLiveProbe(backendOK),
 		checkNotifier(),
 	}
 	if ck, present := checkSecretPromptEnv(); present {
@@ -65,14 +67,58 @@ func (c *Ctx) cmdDoctor(args []string) int {
 	return c.emit(output.Envelope{Status: status, Output: body, Next: next})
 }
 
-// checkTmux verifies tmux is on PATH and at least version 3.2. The bool result
-// gates the live probe (which needs a working tmux).
+// checkBackend reports which multiplexer this invocation uses and why, and
+// whether it can work. The bool result gates the live probe.
+func (c *Ctx) checkBackend() (doctorCheck, bool) {
+	if c.Choice.Kind == "invalid" {
+		return doctorCheck{name: "backend", detail: c.Choice.Reason,
+			fix: "unset " + backend.Env + " or set it to tmux or builtin"}, false
+	}
+	if c.Mux.Backend() == mux.BackendTmux {
+		ck, ok := c.checkTmux()
+		ck.name = "backend"
+		ck.detail = "tmux (" + c.Choice.Reason + "): " + ck.detail
+		if !ok {
+			ck.fix += "; or run without tmux: " + backend.Env + "=builtin"
+		}
+		return ck, ok
+	}
+	ck := doctorCheck{name: "backend"}
+	dir, err := rundir.Ensure()
+	if err != nil {
+		ck.detail = "built-in multiplexer (" + c.Choice.Reason + "): " + err.Error()
+		ck.fix = "set PAIRMUX_TMPDIR to a short writable directory"
+		return ck, false
+	}
+	sock, err := rundir.SocketPath(c.Mux.SocketName())
+	if err != nil {
+		ck.detail = "built-in multiplexer (" + c.Choice.Reason + "): " + err.Error()
+		ck.fix = "set PAIRMUX_TMPDIR to a short writable directory"
+		return ck, false
+	}
+	ck.ok = true
+	ck.detail = fmt.Sprintf("built-in multiplexer (%s); socket %s", c.Choice.Reason, sock)
+	_ = dir
+	if c.Mux.HasSession() {
+		if v, err := c.Mux.Version(); err == nil {
+			ck.detail += "; server running (pairmux " + v + ")"
+		}
+	}
+	if runtime.GOOS != "windows" {
+		if _, err := exec.LookPath("tmux"); err != nil {
+			ck.detail += "; tmux not installed (not required)"
+		}
+	}
+	return ck, true
+}
+
+// checkTmux verifies tmux is on PATH and at least version 3.2.
 func (c *Ctx) checkTmux() (doctorCheck, bool) {
 	path, err := exec.LookPath("tmux")
 	if err != nil {
 		return doctorCheck{name: "tmux", detail: "not found on PATH", fix: "install tmux >= 3.2"}, false
 	}
-	ver, err := c.Tmux.Version()
+	ver, err := c.Mux.Version()
 	if err != nil {
 		return doctorCheck{name: "tmux", detail: "found at " + path + " but version probe failed: " + err.Error(),
 			fix: "verify your tmux install"}, false
@@ -153,14 +199,14 @@ func stateUsage(dir string) (summary string, total int64) {
 // achieved. It is ok as long as at least one shell probe ran; degraded hooks are
 // reported (with a fix hint) but do not fail the check, since sentinel mode is a
 // working fallback.
-func (c *Ctx) checkLiveProbe(tmuxOK bool) doctorCheck {
+func (c *Ctx) checkLiveProbe(backendOK bool) doctorCheck {
 	ck := doctorCheck{name: "live probe"}
-	if !tmuxOK {
-		ck.detail = "skipped (requires tmux >= 3.2)"
+	if !backendOK {
+		ck.detail = "skipped (the backend check failed)"
 		return ck
 	}
 
-	results := liveProbe()
+	results := liveProbe(c.Mux.Backend())
 	var parts, degraded []string
 	anyOK := false
 	for _, r := range results {
@@ -179,7 +225,11 @@ func (c *Ctx) checkLiveProbe(tmuxOK bool) doctorCheck {
 	ck.ok = anyOK
 	switch {
 	case !anyOK:
-		ck.fix = "tmux could not run a probe terminal — check tmux health and that $TMUX is not nested"
+		if c.Mux.Backend() == mux.BackendTmux {
+			ck.fix = "tmux could not run a probe terminal — check tmux health and that $TMUX is not nested"
+		} else {
+			ck.fix = "the built-in multiplexer could not run a probe terminal — see the server log in its runtime dir"
+		}
 	case len(degraded) > 0:
 		ck.fix = "hooks degraded for " + strings.Join(degraded, ", ") +
 			"; check your shell rc (oh-my-zsh / powerlevel10k / starship) is not clobbering the prompt hooks"
@@ -224,6 +274,12 @@ func checkNotifier() doctorCheck {
 		} else {
 			ck.detail = "notify-send not found; install libnotify for --notify (best-effort)"
 		}
+	case "windows":
+		if p, err := exec.LookPath("powershell.exe"); err == nil {
+			ck.detail = "powershell.exe at " + p + " (Windows notifications available, best-effort)"
+		} else {
+			ck.detail = "powershell.exe not found; --notify will be a no-op"
+		}
 	default:
 		ck.detail = "no notifier backend for GOOS=" + runtime.GOOS + " (--notify is best-effort)"
 	}
@@ -238,11 +294,11 @@ type shellTierResult struct {
 	err   string
 }
 
-// liveProbe creates a throwaway tmux server (isolated socket + temp state dir)
-// and, for each candidate shell, spins up a terminal exactly the way `new` does
-// and measures the completion-detection tier achieved. It always tears the
-// server and temp dir down afterwards.
-func liveProbe() []shellTierResult {
+// liveProbe creates a throwaway server of the given backend (isolated socket +
+// temp state dir) and, for each candidate shell, spins up a terminal exactly
+// the way `new` does and measures the completion-detection tier achieved. It
+// always tears the server and temp dir down afterwards.
+func liveProbe(kind string) []shellTierResult {
 	shells := candidateShells()
 	if len(shells) == 0 {
 		return []shellTierResult{{shell: "(none)", err: "no candidate shells found"}}
@@ -254,7 +310,7 @@ func liveProbe() []shellTierResult {
 	defer os.RemoveAll(tmpState)
 
 	sock := fmt.Sprintf("pmx-doctor-%d", os.Getpid())
-	cl := tmux.New(sock)
+	cl := backend.OpenKind(kind, sock)
 	defer func() { _ = cl.KillServer() }()
 
 	out := make([]shellTierResult, 0, len(shells))
@@ -266,8 +322,9 @@ func liveProbe() []shellTierResult {
 
 // probeShell mirrors cmdNew's creation primitives on the throwaway server:
 // EnsureSession -> shellhooks.Prepare -> pre-create raw.log 0600 -> NewWindow ->
-// PipePaneAppend -> WaitReady, then sends `true` and waits for its completion.
-func probeShell(cl *tmux.Client, stateDir string, idx int, shell string) shellTierResult {
+// PipePaneAppend (unless the backend journals atomically) -> WaitReady, then
+// sends `true` and waits for its completion.
+func probeShell(cl mux.Mux, stateDir string, idx int, shell string) shellTierResult {
 	name := fmt.Sprintf("d%d-%s", idx, sanitizeShellName(filepath.Base(shell)))
 	res := shellTierResult{shell: shell}
 
@@ -295,14 +352,20 @@ func probeShell(cl *tmux.Client, stateDir string, idx int, shell string) shellTi
 		_ = f.Close()
 	}
 
-	paneID, err := cl.NewWindow(tmux.NewWindowReq{Name: name, Dir: stateDir, Env: env, Argv: argv})
+	req := mux.NewWindowReq{Name: name, Dir: stateDir, Env: env, Argv: argv}
+	if cl.AtomicJournal() {
+		req.Journal = j.RawPath()
+	}
+	paneID, err := cl.NewWindow(req)
 	if err != nil {
 		res.err = "new-window: " + err.Error()
 		return res
 	}
-	if err := cl.PipePaneAppend(paneID, j.RawPath()); err != nil {
-		res.err = "pipe-pane: " + err.Error()
-		return res
+	if !cl.AtomicJournal() {
+		if err := cl.PipePaneAppend(paneID, j.RawPath()); err != nil {
+			res.err = "pipe-pane: " + err.Error()
+			return res
+		}
 	}
 	if mode == core.ModeHooks {
 		_ = cl.SendKeys(paneID, "Enter") // nudge one prompt so an A mark is guaranteed after capture
@@ -383,9 +446,10 @@ func deriveTier(mode core.Mode, gotHooks, gotC, gotDone bool) (tier, note string
 	}
 }
 
-// candidateShells returns the distinct, executable shells to probe: $SHELL,
-// /bin/bash, and /bin/dash (each only when present). Deduplication is by cleaned
-// path so a $SHELL that equals one of the fixed paths is probed once.
+// candidateShells returns the distinct, executable shells to probe: the shell
+// `new` would use, plus /bin/bash and /bin/dash on Unix, or Windows
+// PowerShell and cmd.exe on Windows (each only when present). Deduplication is
+// by cleaned path so the default that equals a fixed one is probed once.
 func candidateShells() []string {
 	var out []string
 	seen := map[string]bool{}
@@ -394,11 +458,24 @@ func candidateShells() []string {
 			return
 		}
 		cp := filepath.Clean(p)
-		if seen[cp] || !isExecutable(cp) {
+		key := cp
+		if runtime.GOOS == "windows" {
+			key = strings.ToLower(cp)
+		}
+		if seen[key] || !isExecutable(cp) {
 			return
 		}
-		seen[cp] = true
+		seen[key] = true
 		out = append(out, cp)
+	}
+	if runtime.GOOS == "windows" {
+		add(shellName())
+		for _, name := range []string{"pwsh.exe", "powershell.exe", "cmd.exe"} {
+			if p, err := exec.LookPath(name); err == nil {
+				add(p)
+			}
+		}
+		return out
 	}
 	add(os.Getenv("SHELL"))
 	add("/bin/bash")
@@ -408,7 +485,10 @@ func candidateShells() []string {
 
 func isExecutable(p string) bool {
 	fi, err := os.Stat(p)
-	return err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0
+	if err != nil || fi.IsDir() {
+		return false
+	}
+	return runtime.GOOS == "windows" || fi.Mode()&0o111 != 0
 }
 
 // sanitizeShellName reduces a shell basename to a safe window/journal name.

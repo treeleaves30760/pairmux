@@ -31,6 +31,7 @@ func pmxAsync(t *testing.T, e tenv, args ...string) func() (output.Envelope, int
 		"PAIRMUX_STATE_DIR="+e.state,
 		"PAIRMUX_SOCKET="+e.socket,
 		"HOME="+e.home,
+		"PAIRMUX_BACKEND="+itBackend,
 	)
 	if e.shell != "" {
 		cmd.Env = append(cmd.Env, "SHELL="+e.shell)
