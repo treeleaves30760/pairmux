@@ -322,10 +322,10 @@ func (c *Ctx) armWaitTarget(name string, human, doneFlag, noteFlag bool) (t *wai
 			t.completionFrom, t.completionEcho, t.completionStart = pending.Offset, pending.Text, pending.TS
 			t.completionFull = fmt.Sprintf("pairmux log %s --cmd %d", name, pending.CmdID)
 			if term.Mode == core.ModeSentinel {
-				t.completionEcho += shellhooks.SentinelSuffix(term.Meta.Shell)
+				t.completionEcho = shellhooks.SentinelPrefix(term.Meta.Shell) + t.completionEcho + shellhooks.SentinelSuffix(term.Meta.Shell)
 			}
 		}
-		t.completion = detect.NewCompletionWatcher(t.completionFrom, term.Mode)
+		t.completion = detect.NewCompletionWatcher(t.completionFrom, term.Mode, shellhooks.SentinelHasBoundary(term.Meta.Shell))
 	}
 
 	// What a handoff is actually waiting for is the human finishing, not the

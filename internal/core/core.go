@@ -16,6 +16,14 @@ const (
 // nothing on screen (verified in P0 spike).
 const SentinelSuffix = `; printf '\033]7779;p;%d\007' $?`
 
+// SentinelBoundary is printed as plain text right after the sentinel OSC by the
+// Windows shells' suffixes. ConPTY writes a pass-through OSC out at the start of
+// the render frame it arrived in, ahead of that frame's text, so on Windows the
+// sentinel can precede the very output it reports on; text, this boundary
+// included, keeps its order, so the boundary marks where the output truly ends.
+// Three ZERO WIDTH SPACEs: invisible, zero cells wide, and unlikely in output.
+const SentinelBoundary = "\u200b\u200b\u200b"
+
 type Mode string
 
 const (

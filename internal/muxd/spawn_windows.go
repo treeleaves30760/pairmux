@@ -61,6 +61,11 @@ func spawnServer(socket string) error {
 		}
 		return cmd.Process.Release()
 	}
+	// CREATE_NEW_PROCESS_GROUP keeps the server out of the starter's process
+	// group, so a Ctrl+C or Ctrl+Break aimed at that group never names it. The
+	// "ignore Ctrl+C" flag it implies would be inherited by every terminal; the
+	// server clears it at startup (handleSignals), as it must anyway when a
+	// parent that already ignores Ctrl+C starts it.
 	if err := start(detachedProcess | createNewProcessGroup | createBreakawayFromJob); err != nil {
 		// A job that forbids breakaway rejects the flag outright; run inside it.
 		return start(detachedProcess | createNewProcessGroup)

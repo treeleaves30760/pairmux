@@ -520,7 +520,7 @@ func TestLogCmdReadsCompleteSelectedCommand(t *testing.T) {
 
 	var buf bytes.Buffer
 	c := newTestCtx(&buf, true)
-	if rc := c.logCmd("t1", j, core.ModeHooks, 1); rc != 0 {
+	if rc := c.logCmd("t1", j, core.ModeHooks, false, 1); rc != 0 {
 		t.Fatalf("logCmd rc = %d: %s", rc, buf.String())
 	}
 	env := decode(t, &buf)

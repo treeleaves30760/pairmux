@@ -40,8 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   line discipline to read, so secret-prompt classification there uses prompt wording only;
   `PAIRMUX_SECRET_PROMPT_RE` can extend it. Killing a terminal kills its whole process tree through
   a job object, and `--notify` shows a best-effort notification through Windows PowerShell. This
-  support is new: it is validated by CI on hosted Windows Server 2025 runners and has not been
-  accepted on real Windows hardware, and the ARM64 build has not been exercised at runtime. WSL
+  support is new: it is validated by CI on hosted Windows Server 2025 runners and was accepted on
+  real Windows 11 x86-64 hardware (Windows PowerShell 5.1, cmd.exe and Git Bash terminals through
+  ConPTY, including a human `attach`); the ARM64 build has not been exercised at runtime. WSL
   remains possible; inside it pairmux is a Linux program and picks its backend as on Linux.
 
 - `PAIRMUX_SHELL` overrides the terminal shell on every platform (for example
@@ -118,6 +119,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Windows installation, installing from a clone, and per-backend `attach`.
 
 ### Fixed
+
+- `cmd.exe` terminals (sentinel mode) on Windows reported `run` output as empty and leaked a stale
+  exit status into the next command. ConPTY emits a pass-through OSC sequence at the start of the
+  render frame it arrived in, ahead of the text written in that frame, so the completion sentinel
+  could land before the very output it reported; the Windows sentinels now print an invisible
+  zero-width boundary after the OSC, which keeps its place in the text, and a command ends there.
+  The sentinel's `<nul set /p` also left `ERRORLEVEL` at 1, which builtins such as `echo` never
+  reset, so `echo` after any command reported exit code 1; `run` now clears `ERRORLEVEL` with
+  `(call )` before the command and again once the sentinel has read it, so a status left behind by
+  a `send`-typed command or a human no longer leaks into the next `run` either.
+
+- Programs in built-in Windows terminals never received Ctrl-C (`send --key C-c`): the server is
+  started with `CREATE_NEW_PROCESS_GROUP`, which makes it ignore Ctrl-C, and every ConPTY child
+  inherited that state, so `ping` in a cmd.exe or Windows PowerShell terminal kept running and the
+  terminal stayed busy. The server now re-enables Ctrl-C handling for itself before spawning
+  terminals (it has no console, so this cannot expose it to console events) and children inherit
+  the enabled state.
 
 - A failing PowerShell installer now throws instead of closing the PowerShell window, so the error
   stays readable when it was run as `irm ... | iex`.

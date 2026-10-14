@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"regexp"
 	"strings"
+
+	"github.com/treeleaves30760/pairmux/internal/core"
 )
 
 // truncMarker is the single-line placeholder Truncate inserts between the head
@@ -76,9 +78,11 @@ func CollapseCR(b []byte) []byte {
 //   - Any other ESC + single byte (e.g. ESC c full reset).
 //   - C0 control bytes other than \n and \t (this includes \r, which callers who
 //     care about \r must resolve with CollapseCR first).
+//   - core.SentinelBoundary, the invisible text the Windows sentinels print to
+//     mark the end of a command's output; it is pairmux's, not the program's.
 //
-// Bytes >= 0x80 pass through untouched so UTF-8 text is preserved. StripANSI only
-// deletes; it never rewrites surviving bytes.
+// Other bytes >= 0x80 pass through untouched so UTF-8 text is preserved.
+// StripANSI only deletes; it never rewrites surviving bytes.
 func StripANSI(b []byte) []byte {
 	out := make([]byte, 0, len(b))
 	n := len(b)
@@ -86,6 +90,8 @@ func StripANSI(b []byte) []byte {
 	for i < n {
 		c := b[i]
 		switch {
+		case c == core.SentinelBoundary[0] && bytes.HasPrefix(b[i:], []byte(core.SentinelBoundary)):
+			i += len(core.SentinelBoundary)
 		case c == 0x1b: // ESC — start of an escape sequence
 			if i+1 >= n {
 				i++ // lone trailing ESC: drop it
@@ -159,6 +165,12 @@ func skipStringSeq(b []byte, i int) int {
 		return n // unterminated at end of buffer: drop the truncated sequence
 	}
 	return i + 1 // ran past the cap with data still following: abandon
+}
+
+// StripBoundary removes every core.SentinelBoundary from already-rendered text,
+// such as a screen capture, which StripANSI never sees.
+func StripBoundary(s string) string {
+	return strings.ReplaceAll(s, core.SentinelBoundary, "")
 }
 
 // maxEchoWrapLines caps how many leading lines a hard-wrapped command echo may

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -333,6 +334,55 @@ func TestWindowsShellSentinels(t *testing.T) {
 	}
 	if cmdEnv["PAIRMUX_ESC"] != "\x1b" || cmdEnv["PAIRMUX_BEL"] != "\x07" {
 		t.Errorf("cmd environment = %q", cmdEnv)
+	}
+}
+
+// TestWindowsSentinelBoundary: the Windows suffixes print core.SentinelBoundary
+// right after the sentinel OSC, without the typed command line carrying it (the
+// echo would otherwise end the run before the output), and cmd resets
+// ERRORLEVEL once the sentinel has read it.
+func TestWindowsSentinelBoundary(t *testing.T) {
+	if !strings.Contains(cmdSentinelSuffix, `%PAIRMUX_BEL%%PAIRMUX_EOC%"`) || !strings.HasSuffix(cmdSentinelSuffix, ` & (call )`) {
+		t.Errorf("cmd suffix = %q, want the boundary after BEL and a trailing (call )", cmdSentinelSuffix)
+	}
+	if cmdEnv["PAIRMUX_EOC"] != core.SentinelBoundary {
+		t.Errorf("PAIRMUX_EOC = %q, want %q", cmdEnv["PAIRMUX_EOC"], core.SentinelBoundary)
+	}
+	var ps strings.Builder
+	for _, r := range core.SentinelBoundary {
+		ps.WriteString("$([char]0x" + strconv.FormatInt(int64(r), 16) + ")")
+	}
+	if !strings.Contains(powershellSentinelSuffix, "$([char]7)"+ps.String()+`")`) {
+		t.Errorf("PowerShell suffix = %q, want the boundary after BEL", powershellSentinelSuffix)
+	}
+	for _, s := range []string{cmdSentinelSuffix, powershellSentinelSuffix} {
+		if strings.Contains(s, core.SentinelBoundary) {
+			t.Errorf("suffix %q types the boundary itself", s)
+		}
+	}
+	for shell, want := range map[string]bool{
+		"cmd.exe": true, `C:\Windows\System32\CMD.EXE`: true, "pwsh.exe": true, "powershell": true,
+		"bash": false, "/bin/zsh": false, "fish": false, "/bin/dash": false, "": false,
+	} {
+		if got := SentinelHasBoundary(shell); got != want {
+			t.Errorf("SentinelHasBoundary(%q) = %v, want %v", shell, got, want)
+		}
+	}
+	if SentinelSuffix("bash") != core.SentinelSuffix || SentinelSuffix("fish") != fishSentinelSuffix {
+		t.Errorf("POSIX/fish suffixes changed")
+	}
+}
+
+// TestSentinelPrefix: only cmd.exe needs ERRORLEVEL cleared before the command;
+// every other shell's status variable is set by the command itself.
+func TestSentinelPrefix(t *testing.T) {
+	for shell, want := range map[string]string{
+		"cmd.exe": "(call ) & ", `C:\Windows\System32\CMD.EXE`: "(call ) & ",
+		"pwsh.exe": "", "powershell": "", "bash": "", "/bin/zsh": "", "fish": "", "/bin/dash": "", "": "",
+	} {
+		if got := SentinelPrefix(shell); got != want {
+			t.Errorf("SentinelPrefix(%q) = %q, want %q", shell, got, want)
+		}
 	}
 }
 

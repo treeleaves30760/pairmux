@@ -389,7 +389,7 @@ func WaitCommandCorrelated(j *journal.Journal, from int64, timeout, poll time.Du
 
 func waitCompletionCorrelated(j *journal.Journal, from int64, timeout, poll time.Duration, requireC, stopOnPrompt bool, tty string) (RunResult, error) {
 	if !requireC {
-		return waitCompletion(j, from, core.ModeHooks, timeout, poll, stopOnPrompt, tty)
+		return waitCompletion(j, from, core.ModeHooks, false, timeout, poll, stopOnPrompt, tty)
 	}
 	if poll <= 0 {
 		poll = defaultPoll

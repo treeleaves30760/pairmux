@@ -392,7 +392,7 @@ func probeShell(cl mux.Mux, stateDir string, idx int, shell string) shellTierRes
 	sendOffset := j.Size()
 	_ = cl.SendLiteral(paneID, sent)
 	_ = cl.SendKeys(paneID, "Enter")
-	wr, err := detect.WaitCompletion(j, sendOffset, completionMode, 5*time.Second, 0)
+	wr, err := detect.WaitCompletion(j, sendOffset, completionMode, shellhooks.SentinelHasBoundary(shell), 5*time.Second, 0)
 	gotDone := err == nil && wr.Outcome == detect.OutcomeDone
 
 	// Hooks tier fidelity: bash 3.2 emits A/D but never C (no PS0), which

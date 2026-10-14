@@ -393,8 +393,9 @@ func (c *Ctx) cmdRun(args []string) int {
 
 	// Lazy settlement: a prior run that timed out left its cmd_start unmatched.
 	// Settle it if it has since finished; refuse if it is genuinely still running.
+	bounded := shellhooks.SentinelHasBoundary(term.Meta.Shell)
 	if pending, ok, perr := j.PendingCmd(); perr == nil && ok {
-		res, _ := waitDone(j, pending.Offset, mode, 0, term.Meta.Tty)
+		res, _ := waitDone(j, pending.Offset, mode, bounded, 0, term.Meta.Tty)
 		if res.Outcome != detect.OutcomeDone {
 			return c.fail(output.CodeBusy, "a command is still running", fmt.Sprintf("pairmux peek %s", name))
 		}
@@ -409,11 +410,12 @@ func (c *Ctx) cmdRun(args []string) int {
 	sendOffset := j.Size()
 
 	// In sentinel mode the shell substitutes its last-status variable into an
-	// OSC 7779 marker so completion is detectable without hooks. Drop the exact
-	// sent bytes (suffix included) when shaping so the echoed line disappears.
+	// OSC 7779 marker so completion is detectable without hooks (cmd.exe also
+	// gets a prefix that clears that variable first). Drop the exact sent bytes
+	// (prefix and suffix included) when shaping so the echoed line disappears.
 	sent := cmd
 	if mode == core.ModeSentinel {
-		sent = cmd + shellhooks.SentinelSuffix(term.Meta.Shell)
+		sent = shellhooks.SentinelPrefix(term.Meta.Shell) + cmd + shellhooks.SentinelSuffix(term.Meta.Shell)
 	}
 	if err := recordAndSendCommand(j, core.Event{
 		Type: core.EvCmdStart, CmdID: cmdID, Offset: sendOffset, Text: cmd,
@@ -433,7 +435,7 @@ func (c *Ctx) cmdRun(args []string) int {
 	}
 
 	start := time.Now()
-	res, err := waitDone(j, sendOffset, mode, timeout, term.Meta.Tty)
+	res, err := waitDone(j, sendOffset, mode, bounded, timeout, term.Meta.Tty)
 	if err != nil {
 		return c.fail(output.CodeInternal, "wait completion: "+err.Error(), "")
 	}
@@ -560,13 +562,15 @@ func quotedCommandHint(tokens []string) string {
 // C-correlated variant (review item R1): the completion D must follow our
 // command's own C mark, so a human running commands in the same pane cannot
 // spoof completion. bash 3.2 emits no C, which the correlated wait covers by
-// accepting a lone D after a short grace. Sentinel mode is unchanged. A zero
-// timeout degenerates to a single read-only scan (used for lazy settlement).
-func waitDone(j *journal.Journal, from int64, mode core.Mode, timeout time.Duration, tty string) (detect.RunResult, error) {
+// accepting a lone D after a short grace. Sentinel mode takes the sentinel, or
+// with bounded (shellhooks.SentinelHasBoundary) the boundary printed after it.
+// A zero timeout degenerates to a single read-only scan (used for lazy
+// settlement).
+func waitDone(j *journal.Journal, from int64, mode core.Mode, bounded bool, timeout time.Duration, tty string) (detect.RunResult, error) {
 	if mode == core.ModeHooks {
 		return detect.WaitCommandCorrelated(j, from, timeout, 0, true, tty)
 	}
-	return detect.WaitCommand(j, from, mode, timeout, 0, tty)
+	return detect.WaitCommand(j, from, mode, bounded, timeout, 0, tty)
 }
 
 // deriveTerminalStatus adds terminal-kind context to the journal-derived
@@ -631,7 +635,7 @@ func (c *Ctx) cmdPeek(args []string) int {
 		if err != nil {
 			return c.muxErr(err)
 		}
-		body = trimTrailingBlank(out)
+		body = trimTrailingBlank(shape.StripBoundary(out))
 	} else {
 		raw, start, err := j.TailBytes(64 * 1024)
 		if err != nil {
@@ -868,7 +872,7 @@ func (c *Ctx) cmdLog(args []string) int {
 		if err != nil {
 			return c.fail(output.CodeBadArgs, fmt.Sprintf("bad --cmd id %q", cmdS), "pairmux log "+name)
 		}
-		return c.logCmd(name, j, term.Mode, id)
+		return c.logCmd(name, j, term.Mode, shellhooks.SentinelHasBoundary(term.Meta.Shell), id)
 	case seen["grep"]:
 		return c.logGrep(name, j, term.Mode, grepS)
 	case seen["range"]:
@@ -977,7 +981,7 @@ func parseRange(s string) (a, b int, err error) {
 // logCmd renders the complete output region of one explicitly selected
 // command. Unlike bounded peek/default-log views, an explicit command lookup
 // never silently byte-caps its output.
-func (c *Ctx) logCmd(name string, j *journal.Journal, mode core.Mode, id int) int {
+func (c *Ctx) logCmd(name string, j *journal.Journal, mode core.Mode, bounded bool, id int) int {
 	events, err := j.Events()
 	if err != nil {
 		return c.fail(output.CodeInternal, err.Error(), "")
@@ -999,7 +1003,7 @@ func (c *Ctx) logCmd(name string, j *journal.Journal, mode core.Mode, id int) in
 	from := startEv.Offset
 	to := endOff
 	if to < 0 {
-		if mk, ok := scanCompletion(j, from, mode); ok {
+		if mk, ok := scanCompletion(j, from, mode, bounded); ok {
 			to = mk
 		}
 	}
@@ -1366,9 +1370,10 @@ func (c *Ctx) findPane(name string) (mux.PaneInfo, bool, error) {
 }
 
 // scanCompletion does one read-only scan for the completion mark of a command
-// sent at offset from, returning the mark's start offset if present.
-func scanCompletion(j *journal.Journal, from int64, mode core.Mode) (start int64, ok bool) {
-	res, err := detect.WaitCompletion(j, from, mode, 0, 0)
+// sent at offset from, returning the mark's start offset if present. bounded is
+// as for waitDone.
+func scanCompletion(j *journal.Journal, from int64, mode core.Mode, bounded bool) (start int64, ok bool) {
+	res, err := detect.WaitCompletion(j, from, mode, bounded, 0, 0)
 	if err != nil || res.Outcome != detect.OutcomeDone {
 		return 0, false
 	}

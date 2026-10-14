@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/treeleaves30760/pairmux/internal/core"
 )
 
 // screenLines returns the visible capture as lines (without the final "\n").
@@ -109,6 +111,10 @@ func TestWideAndCombining(t *testing.T) {
 		{name: "combining on blank cell", in: "\x1b[3C\u0301x", want: []string{"   \u0301x"}, cx: 4, cy: 0},
 		{name: "combining at pending wrap", in: "0123456789\u0301", want: []string{"012345678" + "9\u0301"}, cx: 9, cy: 0},
 		{name: "zero width format chars", in: "a\u200bb\u2060c\ufeffd", want: []string{"a\u200bb\u2060c\ufeffd"}, cx: 4, cy: 0},
+		// The boundary the Windows sentinels print after their OSC must not move the
+		// cursor, or every cmd.exe run would leave a stray column on screen.
+		{name: "sentinel boundary is zero width", in: "a" + core.SentinelBoundary + "b", want: []string{"a" + core.SentinelBoundary + "b"}, cx: 2, cy: 0},
+		{name: "sentinel boundary in column 0 dropped", in: core.SentinelBoundary + "x", want: []string{"x"}, cx: 1, cy: 0},
 		{name: "hangul jamo compose", in: "각k", want: []string{"각k"}, cx: 3, cy: 0},
 		{name: "VS16 widens", in: "❤\ufe0fx", want: []string{"❤\ufe0fx"}, cx: 3, cy: 0},
 		{name: "VS15 does not widen", in: "❤\ufe0ex", want: []string{"❤\ufe0ex"}, cx: 2, cy: 0},

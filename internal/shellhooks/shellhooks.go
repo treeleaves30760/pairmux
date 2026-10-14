@@ -56,8 +56,9 @@ func EncodeCommand(script string) string {
 
 // cmdEnv carries ESC and BEL into cmd.exe's environment: the sentinel needs
 // them on screen, and neither can be typed into cmd's line editor, which
-// treats ESC as "clear the line".
-var cmdEnv = map[string]string{"PAIRMUX_ESC": "\x1b", "PAIRMUX_BEL": "\x07"}
+// treats ESC as "clear the line". PAIRMUX_EOC carries core.SentinelBoundary
+// the same way, so the echoed command line never contains the boundary itself.
+var cmdEnv = map[string]string{"PAIRMUX_ESC": "\x1b", "PAIRMUX_BEL": "\x07", "PAIRMUX_EOC": core.SentinelBoundary}
 
 // Prepare returns the argv, extra environment, and mode for launching a terminal.
 //
@@ -137,12 +138,32 @@ func Prepare(stateDir, shell string, cmdOverride []string) (argv []string, env m
 const fishSentinelSuffix = `; printf '\033]7779;p;%d\007' $status`
 
 // powershellSentinelSuffix reports the previous statement's outcome the way
-// the prompt hook does: 0 on success, else the native exit code, else 1.
-const powershellSentinelSuffix = `; $__pmx_ok = $?; [Console]::Write("$([char]27)]7779;p;$(if ($__pmx_ok) {0} elseif ($LASTEXITCODE) {$LASTEXITCODE} else {1})$([char]7)")`
+// the prompt hook does: 0 on success, else the native exit code, else 1. Under
+// ConPTY the OSC can be hoisted ahead of the output, so core.SentinelBoundary
+// follows it as text; it is spelled as [char] subexpressions so the typed (and
+// echoed) line holds no boundary of its own.
+var powershellSentinelSuffix = `; $__pmx_ok = $?; [Console]::Write("$([char]27)]7779;p;$(if ($__pmx_ok) {0} elseif ($LASTEXITCODE) {$LASTEXITCODE} else {1})$([char]7)` +
+	powershellChars(core.SentinelBoundary) + `")`
 
 // cmdSentinelSuffix prints the marker without a newline (set /p) and reads
 // ERRORLEVEL at execution time (!...! under /v:on), after the command ran.
-const cmdSentinelSuffix = ` & <nul set /p "=%PAIRMUX_ESC%]7779;p;!ERRORLEVEL!%PAIRMUX_BEL%"`
+// %PAIRMUX_EOC% then prints core.SentinelBoundary: ConPTY hoists the OSC to the
+// start of its render frame, ahead of the output cmd wrote in that frame, but
+// the boundary is text and stays behind it. `<nul set /p` leaves ERRORLEVEL at
+// 1 (it reads EOF), and builtins such as echo never reset it, so `(call )`
+// clears it to 0 once the sentinel has read it; otherwise the next command
+// would report this one's stale 1.
+const cmdSentinelSuffix = ` & <nul set /p "=%PAIRMUX_ESC%]7779;p;!ERRORLEVEL!%PAIRMUX_BEL%%PAIRMUX_EOC%" & (call )`
+
+// powershellChars spells s as PowerShell [char] subexpressions, for use inside
+// a double-quoted string.
+func powershellChars(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		fmt.Fprintf(&b, "$([char]0x%x)", r)
+	}
+	return b.String()
+}
 
 // SentinelSuffix returns the completion marker command for shell. POSIX-like
 // shells expose the prior command's status as $?, fish as $status, PowerShell
@@ -157,6 +178,32 @@ func SentinelSuffix(shell string) string {
 		return cmdSentinelSuffix
 	}
 	return core.SentinelSuffix
+}
+
+// cmdSentinelPrefix clears ERRORLEVEL before the command runs. cmd.exe's
+// builtins (echo, cd, set, ...) never set it, so the sentinel would otherwise
+// report whatever the last program left: one typed with send or by a human, or
+// a Ctrl+C'd one. `&` binds loosest in cmd, so the user's && and || still group
+// as typed.
+const cmdSentinelPrefix = `(call ) & `
+
+// SentinelPrefix returns what is typed before a run command in sentinel mode:
+// cmdSentinelPrefix for cmd.exe, "" for every other shell, whose status
+// variable is always set by the command itself.
+func SentinelPrefix(shell string) string {
+	if Kind(shell) == "cmd" {
+		return cmdSentinelPrefix
+	}
+	return ""
+}
+
+// SentinelHasBoundary reports whether shell's sentinel suffix prints
+// core.SentinelBoundary after the sentinel: the Windows shells, whose output
+// passes through ConPTY. Completion detection waits for that boundary only when
+// it is coming; a POSIX or fish sentinel is written in order on a Unix pty.
+func SentinelHasBoundary(shell string) bool {
+	kind := Kind(shell)
+	return kind == "cmd" || isPowerShell(kind)
 }
 
 // ensureDir creates dir (and parents) and forces 0700 despite umask.
