@@ -19,20 +19,29 @@ Driving a raw terminal is hard for agents for three separate reasons:
 - **Human access.** Many automation interfaces do not expose the same live terminal to a human who
   needs to observe or provide authorized input.
 
-pairmux is an **ACI (Agent-Computer Interface) layer** on top of tmux: blocking calls return on a
-command completion, a recognized prompt, a requested condition, or timeout; a journal retains raw
-pane output while CLI reads shape it for agents; and `pairmux attach` opens a native tmux client on
-the managed session so a human can collaborate in the same pane.
+pairmux is an **ACI (Agent-Computer Interface) layer** on top of a terminal multiplexer — tmux
+when it is installed, otherwise pairmux's own built-in one: blocking calls return on a command
+completion, a recognized prompt, a requested condition, or timeout; a journal retains raw pane output
+while CLI reads shape it for agents; and `pairmux attach` puts a human in the same live pane.
+
+:::info Not yet released
+The built-in multiplexer (tmux becomes optional) and native Windows support are on `main` and ship
+in the next release after v0.6.0. v0.6.0 and earlier require tmux >= 3.2 and run on Windows only
+inside WSL.
+:::
 
 ## Requirements
 
-- **tmux >= 3.2** (for stable `pipe-pane` and pane user-option behavior).
-- **macOS 12+ or Linux**, on x86-64 or ARM64. There is no native Windows build; use a supported
-  Linux distribution inside WSL.
-- Released pairmux executables are static Go binaries. Core terminal state needs no background
-  pairmux service, although tmux keeps its normal server and `mcp serve` is an explicit foreground
-  process. Installing the PyPI wheel requires Python 3.9+; building from a checkout requires Go
-  1.25+ and `make`.
+- **macOS 12+, Linux, or Windows 10 1809+**, on x86-64 or ARM64. Native Windows is new (next
+  release after v0.6.0); see the Windows tab below.
+- **tmux is optional.** On macOS and Linux, pairmux uses tmux when it is on PATH — the tmux backend
+  needs **tmux >= 3.2** (for stable `pipe-pane` and pane user-option behavior) — and its built-in
+  multiplexer otherwise. Windows always uses the built-in multiplexer. See
+  [Concepts: terminal backends](./concepts.md#terminal-backends).
+- Released pairmux executables are static Go binaries. There is no service to install: tmux keeps
+  its normal server, and the built-in server is started on demand and exits on its own when idle.
+  `mcp serve` is an explicit foreground process. Installing the PyPI wheel requires Python 3.9+;
+  building from a checkout requires Go 1.25+ (and `make` on macOS/Linux).
 
 ## Install
 
@@ -59,19 +68,22 @@ older first need `uv tool install --upgrade pairmux` to obtain v0.6.0+ when avai
 The [PyPI](https://pypi.org/project/pairmux/) wheels bundle the native Go binary and require Python
 3.9+ to install. uv can obtain managed Python from Astral upstream if needed; the installed binary
 itself does not need Python. Supported wheels target macOS 12+ and `manylinux_2_17` (glibc 2.17+) on
-x86-64 and ARM64. You can also use `pipx install pairmux`, or `python -m pip install pairmux` inside a
+x86-64 and ARM64, plus `win_amd64` and `win_arm64` from the next release after v0.6.0. You can also use `pipx install pairmux`, or `python -m pip install pairmux` inside a
 dedicated Python 3.9+ virtual environment.
 
-uv and pipx do not install tmux. Use `brew install tmux`, `sudo apt install tmux` on Debian/Ubuntu,
-or your distribution's package manager for **tmux >= 3.2**. Use the alternative installer below
-for its explicit public-PyPI-only wheel source policy.
+uv and pipx do not install tmux. It is optional from the next release after v0.6.0 (required
+through v0.6.0); if you want the tmux backend, use `brew install tmux`, `sudo apt install tmux` on
+Debian/Ubuntu, or your distribution's package manager for **tmux >= 3.2**. Use the alternative
+installer below for its explicit public-PyPI-only wheel source policy. On Windows, the same commands
+work in PowerShell once Windows wheels are published; see the Windows tab.
 
 </TabItem>
 <TabItem value="brew" label="Homebrew">
 
 The tap cask installs pairmux **and its tmux dependency** in one command (macOS and Linuxbrew),
-and strips the quarantine attribute so the binary runs without a Gatekeeper prompt. Available from
-v0.2.0; republished automatically with every stable release:
+and strips the quarantine attribute so the binary runs without a Gatekeeper prompt. Because tmux is
+installed, it is the automatically selected backend on those machines. Available from v0.2.0;
+republished automatically with every stable release:
 
 ```bash
 brew install --cask treeleaves30760/pairmux/pairmux
@@ -133,7 +145,8 @@ curl -fL "https://github.com/treeleaves30760/pairmux/releases/download/v${PAIRMU
 sudo dnf install "$download_dir/$PAIRMUX_PACKAGE"
 ```
 
-The RPM declares a `tmux >= 3.2` dependency. There is no Yum repository; upgrading requires a new
+Through v0.6.0 the RPM requires `tmux >= 3.2`; from the next release it only recommends it (a weak
+dependency), because pairmux runs without tmux. There is no Yum repository; upgrading requires a new
 RPM download. pairmux no longer provides an APT installation path; Debian/Ubuntu users should use
 PyPI/uv, Homebrew, or a manual archive.
 
@@ -142,7 +155,7 @@ PyPI/uv, Homebrew, or a manual archive.
 
 For installation without Python, download a `.tar.gz` and `checksums.txt` from
 [GitHub Releases](https://github.com/treeleaves30760/pairmux/releases). This is a separate manual
-path; the website's installer uses PyPI.
+path; the website's installer uses PyPI. For Windows `.zip` archives, see the Windows tab.
 
 ```bash
 PAIRMUX_VERSION=X.Y.Z # replace with the selected release version, without the leading v
@@ -168,12 +181,15 @@ export PATH="$HOME/.local/bin:$PATH"
 pairmux version
 ```
 
-Install **tmux >= 3.2** separately. This archive path does not provide automatic upgrades.
+tmux is optional (required through v0.6.0); install **tmux >= 3.2** separately if you want the
+tmux backend. This archive path does not provide automatic upgrades.
 
 </TabItem>
 <TabItem value="source" label="Source checkout">
 
-From the repository root:
+To install a checkout as a Python package without PyPI, see
+[Install from a clone](#install-from-a-clone) below. To build only the binary, from the repository
+root on macOS/Linux:
 
 ```bash
 make build
@@ -182,24 +198,115 @@ install -m 0755 bin/pairmux "$HOME/.local/bin/pairmux"
 pairmux version
 ```
 
-</TabItem>
-<TabItem value="windows" label="Windows (WSL)">
+On Windows, where `make` is usually absent, build with Go 1.25+ and put the directory containing
+`pairmux.exe` on PATH:
 
-There is no native Windows artifact because tmux does not run on Windows. The supported arrangement
-is pairmux inside WSL. The PowerShell entry point finds WSL, checks it has a distribution, downloads
-the Bash installer successfully, and then runs it inside that distribution:
+```powershell
+go build -o pairmux.exe ./cmd/pairmux
+.\pairmux.exe version
+```
+
+A plain `go build` does not stamp a release version; `make build` stamps `VERSION` (default
+`0.1.0-dev`).
+
+</TabItem>
+<TabItem value="windows" label="Windows">
+
+pairmux runs natively on **Windows 10 1809 or newer** (needed for ConPTY and AF_UNIX sockets), on
+x86-64 and ARM64, with the built-in multiplexer: neither tmux nor WSL is needed.
+
+:::caution New and not yet released
+Native Windows ships in the next release after v0.6.0, which adds `win_amd64`/`win_arm64` wheels and
+`pairmux_<version>_windows_amd64.zip` / `_windows_arm64.zip` release archives. It is validated by CI
+on hosted Windows runners (pending); it has not yet been accepted on real Windows hardware, and the
+ARM64 build has not been exercised at runtime. Until the release is published, the native install
+below fails with a hint to use WSL — use the WSL route at the end of this tab.
+:::
+
+Once published, any PyPI installer works from PowerShell: `uv tool install pairmux`,
+`pipx install pairmux`, or `python -m pip install pairmux` in a dedicated environment. Or use the
+PowerShell one-liner, which installs natively by default:
 
 ```powershell
 irm https://pairmux.treeleaves30760.com/install.ps1 | iex
 ```
 
-A piped script takes no arguments, so configure it through the environment — `PAIRMUX_VERSION`,
-`PAIRMUX_WSL_DISTRO`, `PAIRMUX_INSTALL_DIR` — or inspect the downloaded `install.ps1` before invoking
-it as a file. pairmux then lives inside the distribution: run it as `wsl -- pairmux version`, and
-install tmux there too (`sudo apt install tmux` on Debian/Ubuntu) if it is not already present.
+It applies the same policy as the Bash installer: uv installs the pairmux wheel exclusively from
+`https://pypi.org/simple`, wheels only and without cache, ignoring inherited `UV_*` settings and uv
+configuration, and uv is bootstrapped from Astral's official PowerShell installer only if it is
+missing. It needs no administrator rights and does not edit PATH or profiles. A piped script takes no
+arguments, so configure it through the environment — `PAIRMUX_VERSION`, `PAIRMUX_INSTALL_DIR`,
+`PAIRMUX_DRY_RUN` — or inspect the downloaded `install.ps1` before invoking it as a file.
+
+Without Python, download a Windows `.zip` (`pairmux.exe`, LICENSE, README.md, `man/pairmux.1`) and
+`checksums.txt`, compare the zip's SHA-256 (`Get-FileHash`) with its `checksums.txt` line, extract
+it, and put `pairmux.exe` on PATH.
+
+New terminals start PowerShell 7 (`pwsh.exe`), else Windows PowerShell, else `%COMSPEC%`
+(normally `cmd.exe`). `PAIRMUX_SHELL` overrides that on every platform, for example
+`$env:PAIRMUX_SHELL = 'C:\Program Files\Git\bin\bash.exe'`; `$SHELL` is honored only if it names
+an existing file. See [Concepts: Windows](./concepts.md#windows) for shell integration and the other
+differences, and note that `pairmux update` refuses on Windows ([Update](#update-v060)).
+
+**WSL (optional).** Inside WSL, pairmux is an ordinary Linux program: it uses tmux if installed in
+that distribution and the built-in multiplexer otherwise (v0.6.0 and earlier need tmux there). The
+one-liner's previous behavior is opt-in:
+
+```powershell
+$env:PAIRMUX_INSTALL_TARGET = 'wsl'
+irm https://pairmux.treeleaves30760.com/install.ps1 | iex
+```
+
+The WSL target finds WSL, checks it has a distribution, downloads the Bash installer successfully,
+and runs it inside that distribution; `PAIRMUX_WSL_DISTRO` selects a distribution other than the
+default (it is refused without the WSL target). pairmux then lives inside the distribution: run it as `wsl -- pairmux version`.
 
 </TabItem>
 </Tabs>
+
+### Install from a clone
+
+If you can clone the repository but cannot reach PyPI, install from the checkout. The repository root
+has a `pyproject.toml` whose in-tree build backend needs **no build dependencies**, so this works
+offline with any 64-bit Python 3.9+:
+
+```bash
+python -m pip install .                   # into the active environment (uv pip install . also works)
+uv tool install --offline .               # or as a persistent uv tool
+uv tool install --offline --reinstall .   # rebuild later, after pulling changes
+```
+
+`pip install git+https://github.com/treeleaves30760/pairmux` does the same straight from GitHub.
+
+The backend builds the binary with **Go 1.25+** if `go` is on PATH. Without Go, it packages a
+prebuilt binary named by `PAIRMUX_PREBUILT_BINARY`, such as the `pairmux.exe` from a GitHub Release
+zip. The binary must match the host OS and architecture: its Mach-O/ELF/PE header is checked (it is
+never executed), and a wrong OS or architecture, a relative path, or a missing file is refused. In
+PowerShell, from the clone, with a checksum-verified release zip downloaded into the parent
+directory:
+
+```powershell
+Expand-Archive ..\pairmux_<ver>_windows_amd64.zip -DestinationPath ..\pairmux-download
+$env:PAIRMUX_PREBUILT_BINARY = (Resolve-Path ..\pairmux-download\pairmux.exe).Path
+python -m pip install .      # or: uv tool install --offline .
+Remove-Item Env:PAIRMUX_PREBUILT_BINARY
+```
+
+Windows zips exist only from the first release built with this packaging (the next release after
+v0.6.0); until then, a Windows install from a clone needs Go. On macOS/Linux, point the variable at
+the `pairmux` binary from the matching `.tar.gz`. There is no sdist and no editable install
+(`pip install -e .`); both refuse with an explanation, and `uv build` needs `--wheel`.
+
+These are development builds, never release wheels. Their version comes from `git describe` against
+the latest `vX.Y.Z` tag: `X.Y.Z.post<N>.dev0+g<12-character sha>`, with `.dirty` appended for
+uncommitted changes. Even a tagged commit builds as `post0.dev0`, and without git metadata the
+version is `0.0.0.dev0+unknown`. The same string is stamped into the binary, so `pairmux update`
+refuses it as not a canonical release: update such an install by rebuilding from the clone.
+`PAIRMUX_VERSION` overrides the version with a canonical SemVer tag or PEP 440 version. The wheel is
+tagged for the host only (`macosx_12_0_<arch>`, `linux_<arch>`, `win_amd64`, or `win_arm64`).
+
+With no Python at all, put a release binary on PATH (see the **Manual archive** and **Windows**
+tabs), or build it with Go (see **Source checkout**).
 
 ### Optional temporary run with uvx
 
@@ -241,10 +348,18 @@ tmux is untouched. There are no command-specific options, automatic updates, or 
 `--json` is supported; see the [CLI reference](./cli-reference.md#update-v060) for verification,
 JSON, and exit behavior.
 
+**On Windows, `pairmux update` refuses with `E_UPDATE`.** uv installs Windows tools as copied `.exe`
+files rather than the symlinked layout the updater verifies ownership through, and Windows cannot
+replace an executable while it runs. Close running pairmux commands (such as `watch`, `attach`, or an
+MCP client's `mcp serve`), then run `uv tool install --upgrade pairmux` (or `pip install -U pairmux`
+in the environment that has it). Managed terminals may stay open: the built-in server runs from its
+own copy of the executable.
+
 ## Migrating from APT / Debian packages
 
 pairmux's APT repository and historical `.deb` distribution were retired on 2026-10-08 with
-v0.5.3. Keep tmux installed through your system package manager. Follow the
+v0.5.3. If you use the tmux backend, keep tmux installed through your system package manager.
+Follow the
 [APT migration guide](./migrating-from-apt.md) to
 inspect and retire the old source, origin pin, keyring/package, and command without destructive
 cleanup shortcuts, and check whether an old installation shadows the new command on PATH.
@@ -257,20 +372,29 @@ cleanup shortcuts, and check whether an old installation shadows the new command
 pairmux doctor
 ```
 
-The exact paths and shell list depend on the machine. A healthy Linux result has this shape:
+The exact paths and shell list depend on the machine. A healthy Linux result with tmux installed
+has this shape:
 
 ```text
 ok
 pairmux doctor
 
-✓  tmux        3.4 at /usr/bin/tmux (>= 3.2)
+✓  backend     tmux (tmux is installed): 3.4 at /usr/bin/tmux (>= 3.2)
 ✓  state dir   writable: /home/alice/.local/state/pairmux/.sockets/<endpoint-id>
 ✓  live probe  bash: hooks;  dash: sentinel
 ✓  notifier    notify-send at /usr/bin/notify-send (desktop notifications available)
 ```
 
-The **live probe** line reports which completion-detection tier each shell reaches. Fish 4+ emits
-compatible OSC 133 marks natively; fish without a ready mark degrades to a `$status` sentinel. See
+The first line, **backend**, names the selected backend and why it was chosen. Without tmux it
+reads like this instead, with the built-in server's socket path:
+
+```text
+✓  backend     built-in multiplexer (tmux is not installed); socket /tmp/pairmux-1000/pairmux.sock; tmux not installed (not required)
+```
+
+The **live probe** runs on an isolated throwaway endpoint of the selected backend and reports which
+completion-detection tier each shell reaches. Fish 4+ emits compatible OSC 133 marks natively; fish
+without a ready mark degrades to a `$status` sentinel. PowerShell reports `hooks-no-C`. See
 [Concepts](./concepts.md#completion-detection-and-the-idle-backstop).
 
 ## Quick start
@@ -290,8 +414,9 @@ pairmux --json new --name build
 {"schema":"pairmux.v1","ok":true,"status":"created","terminal":"build","mode":"hooks","next":["pairmux run build \"echo hello\""]}
 ```
 
-This opens a tmux window and starts capturing output into a journal. zsh, bash, and compatible fish
-configurations normally report `mode: hooks`; other shells, or a failed hook-ready probe, report
+This opens a terminal — a tmux window, or a pane on the built-in server — and starts capturing
+output into a journal. zsh, bash, PowerShell, and compatible fish configurations normally report
+`mode: hooks`; other shells (including `cmd.exe`), or a failed hook-ready probe, report
 `mode: sentinel`. Always act on the returned mode and status rather than assuming either one.
 
 ### 2. Run a command and block for an actionable outcome
@@ -341,17 +466,19 @@ secret itself. See [interactive programs](./guides/interactive-programs.md) and
 ### 5. Humans jump into the same terminal
 
 ```bash
-pairmux attach build # run from an interactive terminal outside tmux
+pairmux attach build # run from an interactive terminal (outside tmux, on the tmux backend)
 pairmux watch        # live dashboard of every terminal
 ```
 
-`attach` refuses a non-TTY or nested tmux client. If you are already in tmux, detach to the outer
-shell first or use another terminal, then run `pairmux attach`; `switch-client` cannot cross tmux
-servers to pairmux's named socket.
+Detach with `Ctrl-b d` on either backend (on tmux, your configured tmux binding). `attach` refuses a
+non-interactive terminal. On the tmux backend it also refuses to nest inside tmux: detach to the
+outer shell first or use another terminal, because `switch-client` cannot cross tmux servers to
+pairmux's named socket. On the built-in backend it works inside tmux and attaches your terminal
+straight to the pane; see [human collaboration](./guides/human-collaboration.md#the-three-human-commands).
 
 ## Next steps
 
 - [CLI Reference](./cli-reference.md) — every command and flag, plus the full envelope schema.
-- [Concepts](./concepts.md) — why pairmux is built the way it is: tmux as a state engine, endpoint-isolated journals, completion modes, and the idle backstop.
+- [Concepts](./concepts.md) — why pairmux is built the way it is: the two terminal backends, endpoint-isolated journals, completion modes, and the idle backstop.
 - [Long-running commands guide](./guides/long-running-commands.md) — the complete run/wait/peek playbook.
 - [Agent Skills](./skills.md) — install targets and the repeatable cross-agent benchmark runner.

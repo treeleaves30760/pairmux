@@ -1,15 +1,18 @@
 # Human collaboration
 
-pairmux terminals are real tmux panes, so a human can watch them, take one over, do something you
-can't or shouldn't (type a password, make a judgement call), and hand back — all in the same live
-session. You find out what the human did through **notes**.
+pairmux terminals are real PTYs (tmux panes, or panes on pairmux's built-in server), so a human can
+watch them, take one over, do something you can't or shouldn't (type a password, make a judgement
+call), and hand back — all in the same live session. You find out what the human did through **notes**.
 
 ## The three human commands
 
 - **`pairmux watch`** — a live dashboard of every terminal: status, lock holder, current command,
   last activity. `!!` flags awaiting-input, `xx` flags dead. `Ctrl-C` quits.
-- **`pairmux attach [name]`** — hand the human a live tmux client focused on `name`. They are now
-  typing into the same pane you use. (They detach with tmux's `Ctrl-b d`.)
+- **`pairmux attach [name]`** — put the human in the live pane `name`; they are now typing into the
+  same pane you use. They detach with `Ctrl-b d` on either backend (tmux: its configured binding;
+  built-in: always `Ctrl-b d`, and `Ctrl-b Ctrl-b` types a literal `Ctrl-b`). On tmux it is a tmux
+  client and refuses to nest inside tmux; on the built-in backend it attaches their terminal straight
+  to the pane, works inside tmux, and on detach reminds them to `pairmux note NAME "..."`.
 - **`pairmux note <name> <text>`** — leave a message the agent sees on its next `run`/`peek`/`wait`,
   and which resolves `wait --human`.
 
@@ -27,8 +30,8 @@ answers in the pane, and you resume knowing they helped.
 ```bash
 pairmux wait dbmigrate --human --notify
 ```
-`--notify` pops a desktop notification (`osascript` on macOS, `notify-send` on Linux —
-best-effort). Your tool call is now parked. If the shell/tool client interrupts before pairmux
+`--notify` pops a desktop notification (`osascript` on macOS, `notify-send` on Linux, Windows
+PowerShell on Windows — best-effort). Your tool call is now parked. If the shell/tool client interrupts before pairmux
 returns, immediately reissue the same `wait --human --notify`; never type the secret or shorten the
 300-second default wait. An explicit handoff timeout must be a single valid Go duration of at least
 `300s`.
@@ -92,7 +95,8 @@ every `peek`/`run`/`wait` (it is not consumed by reading), so you won't miss it.
 While a human is typing in a pane, don't fight them for it. The discipline: **if a human has attached,
 `wait` (don't `run`) until the wait resolves** — a note, or the command they unblocked finishing.
 Notes are recorded in the journal and surface in the next reply; attaching itself is deliberately
-just a live tmux operation and does not create an event.
+just a live terminal operation and does not create an event. `send` warns you when a human is
+attached.
 
 `wait --human` also returns immediately if a note is *already* waiting and unseen — so the natural
 "human notes, then the agent waits" ordering never drops a message.

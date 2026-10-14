@@ -40,7 +40,8 @@ doesn't free it at all, escalate: `--key C-\\` (SIGQUIT) or, last resort, `pairm
 
 ## E_DEAD — the pane is gone
 
-The terminal's tmux pane died (someone closed it, the shell exited, tmux was killed):
+The terminal's pane died (someone closed it, the shell exited, the tmux or built-in server was
+killed):
 ```json
 {"schema":"pairmux.v1","ok":false,"status":"error","error":{"code":"E_DEAD","message":"terminal \"build\" is dead","hint":"pairmux new --name build"}}
 ```
@@ -91,10 +92,15 @@ for the prompt to be **answered** — a human `note`, the terminal visibly movin
 or the command completing (`done`). If it times out, the human has not come yet: the `next` repeats
 the same wait with a longer deadline, and following it is the correct move.
 
-## E_TMUX — tmux socket creation failed
+## E_TMUX — the terminal backend failed
 
-If tmux reports `Permission denied`, `No such file or directory`, or `File name too long` under
-`/tmp/tmux-*`, point its socket root at a short writable directory and retry:
+`E_TMUX` (historical name) means the backend failed: tmux, or pairmux's built-in server. Run
+`pairmux doctor`; its first line says which backend is in use, why, and the socket path or tmux
+version.
+
+**tmux backend.** If tmux reports `Permission denied`, `No such file or directory`, or
+`File name too long` under `/tmp/tmux-*`, point its socket root at a short writable directory and
+retry:
 
 ```bash
 export TMUX_TMPDIR="$TMPDIR"
@@ -102,8 +108,26 @@ pairmux doctor
 ```
 
 pairmux honors `TMUX_TMPDIR`. This also avoids macOS sandbox restrictions and the Unix socket path
-length limit. Keep the same `TMUX_TMPDIR`, `PAIRMUX_SOCKET`, and `PAIRMUX_STATE_DIR` in every process
-that needs to share a terminal.
+length limit.
+
+**Built-in backend.** Its socket, lock, and log live in a runtime directory: on Unix
+`$PAIRMUX_TMPDIR`, else `$TMUX_TMPDIR`, else `/tmp`, then `pairmux-<uid>/` (must be yours and mode
+0700); on Windows `%PAIRMUX_TMPDIR%`, else `%LOCALAPPDATA%\pairmux`, then `run\`. A "runtime
+directory" / "too deep" / permission error means: set `PAIRMUX_TMPDIR` to a short writable directory
+you own and retry (socket paths are limited to about 100 bytes). If the server "did not start",
+read `<socket>.log` in that directory (the error names it) and run `pairmux doctor`.
+
+Keep the same `PAIRMUX_BACKEND`, `PAIRMUX_TMPDIR`/`TMUX_TMPDIR`, `PAIRMUX_SOCKET`, and
+`PAIRMUX_STATE_DIR` in every process that needs to share a terminal.
+
+## A terminal I created is missing from `ls`
+
+The two backends keep separate terminals and state, and `ls` lists only the selected backend's
+terminals (live or dead). Automatic selection prefers a built-in server already running for the
+socket, then tmux if it is on PATH, so a different environment (another `PAIRMUX_BACKEND`, or
+`PATH` without tmux) can select the other backend. Check `pairmux doctor`'s `backend` line, and use
+the same `PAIRMUX_BACKEND` (`tmux` or `builtin`) as the process that created the terminal. An invalid
+`PAIRMUX_BACKEND` is `E_BAD_ARGS`; `PAIRMUX_BACKEND=tmux` on Windows is an error.
 
 ## Output was truncated
 
@@ -149,8 +173,11 @@ If terminals behave oddly (no completion detected, notifications missing), run t
 ```bash
 pairmux doctor
 ```
-It reports tmux version (needs **≥ 3.2**), state-dir writability, the per-shell completion tier
-(`hooks`, `hooks-no-C`, `hooks-degraded->sentinel`, or `sentinel`), and notifier availability.
-`hooks-no-C` means completion works but human-interleave correlation is slightly weaker (e.g. bash
-3.2). Fish 4+ supplies native OSC 133 marks; older/degraded Fish uses its sentinel fallback. pairmux
-is macOS/Linux only; on Windows use WSL.
+It reports the backend (tmux, which needs **≥ 3.2**, or the built-in multiplexer, which needs no
+tmux), state-dir writability, the per-shell completion tier (`hooks`, `hooks-no-C`,
+`hooks-degraded->sentinel`, or `sentinel`), and notifier availability. `hooks-no-C` means completion
+works but human-interleave correlation is slightly weaker (e.g. bash 3.2, PowerShell). Fish 4+
+supplies native OSC 133 marks; older/degraded Fish uses its sentinel fallback. pairmux runs natively
+on macOS, Linux, and Windows 10 1809+ (built-in backend; releases after v0.6.0), and inside WSL. On
+Windows the default shell is PowerShell and `cmd.exe` terminals use sentinel mode; secret prompts
+there are recognized by wording only.

@@ -16,10 +16,23 @@ Ordinary non-interactive CLI commands reply through the **`pairmux.v1` envelope*
 | flag | meaning |
 |------|---------|
 | `--json` | Emit a compact JSON envelope instead of the text block. May appear before or after the command. |
-| `--socket S` | Use tmux socket `S` (isolates a set of terminals). Overrides `$PAIRMUX_SOCKET`. |
+| `--socket S` | Use endpoint `S` — the tmux socket, or the built-in server's socket name (isolates a set of terminals). Overrides `$PAIRMUX_SOCKET`. |
 | `--` | Ends global-flag parsing, for a command that itself contains `--json`/`--socket`. |
 
-Environment: `PAIRMUX_SOCKET` sets the default socket. The journal root resolves in order from `PAIRMUX_STATE_DIR`, `$XDG_STATE_HOME/pairmux`, then `~/.local/state/pairmux`. `TMUX_TMPDIR` selects tmux's socket root, and `SHELL` selects the interactive shell for `new`. Socket labels are validated before tmux runs. Journals live in an isolated hash of the canonical `TMUX_TMPDIR`, uid, and socket under `<root>/.sockets/`. For the conventional default endpoint only, journals from the historical `<root>/<terminal>/` layout remain readable in place; pairmux never migrates them implicitly.
+## Environment
+
+| variable | meaning |
+|----------|---------|
+| `PAIRMUX_SOCKET` | Default endpoint (socket) name; `--socket` overrides it. Socket labels are validated before the backend runs. |
+| `PAIRMUX_BACKEND` | Terminal backend: `tmux`, `builtin`, or `auto` (the same as unset). Auto selects `builtin` on Windows; else `builtin` if a built-in server is already running for this socket; else `tmux` if it is on PATH; else `builtin`. Every terminal is created with it set to its own backend, so nested layers stay on it. `tmux` on Windows is an error; an invalid value is `E_BAD_ARGS` (`help`, `version`, `doctor`, `skill`, and `update` still work). See [Concepts](./concepts.md#terminal-backends). |
+| `PAIRMUX_TMPDIR` | Root of the built-in server's runtime directory (socket, lock, `<socket>.log`). Unix: `$PAIRMUX_TMPDIR`, else `$TMUX_TMPDIR`, else `/tmp`, then `pairmux-<uid>/`. Windows: `%PAIRMUX_TMPDIR%`, else `%LOCALAPPDATA%\pairmux`, then `run\`. Set it to a short writable directory if the socket path is too long. |
+| `PAIRMUX_SHELL` | Interactive shell for `new`, on every platform; overrides `SHELL` and the Windows default. |
+| `SHELL` | Interactive shell for `new` when `PAIRMUX_SHELL` is unset. On Windows it is honored only if it names an existing file; the default there is `pwsh.exe`, else `powershell.exe`, else `%COMSPEC%`. |
+| `PAIRMUX_STATE_DIR` | Journal root. Otherwise `$XDG_STATE_HOME/pairmux`, then `~/.local/state/pairmux`. |
+| `TMUX_TMPDIR` | tmux's socket root, part of a tmux endpoint's identity; on Unix also the built-in runtime root when `PAIRMUX_TMPDIR` is unset. |
+| `PAIRMUX_SECRET_PROMPT_RE` | An RE2 pattern that extends (never replaces) secret-prompt recognition. |
+
+Journals live in an isolated hash per endpoint under `<root>/.sockets/`: for tmux, of the canonical `TMUX_TMPDIR`, uid, and socket; built-in endpoints hash a separate identity, so equal terminal names on the two backends never collide, and each backend lists only its own terminals, live or dead. For the conventional default tmux endpoint only, journals from the historical `<root>/<terminal>/` layout remain readable in place; pairmux never migrates them implicitly.
 
 ## The envelope schema
 
@@ -97,9 +110,9 @@ pairmux --json peek nonexistent
 | `E_EXISTS` | `new` was asked for a name already in use. |
 | `E_BUSY` | Another writer holds the terminal's lock, or a prior command is still running. |
 | `E_DEAD` | The terminal's pane is gone. |
-| `E_BAD_ARGS` | A usage or flag error (invalid name/socket/key, bad regex, wrong terminal kind). |
-| `E_TMUX` | An underlying tmux command failed. |
-| `E_UPDATE` | v0.6.0+: persistent uv ownership, supported version, uv execution, or post-update verification failed. Follow the recovery hint. |
+| `E_BAD_ARGS` | A usage or flag error (invalid name/socket/key, bad regex, wrong terminal kind, invalid `PAIRMUX_BACKEND`). |
+| `E_TMUX` | The terminal backend — tmux or the built-in server — failed. The name is historical; built-in failures carry built-in-specific hints (for example, set `PAIRMUX_TMPDIR`). |
+| `E_UPDATE` | v0.6.0+: persistent uv ownership, supported version, uv execution, or post-update verification failed, or the platform is Windows. Follow the recovery hint. |
 | `E_INTERNAL` | An unexpected internal error. |
 
 ---
@@ -108,7 +121,7 @@ pairmux --json peek nonexistent
 
 ### new
 
-Create a terminal: open a tmux window and wire `pipe-pane` into the journal. Interactive terminals receive shell integration and wait for a ready prompt; `--cmd` terminals launch the requested program and wait only for initial output to quiesce.
+Create a terminal: open a pane on the selected backend (a tmux window wired to the journal with `pipe-pane`, or a pane on the built-in server, which journals from the first byte). Terminals default to 220x50. Interactive terminals receive shell integration and wait for a ready prompt; `--cmd` terminals launch the requested program and wait only for initial output to quiesce.
 
 ```text
 pairmux new [--name N] [--cwd D] [--cmd "..."]
@@ -116,7 +129,7 @@ pairmux new [--name N] [--cwd D] [--cmd "..."]
 
 - `--name N` — terminal name (matches `^[a-z0-9][a-z0-9_-]{0,31}$`). Auto-generated when omitted.
 - `--cwd D` — working directory (defaults to the current directory).
-- `--cmd "..."` — run a program instead of an interactive shell. Such a terminal is driven with `send`/`peek`, not `run`.
+- `--cmd "..."` — run a program instead of an interactive shell. Such a terminal is driven with `send`/`peek`, not `run`. On Windows the command runs through the terminal's shell: PowerShell `-EncodedCommand`, `cmd /s /c`, or `bash -lc` for Git Bash.
 
 ```bash
 pairmux --json new --name build
@@ -206,7 +219,7 @@ pairmux peek <name> [--screen | --tail N]
 - (default) — read at most the final 64 KiB of the raw journal, shape it, and return its tail.
   `--tail N` sets how many lines (default 60). A skipped byte prefix is reported as
   `truncated.omitted_bytes`, with `pairmux log NAME --range 1:end` as the recovery command.
-- `--screen` — a live `capture-pane` render of the current viewport (useful for full-screen TUIs).
+- `--screen` — a live render of the current viewport (useful for full-screen TUIs): tmux `capture-pane -p` on the tmux backend, and the built-in virtual screen with the same semantics on the built-in backend.
 
 ```bash
 pairmux --json peek build
@@ -238,7 +251,7 @@ pairmux wait <name> [--idle MS] [--pattern RE] [--done] [--human] [--notify] [--
   command finished outright (`status: done` with its `exit_code`). A prompt never resolves a
   `--human` wait, and a re-prompt after a rejected answer keeps it blocked. No `output` is returned
   for those two outcomes — see the note below.
-- `--notify` — fire a desktop notification to summon a human (best-effort).
+- `--notify` — fire a desktop notification to summon a human (best-effort: `osascript` on macOS, `notify-send` on Linux, Windows PowerShell on Windows).
 - `--timeout` — overall deadline (default `300s`). First condition satisfied wins. A `timeout` is an
   outcome, not an error: its `next` repeats the *same* wait — every condition flag preserved — with
   double the deadline, floored at `300s` for a handoff, because a handoff is paced by a person.
@@ -320,8 +333,8 @@ Deliver raw input to the program in a terminal: text, then keys, then Enter (in 
 pairmux send <name> [--text S] [--key K ...] [--enter]
 ```
 
-- `--text S` — text passed literally to tmux via `send-keys -l`; pairmux does no further shell
-  expansion or key interpretation. The shell launching pairmux still expands its own arguments, so
+- `--text S` — text delivered literally (via `send-keys -l` on the tmux backend); pairmux does no
+  further shell expansion or key interpretation. The shell launching pairmux still expands its own arguments, so
   quote them when necessary (for example, `--text '$HOME'` sends the six literal characters).
 - `--key K` — a named key; repeatable. Allowed: `Enter Escape Tab Space Up Down Left Right Home End PPage NPage BSpace DC`, `F1`–`F12`, `C-a`..`C-z`, `M-a`..`M-z`.
 - `--enter` — append a final Enter.
@@ -397,7 +410,7 @@ ok
 
 ### kill
 
-Kill a terminal's window (or, with `--all`, every managed window). **Journals are retained on disk** either way.
+Kill a terminal (or, with `--all`, every managed terminal). **Journals are retained on disk** either way. On Windows, killing a terminal ends its whole process tree through a job object.
 
 ```text
 pairmux kill <name> | --all
@@ -448,16 +461,36 @@ when the state root has outgrown the large-journal guard.
 
 ### attach
 
-Hand the human a live tmux client on the pairmux session, focusing the named window first. Replaces
-the pairmux process with tmux. Refuses when already inside tmux or when stdout is not a terminal. A
-human already in tmux must detach to an outer shell or use another terminal; `switch-client` cannot
-cross from another tmux server to pairmux's named socket. Attaching records no journal event, so a
-`note` is the explicit, durable hand-back signal — though a `wait --human` also ends on its own once
-what the human was summoned for resolves (the command completes, or the prompt clears).
+Put a human in the live pane. Needs an interactive terminal on stdin and stdout. Attaching records
+no journal event, so a `note` is the explicit, durable hand-back signal — though a `wait --human`
+also ends on its own once what the human was summoned for resolves (the command completes, or the
+prompt clears). On either backend, `send` warns the agent while a human is attached.
 
 ```text
 pairmux attach [name]
 ```
+
+**tmux backend.** Hands the human a live tmux client on the pairmux session, focusing the named
+window first; the pairmux process is replaced with tmux. Detach with tmux's configured binding
+(default `Ctrl-b d`). Refuses when already inside tmux: a human already in tmux must detach to an
+outer shell or use another terminal, because `switch-client` cannot cross from another tmux server
+to pairmux's named socket.
+
+**Built-in backend.** Attaches *this* terminal straight to the pane — no session or window list, no
+status bar — on the alternate screen, so the human's own scrollback is preserved.
+
+| keys | effect |
+|------|--------|
+| `Ctrl-b d` | detach (the same key as tmux) |
+| `Ctrl-b Ctrl-b` | send a literal `Ctrl-b` to the program |
+| `Ctrl-b` + any other key | dropped |
+
+- With no name, opens the only live terminal; with several, fails with `E_BAD_ARGS` listing them.
+- Works inside tmux (there is no nesting refusal), but refuses to attach a pane to itself.
+- While attached, the pane takes the human's terminal size; with several humans attached, the most
+  recent attach or resize sets it. It returns to 220x50 when the last human detaches.
+- On detach it prints `[detached from NAME] tell the agent what you did: pairmux note NAME "..."`;
+  if the program exits while attached, it prints the exit message instead.
 
 ### watch
 
@@ -495,8 +528,11 @@ pairmux --json run build "echo resumed"
 
 ### doctor
 
-Probe the environment: tmux version, state-namespace writability, per-shell completion tier (on an
-isolated throwaway socket), and the notification backend. A completed probe keeps `ok:true` and uses
+Probe the environment. The first check, `backend`, names the selected backend, why it was chosen
+(for example `tmux is installed` or `tmux is not installed`), and the tmux version or the built-in
+server's socket path; it notes `tmux not installed (not required)` when relevant. The remaining
+checks cover state-namespace writability, per-shell completion tier (probed on an isolated throwaway
+endpoint of the selected backend), and the notification backend. A completed probe keeps `ok:true` and uses
 `status:"ok"` when every required check passes or `status:"issues"` with a fix hint otherwise.
 Invalid arguments and invalid socket configuration still return a normal error envelope.
 
@@ -508,8 +544,8 @@ The report is environment-dependent: it prints the absolute endpoint-specific st
 only the shells available to the probe. A healthy text response begins with `ok`; a completed probe
 with failed checks begins with `issues` and lists the corresponding fixes.
 
-`hooks-no-C` is a diagnostic tier for shells (notably bash 3.2) that emit OSC 133 A/D marks but no
-C mark; those terminals still store `mode:"hooks"`. Fish 4+ supplies OSC 133 natively. If fish emits
+`hooks-no-C` is a diagnostic tier for shells (notably bash 3.2, and PowerShell on Windows) that emit
+OSC 133 A/D marks but no C mark; those terminals still store `mode:"hooks"`. Fish 4+ supplies OSC 133 natively. If fish emits
 no ready mark, `new` degrades it to `mode:"sentinel"` and uses fish's `$status` in the marker.
 
 ### version
@@ -528,6 +564,12 @@ pairmux --json version
 
 Update **only the currently running, verified persistent uv tool installation** of pairmux,
 including one created by the Bash/WSL installer. No tmux installation or terminal access is needed.
+
+**Not on Windows.** On Windows the command refuses with `E_UPDATE` before touching anything. uv
+installs Windows tools as copied `.exe` files rather than the symlinked layout these ownership checks
+rely on, and Windows cannot replace an executable while it runs. The hint says to close pairmux and
+run `uv tool install --upgrade pairmux` (or `pip install -U pairmux` in the environment that has
+it). Managed terminals may stay open: the built-in server runs from its own copy of the executable.
 
 ```text
 pairmux update

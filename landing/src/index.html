@@ -68,9 +68,9 @@
                 </div>
                 <div class="handoff-step human-step">
                   <h2>Human</h2>
-                  <p>From a second terminal, outside tmux, attach to the same live pane.</p>
+                  <p>From a second terminal (outside tmux, when pairmux uses tmux), attach to the same live pane.</p>
                   <pre><code data-readme-command>pairmux attach handoff</code></pre>
-                  <p>Answer the prompt, then detach with the configured tmux binding (default <kbd>Ctrl-b</kbd> <kbd>d</kbd>). Optionally, leave a note from your outer shell.</p>
+                  <p>Answer the prompt, then detach with <kbd>Ctrl-b</kbd> <kbd>d</kbd> (with tmux, your configured tmux binding). Optionally, leave a note from your outer shell.</p>
                   <pre><code data-readme-command>pairmux --json note handoff "demo input completed"</code></pre>
                 </div>
                 <p class="terminal-handback">The agent’s wait can finish as soon as the prompt is answered. A note explains what you did; it is not required to resume.</p>
@@ -106,7 +106,7 @@
             </div>
             <p class="manual-note">Ensure uv’s tool-bin directory is on your PATH, then run <code>pairmux version</code> and <code>pairmux doctor</code>.</p>
             <p class="source-note">Manual uv commands honor your normal environment and configuration. The built-in updater and shell installer instead pin pairmux’s source to public PyPI and ignore uv package-source overrides.</p>
-            <p class="requirements"><strong>Separate requirements:</strong> Python 3.9 or newer for the uv tool environment; tmux 3.2 or newer to run terminals. Install tmux with your OS package manager. On Windows, pairmux runs inside WSL, not natively.</p>
+            <p class="requirements"><strong>Separate requirements:</strong> Python 3.9 or newer for the uv tool environment. When tmux is on your PATH, pairmux uses it and needs tmux 3.2 or newer to run terminals. From the next release after v0.6.0, tmux is optional (without it, pairmux uses its own built-in multiplexer) and Windows 10 1809 or newer runs pairmux natively; until then, install tmux with your OS package manager, and use WSL on Windows.</p>
           </div>
 
           <div class="manual-install" aria-labelledby="manual-title">

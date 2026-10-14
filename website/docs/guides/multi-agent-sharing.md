@@ -7,7 +7,7 @@ description: Lock-free reads, the per-terminal writer lock, and busy envelopes.
 
 Because journal reads take no lock, **any number of agents can share a terminal as an information
 source**. Concurrent `run` calls are serialized by a per-terminal writer lock. `send`, `note`, and a
-human typing through tmux deliberately bypass that lock, so they require their own coordination rules.
+human typing through `attach` deliberately bypass that lock, so they require their own coordination rules.
 
 ## Reads are lock-free
 

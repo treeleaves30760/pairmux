@@ -1,16 +1,22 @@
 ---
 title: Concepts
-description: How pairmux is built — tmux as a state engine, the journal as source of truth, and reliable completion detection.
+description: How pairmux is built — tmux or a built-in multiplexer as the state engine, the journal as source of truth, and reliable completion detection.
 ---
 
 # Concepts
 
 This page is for engineers evaluating the design. It explains *why* pairmux is built the way it is, not just what it does.
 
-pairmux is deliberately **not** a new terminal. It does not implement a PTY or VT parser, and it
-does not install a background service to own terminal state. tmux remains the terminal engine and
-keeps its normal server; pairmux adds completion outcomes, captured journal output, model-friendly
-views, and a per-terminal `run` writer discipline around the same live pane.
+pairmux is deliberately **not** a new terminal emulator, and it installs no background service to
+own terminal state. A multiplexer owns the live panes — tmux when it is installed, otherwise a small
+built-in server that starts on demand and exits on its own — and pairmux adds completion outcomes,
+captured journal output, model-friendly views, and a per-terminal `run` writer discipline around the
+same live pane. See [Terminal backends](#terminal-backends) for how the two are chosen.
+
+:::info Not yet released
+The built-in backend and native Windows support ship in the next release after v0.6.0. v0.6.0 and
+earlier always use tmux.
+:::
 
 ## Architecture
 
@@ -28,7 +34,7 @@ flowchart LR
     DETECT[completion and status<br/>OSC133 / sentinel / idle refresh]
     SHAPE[output shaping<br/>strip ANSI / collapse CR / truncate]
   end
-  subgraph tserver [tmux server]
+  subgraph tserver [backend: tmux server or built-in server]
     P1[(pane build)]
   end
   J[(journal<br/>raw.log + index.jsonl)]
@@ -39,39 +45,87 @@ flowchart LR
   A1 --> READ
   A2 -->|lock-free observation| READ
   READ --> J
-  P1 -->|pipe-pane raw bytes| J
+  P1 -->|raw output bytes| J
   J --> DETECT --> SHAPE --> A1
   SHAPE --> A2
-  H <-->|native tmux attach| P1
+  H <-->|attach| P1
   H -->|pairmux note| J
 ```
 
-Terminal operations such as `run` and `wait` are ordinary processes that poll the journal until their condition is met, then exit. `watch` and `mcp serve` intentionally remain in the foreground for the lifetime of that dashboard or MCP client connection, but pairmux installs and owns no background daemon. Durable state lives in two places: tmux pane user-options (which live and die with the pane) and a socket-specific journal namespace under the configured state root.
+Terminal operations such as `run` and `wait` are ordinary processes that poll the journal until their condition is met, then exit. `watch` and `mcp serve` intentionally remain in the foreground for the lifetime of that dashboard or MCP client connection. pairmux installs no background daemon: tmux keeps its normal server, and the built-in server is started on demand and exits when idle. Durable state lives in two places: per-pane metadata held by the backend (tmux pane user-options on the tmux backend), which lives and dies with the pane, and a socket-specific journal namespace under the configured state root.
 
-## tmux as the terminal state engine
+## Terminal backends
 
-tmux already maintains screen rendering, scrollback, and — crucially — lets a human `attach`. pairmux leans on all of it instead of reimplementing any of it:
+Something has to own a live terminal between pairmux's short-lived commands. pairmux has two
+backends with the same commands, envelopes, and journals.
 
-- **No PTY, no VT parser.** pairmux invokes tmux operations such as `new-window`, `send-keys -l`,
-  `pipe-pane`, `capture-pane`, and pane options, while journal metadata stays in ordinary files.
-- **Native human access.** `pairmux attach` replaces itself with a tmux client against the configured
-  pairmux socket and session; `peek --screen` requests a `capture-pane` render. The human and agent
-  therefore observe the same real pane.
+**tmux** (tmux >= 3.2) already maintains screen rendering, scrollback, and — crucially — lets a
+human `attach`. On this backend pairmux leans on all of it instead of reimplementing it: it invokes
+tmux operations such as `new-window`, `send-keys -l`, `pipe-pane`, `capture-pane`, and pane options,
+while journal metadata stays in ordinary files. `pairmux attach` replaces itself with a tmux client
+against the configured pairmux socket and session, and `peek --screen` requests a `capture-pane`
+render, so the human and agent observe the same real pane with tmux's familiar attach and detach
+workflow.
 
-This design preserves tmux's familiar attach and detach workflow while adding an agent-facing
-coordination contract around it. Attaching itself does not transfer exclusive ownership; a human
-leaves a `note` as the explicit hand-back signal.
+**builtin** is pairmux's own small server for machines without tmux, and the only backend on
+Windows. It allocates real PTYs through `/dev/ptmx` on macOS/Linux and ConPTY on Windows. The server
+is the same `pairmux` executable running a hidden subcommand; the first command that needs it starts
+it, detached from the caller's session or console. There is one server per endpoint (the `--socket`
+/ `PAIRMUX_SOCKET` name), and it exits by itself after about 30 seconds with no terminals and no
+connections — so there is still no service to install, supervise, or stop. It keeps a virtual screen
+so `peek --screen` has tmux `capture-pane -p` semantics, journals a program's output from its very
+first byte, and defaults to tmux's 220x50 size. `attach` connects the human's terminal straight to
+the pane (see [human collaboration](./guides/human-collaboration.md#the-three-human-commands)).
+
+Either way, attaching does not transfer exclusive ownership; a human leaves a `note` as the explicit
+hand-back signal. `E_TMUX` keeps its historical name but means the backend — tmux or the built-in
+server — failed; built-in failures carry built-in-specific hints.
+
+### Choosing a backend
+
+`PAIRMUX_BACKEND` selects `tmux`, `builtin`, or `auto` (the same as unset). The automatic choice is
+made per endpoint, so it is stable across the many short pairmux processes that address one set of
+terminals:
+
+1. Windows → `builtin`. `PAIRMUX_BACKEND=tmux` on Windows is an error.
+2. A built-in server is already running for this socket → `builtin`. Terminals created before tmux
+   was installed stay reachable afterwards.
+3. `tmux` is on PATH → `tmux`. Existing users see no change, and their live tmux terminals stay where
+   they are.
+4. Otherwise → `builtin`.
+
+Every terminal is created with `PAIRMUX_BACKEND` set to its own backend, so a nested pairmux layer
+started inside it lands on the same backend. An invalid value is an `E_BAD_ARGS` error for terminal
+commands, while `help`, `version`, `doctor`, `skill`, and `update` still work. `pairmux doctor`
+reports the choice and the reason on its first line.
+
+### The built-in runtime directory
+
+The built-in server keeps its socket (`<socket>.sock`), single-instance lock (`<socket>.lock`), and
+diagnostic log (`<socket>.log`) in a per-user runtime directory:
+
+| Platform | Directory |
+| --- | --- |
+| macOS/Linux | `$PAIRMUX_TMPDIR`, else `$TMUX_TMPDIR`, else `/tmp`, then `pairmux-<uid>/` |
+| Windows | `%PAIRMUX_TMPDIR%`, else `%LOCALAPPDATA%\pairmux`, then `run\` |
+
+On Unix the directory is created with mode 0700 and refused if another uid owns it or if group or
+others can access it, because anyone who can reach the socket can type into your terminals. Socket
+paths are limited to about 100 bytes: an overly long socket name gets a digest name instead,
+and a directory that is itself too deep fails with a hint to set `PAIRMUX_TMPDIR` to a short writable
+directory. On Windows the server runs from a private copy, `pairmux-muxd-<hash>.exe`, in this
+directory, so an upgrade can replace the installed `pairmux.exe` while terminals are open.
 
 ## The journal: single source of truth
 
-When a terminal is created, pairmux attaches `tmux pipe-pane` to stream the pane's **raw output bytes** into a journal. `capture-pane` is demoted to an auxiliary "what does the screen look like right now" view.
+When a terminal is created, the pane's **raw output bytes** stream into a journal: on tmux through `tmux pipe-pane`, on the built-in backend from the server itself, starting with the program's very first byte. The screen render (`capture-pane`, or the built-in virtual screen) is demoted to an auxiliary "what does the screen look like right now" view.
 
 ```text
 <state-root>/              # PAIRMUX_STATE_DIR, else $XDG_STATE_HOME/pairmux,
                            # else ~/.local/state/pairmux
   .sockets/<sha256(endpoint identity)>/
     <terminal>/
-      raw.log       # pipe-pane raw bytes (mode 0600)
+      raw.log       # raw output bytes (mode 0600)
       index.jsonl   # {ts, type, cmd_id, offset, exit_code?, text?} — one event per line
                     # type: created | cmd_start | cmd_end | note | sent
       meta.json     # name, pane id, shell, mode, socket
@@ -95,11 +149,14 @@ no commands: see [human collaboration](./guides/human-collaboration.md).
 
 ## The blocking CLI as the "poke"
 
-The endpoint identity includes the canonical `TMUX_TMPDIR`, uid, and tmux socket label. Hashing it keeps
-paths bounded and prevents equal terminal names on different tmux servers from sharing metadata.
-Conventional default-endpoint journals from older releases remain readable in `<root>/<terminal>/`
-without an implicit move. Legacy custom-socket metadata is not claimed because it lacks enough
-information to attribute it to a full endpoint safely.
+For a tmux endpoint, the endpoint identity includes the canonical `TMUX_TMPDIR`, uid, and tmux
+socket label. Built-in endpoints hash a separate identity, so they get their own namespace and a
+terminal called `build` on each backend never collides. Hashing keeps paths bounded and prevents
+equal terminal names on different servers from sharing metadata. Each backend lists only its own
+terminals, live or dead. Conventional default-endpoint tmux journals from older releases remain
+readable in `<root>/<terminal>/` without an implicit move; that fallback is tmux-only. Legacy
+custom-socket metadata is not claimed because it lacks enough information to attribute it to a full
+endpoint safely.
 
 The timing problem — *when should the agent read the output?* — is solved without any push channel. The insight: an agent's shell tool call is **already blocking**. So pairmux makes the CLI block:
 
@@ -121,13 +178,14 @@ completion modes; idle waiting is a separate status backstop:
 
 1. **OSC 133 shell integration (primary).** `new` launches bash with `--rcfile` and zsh through a
    `ZDOTDIR` shim. Fish 4+ emits compatible marks natively, so pairmux launches the selected fish
-   binary without replacing the user's configuration. The journal scanner accepts both BEL- and
-   ST-terminated OSC 133 `A`/`B`/`C`/`D` marks, including fish's attributes; `D` carries the exit
-   code. Terminals using this path report `mode: hooks`.
-2. **Sentinel (interactive-shell fallback).** Unknown interactive shells use a nonprinting OSC marker
-   for commands sent by `run`. A nominal hooks shell that emits no ready mark also degrades to this
-   mode. POSIX-like shells insert the previous status through `$?`; fish uses `$status`. These
-   terminals report `mode: sentinel`.
+   binary without replacing the user's configuration. PowerShell gets an inline prompt wrapper (see
+   [Windows](#windows)). The journal scanner accepts both BEL- and ST-terminated OSC 133
+   `A`/`B`/`C`/`D` marks, including fish's attributes; `D` carries the exit code. Terminals using
+   this path report `mode: hooks`.
+2. **Sentinel (interactive-shell fallback).** Unknown interactive shells, and `cmd.exe`, use a
+   nonprinting OSC marker for commands sent by `run`. A nominal hooks shell that emits no ready mark
+   also degrades to this mode. POSIX-like shells insert the previous status through `$?`; fish uses
+   `$status`; `cmd.exe` uses `ERRORLEVEL`. These terminals report `mode: sentinel`.
 3. **Quiescence plus state refresh (status backstop).** `wait --idle` first observes output silence,
    then refreshes liveness and completion state. Silence is not itself completion: a quiet but
    still-running command keeps waiting; a prompt returns `awaiting-input`, and only an actually idle
@@ -140,8 +198,8 @@ and `dead` after it exits, while a recognized quiet prompt can refine an observa
 `awaiting-input`.
 
 `pairmux doctor` reports the diagnostic tier each shell actually reaches, including `hooks-no-C` —
-bash 3.2 emits `A`/`D` but never the `C` (output-start) mark, so completion detection works but
-human-interleave correlation is slightly weaker. `hooks-no-C` is not a stored mode: the terminal still
+bash 3.2 and pairmux's PowerShell wrapper emit `A`/`D` but never the `C` (output-start) mark, so
+completion detection works but human-interleave correlation is slightly weaker. `hooks-no-C` is not a stored mode: the terminal still
 reports `hooks`. With full hooks, completion is correlated to *pairmux's own* command marks, so a human
 typing commands in the same pane cannot spoof a completion.
 
@@ -166,7 +224,8 @@ tokens, and the standard sudo password translations for common locales — are c
 points at human handoff (`wait --human --notify`, which ends on a note or once the prompt is
 answered). The secret verdict comes from the pane's line discipline — echo suppressed while the
 kernel still assembles a line is what `getpass()` does, so it identifies a credential prompt in any
-language and from any tool, including ones no pattern covers. Phrasing is a second source, and a
+language and from any tool, including ones no pattern covers. Windows has no tty line discipline to
+read, so there the wording is the only evidence. Phrasing is a second source, and a
 terminal that merely goes quiet mid-line for ten seconds is reported as an unrecognized prompt so
 an unusual question still surfaces. Recognition of *wording* remains best-effort: a missed prompt
 leaves the terminal `running` (never an auto-answer), and `PAIRMUX_SECRET_PROMPT_RE` extends the
@@ -190,8 +249,35 @@ the reply teaches the next step.
   answer once and then observe with `wait`/`peek`.
 - **Creation** uses a separate per-name reservation, so concurrent `new --name X` calls create exactly
   one pane.
-- **Humans** type through native tmux and bypass locks. A `note` is journaled; attaching alone is not
-  an event, so the human leaves a note when handing control back.
+- **Humans** type through `attach` (a native tmux client, or the built-in direct attach) and bypass
+  locks; `send` warns the agent when a human is attached. A `note` is journaled; attaching alone is
+  not an event, so the human leaves a note when handing control back.
+
+## Windows
+
+On Windows (10 1809 or newer, x86-64 or ARM64) pairmux always uses the built-in backend over
+ConPTY; neither tmux nor WSL is needed. This support is new: it is validated by CI on hosted Windows
+runners (pending), has not been accepted on real Windows hardware, and the ARM64 build has not been
+exercised at runtime. WSL remains possible: inside it, pairmux is a Linux program and chooses its
+backend as on Linux.
+
+- **Shell.** A new terminal starts PowerShell 7 (`pwsh.exe`), else Windows PowerShell
+  (`powershell.exe`), else `%COMSPEC%` (normally `cmd.exe`). `$SHELL` is honored only if it names an
+  existing file — Git Bash exports `/usr/bin/bash`, which Windows cannot start. `PAIRMUX_SHELL`
+  overrides the shell on every platform, e.g. `PAIRMUX_SHELL=C:\Program Files\Git\bin\bash.exe`.
+- **Completion.** PowerShell terminals use `hooks` mode: after the user's profile loads, an inline
+  prompt wrapper emits OSC 133 `A`/`D` marks with the exit status (`$?`/`$LASTEXITCODE`). It is
+  passed with `-NoExit -EncodedCommand`, so the script execution policy does not apply to it, and it
+  emits no `C` mark, so `doctor` reports `hooks-no-C`. `cmd.exe` uses `sentinel` mode
+  (`cmd /v:on /k`, exit status from `ERRORLEVEL`). Git Bash gets the same bash hooks shim as on Unix.
+- **Program terminals.** `new --cmd` runs its command through the shell: PowerShell
+  `-EncodedCommand`, `cmd /s /c`, or `bash -lc`.
+- **Secret prompts.** There is no tty line discipline to read, so classification uses prompt wording
+  only; `PAIRMUX_SECRET_PROMPT_RE` can extend it.
+- **Process lifetime.** `kill` ends the terminal's whole process tree through a job object.
+- **Notifications and updates.** `--notify` shows a best-effort notification through Windows
+  PowerShell. `pairmux update` refuses with `E_UPDATE` (see the
+  [CLI reference](./cli-reference.md#update-v060)).
 
 ## Statuses and modes
 

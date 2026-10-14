@@ -10,7 +10,8 @@ The public pairmux APT repository/Pages and all 16 historical `.deb` release ass
 on 2026-10-08 with v0.5.3. Published PyPI versions, other release assets, tags and original
 checksums remain unchanged; historical checksum manifests may still list removed Debian files. Use
 [PyPI/uv, Homebrew, or a manual archive](./getting-started.mdx#install) for pairmux instead. This
-does not retire APT for system dependencies: keep **tmux >= 3.2** installed. The PyPI installer
+does not retire APT for system dependencies: keep **tmux >= 3.2** installed (required through
+v0.6.0; from the next release, needed only for the tmux backend). The PyPI installer
 does not change your APT configuration or remove system packages.
 
 ## 1. Inspect the former configuration

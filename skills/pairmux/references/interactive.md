@@ -21,10 +21,11 @@ pairmux send deploy --text yes --enter
 
 pairmux decides this mostly from the **terminal itself**, not from the words on it:
 
-- **Echo off while a whole line is still being read is a credential prompt.** That is what
-  `getpass()` does, and sudo, ssh, git, gpg, pinentry and npm all do it. It is a fact about the
-  terminal, so it holds for any wording, any language, and any tool — including ones pairmux has
-  never heard of. These are classified secret and you are told not to answer.
+- **Echo off while a whole line is still being read is a credential prompt** (macOS/Linux). That
+  is what `getpass()` does, and sudo, ssh, git, gpg, pinentry and npm all do it. It is a fact about
+  the terminal, so it holds for any wording, any language, and any tool — including ones pairmux has
+  never heard of. These are classified secret and you are told not to answer. Windows has no tty
+  line discipline to read, so there only the wording below counts.
 - **A recognized phrasing** — `[y/N]`, `(yes/no)`, `password:`, `PIN:`, OTP/MFA codes, API keys,
   pagers (`--More--`, `(END)`, a bare `:`), "press any key" — classifies without waiting.
 - **Anything else that goes quiet mid-line** for ten seconds is reported too, marked as
@@ -35,8 +36,9 @@ pairmux decides this mostly from the **terminal itself**, not from the words on 
 It **never auto-answers** — it reports the state, and you decide.
 
 `PAIRMUX_SECRET_PROMPT_RE` still extends the phrase list for a prompt that echoes what you type and
-is nonetheless sensitive; `pairmux doctor` validates it. It is rarely needed now: a prompt that
-hides your typing is already classified without it.
+is nonetheless sensitive; `pairmux doctor` validates it. On macOS/Linux it is rarely needed: a
+prompt that hides your typing is already classified without it. On Windows it is the only way to
+teach pairmux a differently worded credential prompt.
 
 ## The never-guess-secrets rule
 
@@ -66,8 +68,8 @@ you never see, echo, or log it, and `--human` returns no `output` for exactly th
 
 `send` applies its parts in order — text, then keys, then a trailing Enter:
 
-- `--text S` sends **literal** text (via `send-keys -l`), so `$HOME`, `;`, and quotes are not
-  interpreted.
+- `--text S` sends **literal** text (via `send-keys -l` on tmux), so `$HOME`, `;`, and quotes are
+  not interpreted.
 - `--key K` sends a named key. Repeatable. Valid keys: `Enter Escape Tab Space Up Down Left Right
   Home End PPage NPage BSpace DC`, `F1`–`F12`, `C-a`..`C-z`, `M-a`..`M-z`.
 - `--enter` appends a final Enter.
@@ -127,7 +129,7 @@ pairmux run repl "source .venv/bin/activate && python3"
 For a full-screen app (vim, htop, a menu), the journal tail is noisy — use the screen render instead:
 
 ```bash
-pairmux peek tui --screen     # a capture-pane snapshot of the current viewport
+pairmux peek tui --screen     # a snapshot of the current viewport (capture-pane semantics)
 pairmux send tui --key Down --key Enter
 pairmux send tui --key Escape
 ```

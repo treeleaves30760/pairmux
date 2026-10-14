@@ -184,6 +184,9 @@ test('persistent install is primary, update is version-gated, and uvx remains op
   assert.doesNotMatch(html, /id="quick-command"/);
   assert.match(html, /Python 3\.9 or newer for the uv tool environment/);
   assert.match(html, /tmux 3\.2 or newer to run terminals/);
+  assert.match(html, /next release after v0\.6\.0, tmux is optional \(without it, pairmux uses its own built-in multiplexer\)/);
+  assert.match(html, /Windows 10 1809 or newer runs pairmux natively; until then, install tmux[\s\S]*?use WSL on Windows/);
+  assert.doesNotMatch(html, /runs inside WSL, not natively/);
   assert.match(html, /official Astral sources, not PyPI/);
   assert.match(html, /Manual uv commands honor your normal environment and configuration/);
   assert.match(html, /built-in updater and shell installer instead pin pairmux’s source to public PyPI/);

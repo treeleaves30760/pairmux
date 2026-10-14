@@ -8,15 +8,16 @@ description: >-
   hand back. Also covers long-lived processes (dev servers, watch tasks, tail -f logs) and slow
   commands that must share that same live terminal — with blocking calls that return on requested
   outcomes instead of sleep-and-guess timing, and clean full output history with exit codes.
-  Keywords: tmux, terminal session, PTY, interactive CLI, REPL, TUI, pager, password prompt, human
-  takeover, human-in-the-loop, persistent shell, dev server, watch logs, background process,
-  long-running.
+  Keywords: tmux, terminal session, PTY, ConPTY, Windows, PowerShell, interactive CLI, REPL, TUI,
+  pager, password prompt, human takeover, human-in-the-loop, persistent shell, dev server, watch
+  logs, background process, long-running.
 ---
 
 # pairmux — reliable terminals for agents
 
-`pairmux` runs commands inside real tmux panes — actual PTYs with persistent shell state — and gives
-you a **blocking** CLI: `run` returns on completion, input, or timeout; `wait` returns when the
+`pairmux` runs commands inside real terminals — tmux panes, or PTY/ConPTY panes on pairmux's own
+built-in server when tmux is absent or on Windows — with persistent shell state, and gives you a
+**blocking** CLI: `run` returns on completion, input, or timeout; `wait` returns when the
 condition you requested is met, the pane dies, or its timeout expires. Interactive programs become
 drivable, a human can watch or step into the same terminal at any moment, and you never guess how
 long to wait. Add `--json` to any command for a machine-readable `pairmux.v1` envelope.
@@ -46,12 +47,19 @@ interactive, shares a terminal or its state, or may need a human to step in.
 
 ## Before starting
 
-Use the installed CLI: `pairmux version`, then `pairmux doctor`. If missing, recommend
-`uv tool install pairmux` (Python 3.9+); tmux 3.2+ is a separate system dependency.
+Use the installed CLI: `pairmux version`, then `pairmux doctor` (its first line names the backend:
+tmux or built-in). If missing, recommend `uv tool install pairmux` (Python 3.9+). tmux is optional
+(3.2+ when used; v0.6.0 and earlier require it); without it pairmux uses its built-in multiplexer.
+Windows runs natively (Windows 10 1809+, releases after v0.6.0); WSL is optional.
 With explicit user authorization, `pairmux update` (v0.6.0+) updates only the running persistent
 uv installation from public PyPI. Older versions first need `uv tool install --upgrade pairmux`.
-Do not install or self-update autonomously during a terminal workflow. Keep other installations
-under their existing package manager; uvx quick runs are not persistent update targets.
+On Windows `update` refuses (`E_UPDATE`); follow its hint. Do not install or self-update
+autonomously during a terminal workflow. Keep other installations under their existing package
+manager; uvx quick runs are not persistent update targets.
+
+**On Windows, the terminal's shell is PowerShell** (pwsh, else Windows PowerShell, else `cmd.exe`;
+`PAIRMUX_SHELL` overrides it), so write `run` commands in that shell's syntax. Secret prompts there
+are recognized by wording only: treat a quiet credential prompt at `running` as a handoff.
 
 ## The golden loop
 
@@ -140,7 +148,8 @@ terminal resumes, `pattern-found`, `human-done`, `dead`, or `timeout`, depending
 condition. A `timeout` carries a `next` that repeats the same wait with a longer deadline — follow
 it rather than giving up or switching strategy.
 Errors set `ok:false` with a stable `error.code`: `E_NO_TERMINAL`, `E_EXISTS`, `E_BUSY`, `E_DEAD`,
-`E_BAD_ARGS`, `E_TMUX`, `E_UPDATE`, `E_INTERNAL`. The error's `hint`/`next` tells you how to recover.
+`E_BAD_ARGS`, `E_TMUX` (the terminal backend — tmux or the built-in server — failed), `E_UPDATE`,
+`E_INTERNAL`. The error's `hint`/`next` tells you how to recover.
 
 ## Worked examples (real envelopes)
 
@@ -219,4 +228,4 @@ A human left a note — it rides along in `notes`; obey it:
 - **[references/commands.md](references/commands.md)** — every command, every flag, the full `pairmux.v1` envelope schema, and all error codes.
 - **[references/interactive.md](references/interactive.md)** — REPLs, pagers, `[y/N]` confirmations, `send` text-vs-keys, and the never-guess-secrets rule.
 - **[references/collaboration.md](references/collaboration.md)** — `attach`/`watch`/`note` and the human handoff loop (`wait --human --notify`).
-- **[references/troubleshooting.md](references/troubleshooting.md)** — `E_BUSY`, dead terminals, `wait --pattern` gotchas, huge journals, sentinel mode.
+- **[references/troubleshooting.md](references/troubleshooting.md)** — `E_BUSY`, dead terminals, `wait --pattern` gotchas, huge journals, sentinel mode, backend selection and `E_TMUX`.
