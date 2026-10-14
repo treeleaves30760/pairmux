@@ -82,7 +82,10 @@ jobs:
             --dist-dir dist \
             --out-dir dist/wheels \
             --check
-          test "$(find dist/wheels -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')" -eq 4
+          # macOS x86-64/ARM64, manylinux x86-64/aarch64, Windows x86-64/ARM64.
+          test "$(find dist/wheels -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')" -eq 6
+          test "$(find dist/wheels -maxdepth 1 -name '*-win_amd64.whl' | wc -l | tr -d ' ')" -eq 1
+          test "$(find dist/wheels -maxdepth 1 -name '*-win_arm64.whl' | wc -l | tr -d ' ')" -eq 1
       - name: Smoke-test the Linux runner wheel with pip
         run: |
           expected_version=${GITHUB_REF_NAME#v}
@@ -146,10 +149,74 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # The validate job cannot execute Windows binaries. Before anything is
+  # published, run the exact preserved bytes on Windows: the win_amd64 wheel
+  # through pip into a fresh venv, and pairmux.exe from the checksummed zip.
+  # Like publish, this job has no checkout and never rebuilds.
+  windows-smoke:
+    needs: validate
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.x'
+      - name: Download verified native release assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: validated-release-assets
+          path: dist/release-assets
+      - name: Download verified wheels
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: validated-wheels
+          path: dist/wheels
+      - name: Smoke-test the win_amd64 wheel with pip and the windows_amd64 zip
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = $env:GITHUB_REF_NAME.Substring(1)
+
+          $wheels = @(Get-ChildItem -LiteralPath dist/wheels -Filter '*-win_amd64.whl')
+          if ($wheels.Count -ne 1) { throw "expected one win_amd64 wheel, found $($wheels.Count)" }
+          $venv = Join-Path $env:RUNNER_TEMP 'pairmux-wheel-smoke'
+          python -m venv $venv
+          if ($LASTEXITCODE -ne 0) { throw 'could not create the smoke-test venv' }
+          # Only these local bytes: no index, no dependencies, no pip config.
+          & "$venv/Scripts/python.exe" -m pip --isolated install --no-deps --no-index $wheels[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw 'pip could not install the win_amd64 wheel' }
+          $wheelExe = Join-Path $venv 'Scripts/pairmux.exe'
+          $reported = @(& $wheelExe version)
+          if ($LASTEXITCODE -ne 0 -or $reported.Count -ne 1 -or $reported[0] -cne $expected) {
+            throw "wheel pairmux.exe reported '$($reported -join '|')'; expected '$expected'"
+          }
+
+          $zipName = "pairmux_${expected}_windows_amd64.zip"
+          $zip = Join-Path dist/release-assets $zipName
+          $rows = @(Get-Content -LiteralPath dist/release-assets/checksums.txt |
+            Where-Object { $_ -cmatch ('^([a-f0-9]{64})  ' + [regex]::Escape($zipName) + '$') })
+          if ($rows.Count -ne 1) { throw "checksums.txt has no unique row for $zipName" }
+          $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+          if ($digest -cne $rows[0].Substring(0, 64)) { throw "$zipName does not match checksums.txt" }
+          $unpacked = Join-Path $env:RUNNER_TEMP 'pairmux-zip-smoke'
+          Expand-Archive -LiteralPath $zip -DestinationPath $unpacked
+          $zipExe = Join-Path $unpacked 'pairmux.exe'
+          $reported = @(& $zipExe version)
+          if ($LASTEXITCODE -ne 0 -or $reported.Count -ne 1 -or $reported[0] -cne $expected) {
+            throw "zip pairmux.exe reported '$($reported -join '|')'; expected '$expected'"
+          }
+          # Both channels must ship the same verified binary.
+          if ((Get-FileHash -LiteralPath $zipExe).Hash -cne (Get-FileHash -LiteralPath $wheelExe).Hash) {
+            throw 'the zip and the win_amd64 wheel contain different pairmux.exe bytes'
+          }
+          Write-Host "win_amd64 wheel and $zipName both report $expected"
+
   # Publishing never rebuilds. A draft holds the exact GitHub assets while
   # PyPI is updated; only after PyPI succeeds does the release become visible.
   publish:
-    needs: validate
+    needs: [validate, windows-smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -198,8 +265,9 @@ jobs:
               exit 1
             }
           fi
-          test "$(find dist/release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 7
-          test "$(find dist/wheels -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')" -eq 4
+          # Four tarballs, two Windows zips, two RPMs and checksums.txt; six wheels.
+          test "$(find dist/release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 9
+          test "$(find dist/wheels -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')" -eq 6
           gh auth status
           uv publish --dry-run dist/wheels/*.whl
           release=$(

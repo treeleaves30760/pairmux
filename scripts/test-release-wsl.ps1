@@ -87,7 +87,7 @@ try {
     @(
         "distribution=$name", 'requested_wsl_version=1', "rootfs=$rootfsUrl", "checksums=$sumUrl",
         "rootfs_sha256=$actualHash", "pairmux_tag=$Version", "pairmux_binary_sha256=$binaryHash",
-        'installer=trusted-checkout/install.ps1', 'bash_endpoint=https://pairmux.treeleaves30760.com/install.sh',
+        'installer=trusted-checkout/install.ps1', 'install_target=wsl', 'bash_endpoint=https://pairmux.treeleaves30760.com/install.sh',
         "install_ps1_sha256=$((Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $repo 'install.ps1')).Hash.ToLowerInvariant())"
     ) | Set-Content (Join-Path $LogDir 'wsl-provenance.txt')
     $importAttempted = $true
@@ -122,18 +122,22 @@ test ! -e /home/pairmux/.local/bin/pairmux
     }
 
     # The production script can call exit. Invoke a child Windows PowerShell so
-    # this test's finally always runs, even on installer failures.
+    # this test's finally always runs, even on installer failures. Native
+    # Windows is the installer's default; select WSL with the documented opt-in.
     $oldDryRun = $env:PAIRMUX_DRY_RUN
     $oldInstallDir = $env:PAIRMUX_INSTALL_DIR
+    $oldInstallTarget = $env:PAIRMUX_INSTALL_TARGET
     try {
         Remove-Item Env:PAIRMUX_DRY_RUN -ErrorAction SilentlyContinue
         Remove-Item Env:PAIRMUX_INSTALL_DIR -ErrorAction SilentlyContinue
+        $env:PAIRMUX_INSTALL_TARGET = 'wsl'
         & powershell.exe -NoProfile -NonInteractive -File (Join-Path $repo 'install.ps1') -Distribution $name -Version $Version 2>&1 |
             Tee-Object -FilePath (Join-Path $LogDir 'windows-production-install.txt')
         if ($LASTEXITCODE -ne 0) { throw "Production install.ps1 failed ($LASTEXITCODE)" }
     } finally {
         $env:PAIRMUX_DRY_RUN = $oldDryRun
         $env:PAIRMUX_INSTALL_DIR = $oldInstallDir
+        $env:PAIRMUX_INSTALL_TARGET = $oldInstallTarget
     }
     $probe = Write-TrustedShell -FileName 'probe.sh' -Source @'
 set -euo pipefail

@@ -1,0 +1,34 @@
+# Install pairmux from this checkout without PyPI, fully offline:
+#
+#   python -m pip install .        (or: uv tool install .)
+#
+# There are no build dependencies. The in-tree backend runs `go build` (Go
+# 1.25+) or packages PAIRMUX_PREBUILT_BINARY into a host-only development
+# wheel; see packaging/pypi/README.md#install-from-a-source-checkout. Release
+# wheels do not come from here: GoReleaser and build_wheels.py produce them in
+# the tag workflow.
+[build-system]
+requires = []
+build-backend = "pairmux_build_backend"
+backend-path = ["packaging/pypi"]
+
+[tool.uv]
+# uv may reuse a wheel it built from a directory until one of these cache keys
+# changes, and its default keys are only pyproject.toml and setup.*. List
+# everything that feeds the binary, its version or the wheel metadata so a
+# stale build is never reused. A changed file behind an unchanged
+# PAIRMUX_PREBUILT_BINARY path is invisible here: pass --reinstall.
+cache-keys = [
+  { file = "pyproject.toml" },
+  { file = "go.mod" },
+  { file = "go.sum" },
+  { file = "*.go" },
+  { file = "cmd/**" },
+  { file = "internal/**" },
+  { file = "skills/**" },
+  { file = "packaging/pypi/*.py" },
+  { file = "packaging/pypi/DESCRIPTION.md" },
+  { git = { commit = true, tags = true } },
+  { env = "PAIRMUX_VERSION" },
+  { env = "PAIRMUX_PREBUILT_BINARY" },
+]

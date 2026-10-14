@@ -18,10 +18,23 @@ if rpm -q tmux >"$logs/tmux-before.txt" 2>&1; then
   printf 'tmux was already installed; dependency installation cannot be proved\n' >&2; exit 1
 fi
 rpm -qp --requires "$package" >"$logs/rpm-requires.txt"
-grep -Eq '^tmux >= 3\.2$' "$logs/rpm-requires.txt"
+rpm -qp --recommends "$package" >"$logs/rpm-recommends.txt"
+# v0.6.0 and earlier hard-require tmux. Releases with the built-in multiplexer
+# only recommend it. Exactly one of the two shapes must be present.
+if grep -Eq '^tmux( |$)' "$logs/rpm-requires.txt"; then
+  dependency=requires weak_deps=False
+else
+  dependency=recommends weak_deps=True
+fi
+grep -Eq '^tmux >= 3\.2$' "$logs/rpm-$dependency.txt"
+if [ "$dependency" = requires ] && grep -Eq '^tmux( |$)' "$logs/rpm-recommends.txt"; then
+  printf 'RPM both requires and recommends tmux\n' >&2; exit 1
+fi
+printf 'tmux dependency: %s\n' "$dependency" >"$logs/rpm-tmux-dependency.txt"
 # The release RPM is unsigned; public SHA256 was checked on the host first.
-# Do not install tmux explicitly: dnf must satisfy pairmux's real dependency.
-dnf -y --setopt=install_weak_deps=False --setopt=localpkg_gpgcheck=0 \
+# Do not install tmux explicitly: dnf must satisfy pairmux's real dependency,
+# hard or weak (dnf installs Recommends only when weak dependencies are on).
+dnf -y --setopt=install_weak_deps="$weak_deps" --setopt=localpkg_gpgcheck=0 \
   install "$package" python3 >"$logs/dnf-install.txt" 2>&1
 rpm -q --qf '%{NAME} %{VERSION} %{ARCH}\n' pairmux tmux >"$logs/installed-packages.txt"
 [ "$(rpm -q --qf '%{VERSION}' pairmux)" = "$version" ]

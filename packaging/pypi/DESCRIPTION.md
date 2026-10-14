@@ -8,9 +8,11 @@
 [Changelog](https://github.com/treeleaves30760/pairmux/blob/main/ChangeLog.md) ·
 [Source](https://github.com/treeleaves30760/pairmux)
 
-pairmux is a small Agent-Computer Interface layer over tmux with no separate service to supervise.
-Agents get a real PTY with persistent shell state and actionable command outcomes; humans keep
-normal access to the same live terminal — watch, take over, hand back.
+pairmux is a small Agent-Computer Interface layer over a terminal multiplexer, with no service for
+you to install or supervise. It runs natively on macOS, Linux and Windows: it uses tmux when tmux is
+installed on macOS or Linux, and otherwise its own built-in multiplexer (a PTY on Unix, ConPTY on
+Windows). Agents get a real terminal with persistent shell state and actionable command outcomes;
+humans keep normal access to the same live terminal — watch, take over, hand back.
 
 ## Why pairmux
 
@@ -101,6 +103,15 @@ with no persistent cache and wheels only. Normal uv commands use your regular co
 for PATH setup and other supported methods (`pipx install pairmux` or `python -m pip install pairmux`
 in a dedicated environment).
 
+On Windows, the [PowerShell installer](https://pairmux.treeleaves30760.com/install.ps1) applies the
+same PyPI-only uv policy natively, without administrator rights:
+
+```powershell
+irm https://pairmux.treeleaves30760.com/install.ps1 | iex
+```
+
+Set `$env:PAIRMUX_INSTALL_TARGET = 'wsl'` first to install into a WSL distribution instead.
+
 ### Requirements
 
 The [PyPI pairmux wheels](https://pypi.org/project/pairmux/) contain a prebuilt native Go binary,
@@ -112,11 +123,24 @@ comes from PyPI in that installer flow; uv/Python may come from Astral upstream.
 
 PyPI package requirements and wheel targets:
 
-- **tmux 3.2 or newer, installed separately** with your system package manager; neither the wheel
-  nor the installer supplies tmux or runs sudo to install it
-- macOS 12+ or manylinux_2_17 (glibc 2.17+)
-- x86-64 or ARM64 (aarch64)
-- no native Windows wheel; use a compatible Linux distribution inside WSL
+- macOS 12+, manylinux_2_17 (glibc 2.17+), or Windows 10 version 1809+ (ConPTY)
+- x86-64 or ARM64 (aarch64) on every operating system
+- **tmux is optional.** On macOS and Linux, pairmux uses tmux when it is installed (the tmux
+  backend needs tmux 3.2 or newer, installed separately with your system package manager) and its
+  built-in multiplexer otherwise. Windows always uses the built-in multiplexer. Set
+  `PAIRMUX_BACKEND=builtin` or `PAIRMUX_BACKEND=tmux` to override the automatic choice. Neither
+  the wheels nor the installers supply tmux or run sudo to install it.
+- WSL remains supported: inside WSL, pairmux installs and runs as on any other Linux system
+
+### From a source checkout, without PyPI
+
+If you can clone the repository but cannot reach PyPI, install a development build from the clone
+with no build dependencies: `python -m pip install .` or `uv tool install .` builds the binary with
+a local Go 1.25+ toolchain, or packages a release binary you downloaded from
+[GitHub Releases](https://github.com/treeleaves30760/pairmux/releases) when you set
+`PAIRMUX_PREBUILT_BINARY` to its absolute path. Such builds get a development version and are not
+`pairmux update` targets. See the
+[source install guide](https://github.com/treeleaves30760/pairmux/blob/main/packaging/pypi/README.md#install-from-a-source-checkout).
 
 The quickstart below assumes the persistent `pairmux` command is on PATH. For temporary use,
 prefix each command with `uvx`.
@@ -177,18 +201,20 @@ pairmux send NAME --text VALUE --enter
 ```
 
 For a secret-shaped prompt, the response recommends `pairmux wait NAME --human --notify`. A human
-can enter the same live pane with `pairmux attach NAME`, provide the input, and detach with
-the configured tmux binding (default `Ctrl-b d`). Running `pairmux note NAME "ready"` afterward
-records a message and releases an agent waiting with `--human`; it does not itself detach or enforce
+can enter the same live pane with `pairmux attach NAME`, provide the input, and detach (on the tmux
+backend, with the configured tmux binding, default `Ctrl-b d`; see the
+[CLI reference](https://pairmux-docs.treeleaves30760.com/cli-reference) for the built-in backend).
+Running `pairmux note NAME "ready"` afterward records a message and releases an agent waiting with `--human`; it does not itself detach or enforce
 control ownership. This avoids routing the input through the agent-facing `send` command. Prompt
 recognition is heuristic, desktop notification is best-effort, and whether an application echoes or
 records input remains application-dependent.
 
 ## How it works
 
-pairmux does not implement another PTY or add a background service of its own. tmux remains the
-terminal-state engine; short-lived pairmux commands add completion detection, captured output,
-model-friendly shaping, and coordination around the live pane. `pairmux attach` starts a native
-tmux client against the correct managed session whenever a human needs to observe or take over.
+A terminal multiplexer remains the terminal-state engine: tmux when it is installed on macOS or
+Linux, otherwise pairmux's own built-in server, which drives a PTY on Unix and ConPTY on native
+Windows. Short-lived pairmux commands add completion detection, captured output, model-friendly
+shaping, and coordination around the live pane. `pairmux attach` connects a human to the same
+managed terminal whenever a human needs to observe or take over.
 
 pairmux is open source under the [MIT License](https://github.com/treeleaves30760/pairmux/blob/main/LICENSE).

@@ -30,6 +30,11 @@ jobs:
   published:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # The verified inventory decides which platform jobs apply: releases up to
+    # v0.6.0 have no Windows assets, later ones must have all of them.
+    outputs:
+      shape: ${{ steps.inventory.outputs.shape }}
+      windows: ${{ steps.inventory.outputs.windows_assets }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -40,6 +45,7 @@ jobs:
       - name: Test trusted acceptance helper contracts offline
         run: python3 -I "$GITHUB_WORKSPACE/scripts/test_release_acceptance.py"
       - name: Validate actual published GitHub and PyPI inventory
+        id: inventory
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -258,5 +264,59 @@ jobs:
         if: always()
         with:
           name: windows-real-wsl1
+          path: acceptance-logs/
+          if-no-files-found: warn
+
+  # Native Windows from public bytes: the win_amd64 wheel through uv into an
+  # isolated tool directory, byte identity with the checksummed zip, healthy
+  # doctor, and a built-in (ConPTY) new -> run -> kill round trip. Only an
+  # explicit, verified windows=false (a release without Windows assets, such as
+  # v0.6.0) skips it; any other value runs it, and the first step fails closed.
+  windows-native:
+    needs: published
+    if: needs.published.outputs.windows != 'false'
+    runs-on: windows-2025
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: 0.11.16
+          enable-cache: false
+      - name: Verify selected public Windows zip and wheel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WINDOWS_ASSETS: ${{ needs.published.outputs.windows }}
+          RELEASE_SHAPE: ${{ needs.published.outputs.shape }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:WINDOWS_ASSETS -cne 'true' -or $env:RELEASE_SHAPE -cne 'macos-linux-windows') {
+            throw "published inventory did not verify Windows assets (windows='$env:WINDOWS_ASSETS', shape='$env:RELEASE_SHAPE')"
+          }
+          New-Item -ItemType Directory -Path acceptance-logs -Force | Out-Null
+          $downloads = Join-Path $env:RUNNER_TEMP 'windows-public-downloads'
+          python -I "$env:GITHUB_WORKSPACE/scripts/release-acceptance.py" --target windows-amd64 --out-dir $downloads 2>&1 |
+            Tee-Object -FilePath acceptance-logs/validate.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Public release validation failed' }
+          Copy-Item (Join-Path $downloads 'provenance.json') acceptance-logs/provenance.json
+      - name: Actual public uv install, doctor and built-in terminal round trip
+        run: |
+          ./scripts/test-release-windows.ps1 -Version $env:ACCEPTANCE_TAG `
+            -LogDir "$env:GITHUB_WORKSPACE/acceptance-logs" `
+            -ProvenancePath "$env:GITHUB_WORKSPACE/acceptance-logs/provenance.json" `
+            -Uv (Get-Command uv -CommandType Application | Select-Object -First 1).Source `
+            -Python (Get-Command python -CommandType Application | Select-Object -First 1).Source
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: windows-native-public-wheel
           path: acceptance-logs/
           if-no-files-found: warn

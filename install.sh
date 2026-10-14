@@ -13,9 +13,11 @@ PYPI_INDEX="https://pypi.org/simple"
 PYPI_PROJECT="https://pypi.org/project/pairmux/"
 UV_INSTALLER="https://astral.sh/uv/install.sh"
 DOCS="https://pairmux-docs.treeleaves30760.com"
+WINDOWS_INSTALLER="https://pairmux.treeleaves30760.com/install.ps1"
 
 info() { printf '==> %s\n' "$*"; }
 warn() { printf 'warning: %s\n' "$*" >&2; }
+note() { printf 'note: %s\n' "$*" >&2; }
 err()  { printf 'error: %s\n' "$*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -34,9 +36,10 @@ options:
 environment:
   PAIRMUX_INSTALL_DIR   executable directory (default: ~/.local/bin)
 
-Requires macOS 12+ or glibc Linux, x86-64 or ARM64. uv creates a Python >=3.9
-isolated tool environment; the installed command is a native Go binary.
-tmux >=3.2 is a separate runtime dependency. No sudo or shell-profile edits.
+Requires macOS 12+ or glibc Linux, x86-64 or ARM64; on Windows use install.ps1.
+uv creates a Python >=3.9 isolated tool environment; the installed command is a
+native Go binary. tmux is optional: pairmux uses tmux >=3.2 when it is installed
+and its built-in terminal backend otherwise. No sudo or shell-profile edits.
 Inherited UV_* settings and uv configuration files are ignored for this install.
 EOF
 }
@@ -77,7 +80,9 @@ detect_platform() {
 	case "$os_raw" in
 	Darwin) OS=darwin ;;
 	Linux) OS=linux ;;
-	*) err "unsupported OS: $os_raw (on Windows, use WSL)" ;;
+	MINGW* | MSYS* | CYGWIN* | Windows_NT)
+		err "unsupported OS: $os_raw (on Windows, run the native PowerShell installer: irm $WINDOWS_INSTALLER | iex)" ;;
+	*) err "unsupported OS: $os_raw (pairmux supports macOS, Linux, and Windows via $WINDOWS_INSTALLER)" ;;
 	esac
 	arch_raw=$(uname -m)
 	case "$arch_raw" in
@@ -218,16 +223,19 @@ tmux_hint() {
 	fi
 }
 
+# tmux is optional: without it pairmux uses its built-in terminal backend. When
+# tmux is installed, automatic selection uses it, so an old tmux still matters.
 check_tmux() {
 	if ! have tmux; then
-		warn "tmux is not installed. pairmux requires tmux >=3.2."
-		printf '         install it with: %s\n' "$(tmux_hint)" >&2
+		note "tmux is not installed; pairmux will use its built-in terminal backend (tmux is optional)."
+		printf '      for the tmux backend, install tmux >=3.2 with: %s\n' "$(tmux_hint)" >&2
+		printf '      (pairmux v0.6.0 and older require tmux)\n' >&2
 		return
 	fi
 	local tv tmaj tmin
 	tv=$(tmux -V 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -n1) || true
 	if [ -z "$tv" ]; then
-		warn "could not parse the tmux version; ensure it is >=3.2"
+		warn "could not parse the tmux version; the tmux backend needs >=3.2 (PAIRMUX_BACKEND=builtin avoids tmux)"
 		return
 	fi
 	tmaj=${tv%%.*}
@@ -235,8 +243,9 @@ check_tmux() {
 	if [ "$tmaj" -gt 3 ] || { [ "$tmaj" -eq 3 ] && [ "$tmin" -ge 2 ]; }; then
 		info "tmux $tv detected (>=3.2)"
 	else
-		warn "tmux $tv is older than the required 3.2."
+		warn "tmux $tv is older than the required 3.2 for the tmux backend, which is used when tmux is installed."
 		printf '         upgrade it with: %s\n' "$(tmux_hint)" >&2
+		printf '         or set PAIRMUX_BACKEND=builtin to use the built-in terminal backend\n' >&2
 	fi
 }
 

@@ -6,3 +6,5 @@ plans/
 __pycache__/
 *.py[cod]
 .DS_Store
+# Wheels built from this checkout (`pip wheel .`); `uv build` writes to dist/.
+*.whl

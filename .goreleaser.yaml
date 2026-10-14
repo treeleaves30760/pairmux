@@ -1,9 +1,11 @@
 # GoReleaser configuration for pairmux.
 # Schema: v2 (goreleaser >= 2). Validate with `make release-check`.
-# Distribution strategy: GitHub release tarballs, PyPI wheels, native RPM
-# packages, and a Homebrew cask. The cask installs from the release tarball, so
-# it is not gated on macOS signing/notarization (tracked separately in
-# RELEASING.md for a wider stable release).
+# Distribution strategy: GitHub release tarballs (macOS/Linux) and zips
+# (Windows), PyPI wheels, native RPM packages, and a Homebrew cask. The cask
+# installs from the release tarball, so it is not gated on macOS
+# signing/notarization (tracked separately in RELEASING.md for a wider stable
+# release). Windows binaries use pairmux's built-in ConPTY multiplexer; they are
+# unsigned like every other artifact here.
 version: 2
 
 project_name: pairmux
@@ -17,11 +19,13 @@ builds:
     main: ./cmd/pairmux
     binary: pairmux
     # Static, dependency-free binary: no cgo so cross-compiles cleanly.
+    # GoReleaser appends .exe to the Windows binary name on its own.
     env:
       - CGO_ENABLED=0
     goos:
       - darwin
       - linux
+      - windows
     goarch:
       - amd64
       - arm64
@@ -39,20 +43,29 @@ archives:
       - pairmux
     formats:
       - tar.gz
+    # Windows gets a .zip that Explorer and Expand-Archive open natively:
+    # pairmux_<version>_windows_<arch>.zip. verify_release.py pins both shapes.
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
     # README.md is authored by a sibling and lives at the repo root; man page is
-    # committed at man/pairmux.1. Both ship inside every archive alongside the
-    # license.
+    # committed at man/pairmux.1. All three ship inside every archive, the
+    # Windows zips included (one archive config keeps the member set uniform).
     files:
       - LICENSE
       - README.md
       - man/pairmux.1
 
+# Covers every archive (tar.gz and zip) and every package.
 checksum:
   name_template: checksums.txt
   algorithm: sha256
 
+# nFPM only packages linux artifacts, so the darwin and windows builds above
+# never reach an RPM.
 nfpms:
   - id: pairmux
     ids:
@@ -62,18 +75,23 @@ nfpms:
     homepage: https://pairmux.treeleaves30760.com
     maintainer: treeleaves30760 <treeleaves30760.ai@gmail.com>
     description: |-
-      Reliable terminal primitives for AI agents on tmux.
+      Reliable terminal primitives for AI agents.
       pairmux is an Agent-Computer Interface layer that lets AI agents drive
       real terminals with a blocking, self-teaching CLI while humans watch,
-      attach, and help.
+      attach, and help. It uses tmux when it is installed and its built-in
+      PTY multiplexer otherwise.
     license: MIT
     formats:
       - rpm
     section: utils
     priority: optional
     bindir: /usr/bin
-    # Hard dependency using RPM's Requires syntax.
-    dependencies:
+    # Weak dependency (RPM Recommends): tmux is optional now that pairmux has a
+    # built-in multiplexer. dnf installs it by default (install_weak_deps=True),
+    # which keeps the tmux backend for existing users, while
+    # --setopt=install_weak_deps=False or a later removal leaves a working
+    # pairmux on the built-in backend.
+    recommends:
       - tmux >= 3.2
     contents:
       - src: ./man/pairmux.1
@@ -94,6 +112,10 @@ nfpms:
 # xattr hook strips Apple's quarantine attribute, so the unsigned binary runs
 # without a Gatekeeper prompt; signing/notarization stays a separate
 # wider-release item.
+# The cask only consumes darwin and linux archives (GoReleaser filters casks by
+# OS), so the Windows zips never appear in it; verify_release.py fails the
+# release if the rendered cask ever references one. The tmux dependency is kept
+# deliberately: Homebrew users see no behavior change from the built-in backend.
 homebrew_casks:
   - ids:
       - pairmux
