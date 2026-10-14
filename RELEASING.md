@@ -144,13 +144,17 @@ documentation and landing copy mark native Windows and optional tmux as
 "next release after v0.6.0"; replace that wording with the actual version when
 the tag is chosen.
 
-**Not verified for that release.** Native Windows is validated only by CI on
-hosted Windows runners (unit, ConPTY integration and installer tests, plus
-cross-compiled vet for both architectures) and by the release smoke job above;
-results for the final head are pending. There has been no acceptance on real
-Windows hardware, and the Windows ARM64 binary has been cross-compiled but not
-run. The published-release acceptance workflow's Windows job still covers WSL1,
-now through the opt-in WSL target; it has no native Windows job yet.
+**Not verified for that release.** Native Windows is validated by CI on hosted
+Windows runners (unit, ConPTY integration with PowerShell, source install and
+installer tests, plus cross-compiled vet for both architectures) and by the
+release smoke job above. Draft PR #10's CI passed all of them on
+`windows-latest` (Windows Server 2025) at `ce3f74e`, including PowerShell's
+OSC 133 marks reaching pairmux through ConPTY. Acceptance on real Windows
+hardware is in progress and not yet recorded, older Windows 10 builds are
+untested, and the Windows ARM64 binary has been cross-compiled but not run. The
+published-release acceptance workflow keeps its WSL1 job (now through the
+opt-in WSL target) and gains a `windows-native` job, described below, that has
+not yet run against a published release.
 
 ## Release channels
 
@@ -281,6 +285,13 @@ isolated terminal command with `done`, exit 0 and one unique marker line.
   as an owned **WSL1** distribution, a non-root default user, production
   `install.ps1`, and Linux runtime/cleanup. Unsupported runner features fail;
   mocks and WSL2 are not substitutes.
+- Native Windows (releases after v0.6.0): Windows 2025 installing the public
+  `win_amd64` wheel with uv into an isolated tool directory under the PyPI-only
+  policy, requiring the installed `pairmux.exe` to match the checksummed
+  `windows_amd64` zip, a healthy `doctor`, and a built-in-backend
+  `new`/`run`/`kill` round trip. The published-release check decides whether the
+  tag has Windows assets: the job is skipped only for a verified macOS/Linux-only
+  release such as v0.6.0, and fails closed for any inconsistent asset set.
 
 All jobs preserve logs/provenance even on failure. The helpers first passed
 local model-free tests and the common runtime probe against the unchanged

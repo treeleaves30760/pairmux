@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   line discipline to read, so secret-prompt classification there uses prompt wording only;
   `PAIRMUX_SECRET_PROMPT_RE` can extend it. Killing a terminal kills its whole process tree through
   a job object, and `--notify` shows a best-effort notification through Windows PowerShell. This
-  support is new: it is validated by CI on hosted Windows runners (pending) and has not been
+  support is new: it is validated by CI on hosted Windows Server 2025 runners and has not been
   accepted on real Windows hardware, and the ARM64 build has not been exercised at runtime. WSL
   remains possible; inside it pairmux is a Linux program and picks its backend as on Linux.
 
