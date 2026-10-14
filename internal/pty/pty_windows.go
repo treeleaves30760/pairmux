@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -253,6 +254,11 @@ func (p *conPty) Resize(cols, rows int) error {
 	if cols <= 0 || rows <= 0 || cols > 0x7fff || rows > 0x7fff {
 		return fmt.Errorf("pty: invalid size %dx%d", cols, rows)
 	}
+	p.closeMu.Lock()
+	defer p.closeMu.Unlock()
+	if p.closed {
+		return os.ErrClosed
+	}
 	if hr, _, _ := procResizePseudoConsole.Call(p.hpc, coord(cols, rows)); hr != 0 {
 		return fmt.Errorf("pty: ResizePseudoConsole: HRESULT 0x%08x", uint32(hr))
 	}
@@ -274,6 +280,13 @@ func (p *conPty) Exited() <-chan struct{} { return p.exited }
 // not be placed in one); reap then closes the pseudo console, which ends any
 // other client still attached to it.
 func (p *conPty) Kill() error {
+	// After Close the handles are released and their values may already name
+	// another terminal's job or process; never act on them then.
+	p.closeMu.Lock()
+	defer p.closeMu.Unlock()
+	if p.closed {
+		return nil
+	}
 	var err error
 	p.killOnce.Do(func() {
 		if p.job != 0 {
@@ -304,11 +317,21 @@ func (p *conPty) Close() error {
 
 // composeCommandLine quotes each argument by the rules CommandLineToArgvW
 // (and so every C runtime and PowerShell) uses to split it again.
+//
+// cmd.exe is the exception: it does not split its command line that way, so a
+// command after /c or /k is passed as written, wrapped in the one pair of
+// quotes that /s tells cmd to strip — backslash-escaped quotes inside it would
+// reach the command literally.
 func composeCommandLine(path string, args []string) string {
 	var b strings.Builder
 	b.WriteString(syscall.EscapeArg(path))
-	for _, a := range args {
+	isCmd := strings.EqualFold(filepath.Base(path), "cmd.exe") || strings.EqualFold(filepath.Base(path), "cmd")
+	for i, a := range args {
 		b.WriteByte(' ')
+		if isCmd && i == len(args)-1 && i > 0 && (strings.EqualFold(args[i-1], "/c") || strings.EqualFold(args[i-1], "/k")) {
+			b.WriteString(`"` + a + `"`)
+			continue
+		}
 		b.WriteString(syscall.EscapeArg(a))
 	}
 	return b.String()

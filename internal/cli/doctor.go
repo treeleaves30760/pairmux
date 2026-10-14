@@ -17,6 +17,7 @@ import (
 	"github.com/treeleaves30760/pairmux/internal/detect"
 	"github.com/treeleaves30760/pairmux/internal/journal"
 	"github.com/treeleaves30760/pairmux/internal/mux"
+	"github.com/treeleaves30760/pairmux/internal/muxd"
 	"github.com/treeleaves30760/pairmux/internal/output"
 	"github.com/treeleaves30760/pairmux/internal/rundir"
 	"github.com/treeleaves30760/pairmux/internal/shellhooks"
@@ -84,8 +85,7 @@ func (c *Ctx) checkBackend() (doctorCheck, bool) {
 		return ck, ok
 	}
 	ck := doctorCheck{name: "backend"}
-	dir, err := rundir.Ensure()
-	if err != nil {
+	if _, err := rundir.Ensure(); err != nil {
 		ck.detail = "built-in multiplexer (" + c.Choice.Reason + "): " + err.Error()
 		ck.fix = "set PAIRMUX_TMPDIR to a short writable directory"
 		return ck, false
@@ -98,7 +98,6 @@ func (c *Ctx) checkBackend() (doctorCheck, bool) {
 	}
 	ck.ok = true
 	ck.detail = fmt.Sprintf("built-in multiplexer (%s); socket %s", c.Choice.Reason, sock)
-	_ = dir
 	if c.Mux.HasSession() {
 		if v, err := c.Mux.Version(); err == nil {
 			ck.detail += "; server running (pairmux " + v + ")"
@@ -311,7 +310,12 @@ func liveProbe(kind string) []shellTierResult {
 
 	sock := fmt.Sprintf("pmx-doctor-%d", os.Getpid())
 	cl := backend.OpenKind(kind, sock)
-	defer func() { _ = cl.KillServer() }()
+	defer func() {
+		_ = cl.KillServer()
+		if kind == mux.BackendBuiltin {
+			removeProbeRuntimeFiles(sock)
+		}
+	}()
 
 	out := make([]shellTierResult, 0, len(shells))
 	for i, sh := range shells {
@@ -367,7 +371,8 @@ func probeShell(cl mux.Mux, stateDir string, idx int, shell string) shellTierRes
 			return res
 		}
 	}
-	if mode == core.ModeHooks {
+	nudged := mode == core.ModeHooks && !cl.AtomicJournal()
+	if nudged {
 		_ = cl.SendKeys(paneID, "Enter") // nudge one prompt so an A mark is guaranteed after capture
 	}
 
@@ -376,7 +381,7 @@ func probeShell(cl mux.Mux, stateDir string, idx int, shell string) shellTierRes
 		res.err = "wait ready: " + err.Error()
 		return res
 	}
-	if mode == core.ModeHooks && gotHooks {
+	if nudged && gotHooks {
 		_, _ = detect.WaitPromptCycle(j, 5*time.Second) // as cmdNew: absorb the nudge's marks
 	}
 
@@ -581,4 +586,25 @@ func renderDoctor(checks []doctorCheck) (body string, issues bool, topFix string
 		}
 	}
 	return b.String(), issues, topFix
+}
+
+// removeProbeRuntimeFiles deletes what the throwaway built-in server leaves in
+// the runtime directory (its lock and log; the socket goes with it) once it
+// has exited, so repeated doctor runs do not accumulate them. Best effort.
+func removeProbeRuntimeFiles(sock string) {
+	deadline := time.Now().Add(5 * time.Second)
+	for muxd.Running(sock) && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	dir, err := rundir.Verify()
+	if err != nil {
+		return
+	}
+	base, err := rundir.FileBase(sock)
+	if err != nil {
+		return
+	}
+	for _, ext := range []string{".lock", ".log", ".sock"} {
+		_ = os.Remove(filepath.Join(dir, base+ext))
+	}
 }

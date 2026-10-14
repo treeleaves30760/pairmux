@@ -51,7 +51,11 @@ const (
 // writes them to the program's input. Both slices are freshly allocated and
 // owned by the caller.
 func (s *Screen) Feed(p []byte) (forward, reply []byte) {
-	s.out = make([]byte, 0, len(p)+len(s.seq)+s.un+16)
+	if s.discardForward {
+		s.out = s.fwdScratch[:0]
+	} else {
+		s.out = make([]byte, 0, len(p)+len(s.seq)+s.un+16)
+	}
 	s.reply = nil
 	i := 0
 	for i < len(p) {
@@ -71,8 +75,21 @@ func (s *Screen) Feed(p []byte) (forward, reply []byte) {
 	}
 	forward, reply = s.out, s.reply
 	s.out, s.reply = nil, nil
+	if s.discardForward {
+		if cap(forward) <= 1<<20 {
+			s.fwdScratch = forward[:0] // reused by the next Feed; never handed out
+		}
+		forward = nil
+	}
 	return forward, reply
 }
+
+// SetForwarding turns the forward stream on or off. With it off, Feed still
+// updates the screen and still returns replies, but builds its forward bytes
+// in a reused scratch buffer and returns none: the multiplexer turns it off
+// while no human is attached, which is most of the time for agents, and an
+// attaching human starts from Render anyway.
+func (s *Screen) SetForwarding(on bool) { s.discardForward = !on }
 
 // ground processes bytes in the ground state starting at p[i] and returns the
 // index of the first unprocessed byte. It returns early when an ESC moves the

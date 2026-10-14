@@ -298,3 +298,22 @@ func TestStringTermination(t *testing.T) {
 		})
 	}
 }
+
+func TestSetForwardingOff(t *testing.T) {
+	s := New(20, 5, 10)
+	s.SetForwarding(false)
+	fwd, reply := s.Feed([]byte("hello\x1b[6n"))
+	if fwd != nil {
+		t.Fatalf("forward with forwarding off = %q", fwd)
+	}
+	if string(reply) != "\x1b[1;6R" {
+		t.Fatalf("replies must still be produced, got %q", reply)
+	}
+	if got := s.Capture(0); got[:6] != "hello\n" {
+		t.Fatalf("screen not updated: %q", got)
+	}
+	s.SetForwarding(true)
+	if fwd, _ := s.Feed([]byte("!")); string(fwd) != "!" {
+		t.Fatalf("forward after re-enabling = %q", fwd)
+	}
+}

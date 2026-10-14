@@ -53,13 +53,29 @@ func Attach(socket, paneID string) (AttachResult, error) {
 	if err != nil {
 		return AttachResult{}, fmt.Errorf("attach: %w", err)
 	}
-	restored := false
-	restore := func() {
-		if !restored {
-			restored = true
-			t.write([]byte(leaveSeq))
-			t.restore()
+	// Every write to the human's terminal goes through out, and restore closes
+	// it: frames still arriving from the server after a detach must not land
+	// on the human's normal screen after its modes were reset.
+	var outMu sync.Mutex
+	outClosed, entered := false, false
+	out := func(b []byte) {
+		outMu.Lock()
+		if !outClosed {
+			t.write(b)
 		}
+		outMu.Unlock()
+	}
+	restore := func() {
+		outMu.Lock()
+		defer outMu.Unlock()
+		if outClosed {
+			return
+		}
+		outClosed = true
+		if entered {
+			t.write([]byte(leaveSeq))
+		}
+		t.restore()
 	}
 	defer restore()
 
@@ -74,7 +90,10 @@ func Attach(socket, paneID string) (AttachResult, error) {
 	if !resp.OK {
 		return AttachResult{}, errors.New("attach: " + resp.Error)
 	}
+	outMu.Lock()
+	entered = true
 	t.write([]byte(enterSeq))
+	outMu.Unlock()
 
 	var wmu sync.Mutex
 	send := func(typ byte, payload []byte) error {
@@ -94,7 +113,7 @@ func Attach(socket, paneID string) (AttachResult, error) {
 			}
 			switch typ {
 			case frameOutput:
-				t.write(payload)
+				out(payload)
 			case frameExit:
 				done <- AttachResult{Message: string(payload)}
 				return
@@ -147,5 +166,6 @@ func Attach(socket, paneID string) (AttachResult, error) {
 	res := <-done
 	stop()
 	restore()
+	_ = conn.Close() // ends the server-to-terminal goroutine
 	return res, nil
 }

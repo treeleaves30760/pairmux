@@ -27,7 +27,7 @@ func spawnServer(socket string) error {
 	if err != nil {
 		return err
 	}
-	logf, err := os.OpenFile(filepath.Join(dir, base+".log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	logf, err := os.OpenFile(filepath.Join(dir, base+".log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
 	}

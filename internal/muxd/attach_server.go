@@ -95,8 +95,13 @@ func (c *client) writeLoop(p *pane) {
 			p.mu.Lock()
 			c.mu.Lock()
 			if c.redraw {
+				// While a redraw is pending push drops output (the render will
+				// show it), so anything queued now came from finish: the exit
+				// frame, which must still follow the render.
 				r := encodeFrame(frameOutput, p.scr.Render())
-				c.pending, c.bytes, c.redraw = [][]byte{r}, len(r), false
+				c.pending = append([][]byte{r}, c.pending...)
+				c.bytes += len(r)
+				c.redraw = false
 			}
 			c.mu.Unlock()
 			p.mu.Unlock()
@@ -135,14 +140,14 @@ func (s *Server) attach(conn net.Conn, req request) {
 		_ = writeMsg(conn, resp)
 		return
 	}
-	if err := writeMsg(conn, response{OK: true, Proto: protoVersion, Pane: p.id}); err != nil {
-		return
-	}
 	c := newClient(conn)
 
+	// Register under the pane's lock, against the dead flag finish sets under
+	// the same lock: a client added here is always told when the pane exits.
 	p.mu.Lock()
-	if p.isGone() {
+	if p.dead {
 		p.mu.Unlock()
+		_ = writeMsg(conn, response{Proto: protoVersion, Error: "terminal has exited"})
 		return
 	}
 	p.clients[c] = struct{}{}
@@ -150,6 +155,10 @@ func (s *Server) attach(conn net.Conn, req request) {
 	c.requestRedraw() // the first thing a new client sees is the whole screen
 	p.mu.Unlock()
 
+	if err := writeMsg(conn, response{OK: true, Proto: protoVersion, Pane: p.id}); err != nil {
+		p.detach(c)
+		return
+	}
 	go c.writeLoop(p)
 
 loop:
@@ -173,9 +182,15 @@ loop:
 			break loop
 		}
 	}
+	p.detach(c)
+}
+
+// detach removes a client and returns the pane to the agents' default size
+// once nobody is watching it.
+func (p *pane) detach(c *client) {
 	p.mu.Lock()
 	delete(p.clients, c)
-	if len(p.clients) == 0 && !p.isGone() {
+	if len(p.clients) == 0 {
 		p.resizeLocked(DefaultCols, DefaultRows)
 	}
 	p.mu.Unlock()

@@ -261,3 +261,80 @@ func TestRuntimeDirIsPrivate(t *testing.T) {
 		t.Fatal("a group/world-readable runtime dir was accepted")
 	}
 }
+
+func TestClientRefusesAForeignRuntimeDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission bits")
+	}
+	t.Setenv("PAIRMUX_TMPDIR", shortRoot(t))
+	d, err := rundir.Ensure()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A directory others can write to could hold a socket someone else
+	// listens on; the client must refuse it rather than report "no server".
+	if err := os.Chmod(d, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	_, err = New("x").ListManaged()
+	if err == nil || !strings.Contains(err.Error(), "unsafe runtime directory") {
+		t.Fatalf("ListManaged in a world-writable runtime dir = %v", err)
+	}
+	if Running("x") {
+		t.Fatal("Running trusted a world-writable runtime dir")
+	}
+}
+
+func TestCleanExitLeavesNoRuntimeFiles(t *testing.T) {
+	c := startServer(t)
+	d, err := rundir.Verify()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.KillServer(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "runtime files to go", func() bool {
+		entries, err := os.ReadDir(d)
+		if err != nil {
+			return false
+		}
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), c.Socket+".") {
+				return false
+			}
+		}
+		return true
+	})
+}
+
+func TestStaleLockFileIsNotTrusted(t *testing.T) {
+	t.Setenv("PAIRMUX_TMPDIR", shortRoot(t))
+	d, err := rundir.Ensure()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(d, "x.lock")
+	// Lock a file, then unlink it the way an exiting server does: a starter
+	// that locked the old file must notice and lock the path's new file.
+	f, err := acquireEndpointLock(path, "x")
+	if err != nil || f == nil {
+		t.Fatalf("first lock: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		removeHeldLock(f, path)
+		f.Close()
+		g, err := acquireEndpointLock(path, "x")
+		if err != nil || g == nil {
+			t.Fatalf("lock after unlink: %v", err)
+		}
+		defer g.Close()
+		held, _ := g.Stat()
+		now, err := os.Stat(path)
+		if err != nil || !os.SameFile(held, now) {
+			t.Fatal("the new lock is not on the file the path names")
+		}
+	} else {
+		f.Close()
+	}
+}

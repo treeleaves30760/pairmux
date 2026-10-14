@@ -7,10 +7,13 @@
 //
 //  1. Windows always uses the built-in server; tmux does not run there.
 //  2. A built-in server already running for the endpoint keeps being used, so
-//     terminals created without tmux stay reachable after tmux is installed.
-//  3. Otherwise tmux is used when it is installed — existing tmux users see no
-//     change, and their live terminals stay where they are.
-//  4. Otherwise the built-in server, so pairmux works with no tmux at all.
+//     terminals created without tmux stay reachable after tmux is installed —
+//     unless a tmux server is running for the same endpoint too, in which case
+//     tmux, the long-standing default, keeps its live terminals visible.
+//  3. Otherwise tmux is used when tmux 3.2 or newer is installed — existing
+//     tmux users see no change, and their live terminals stay where they are.
+//  4. Otherwise the built-in server, so pairmux works with no tmux (or with a
+//     tmux too old to drive) at all.
 //
 // Every terminal is created with PAIRMUX_BACKEND set to the backend that owns
 // it, so a nested pairmux (an agent driving agents) stays on the same one.
@@ -37,13 +40,15 @@ type Choice struct {
 	Reason string
 }
 
-// lookTmux and builtinRunning are seams for tests.
+// Seams for tests.
 var (
 	lookTmux = func() bool {
 		_, err := exec.LookPath("tmux")
 		return err == nil
 	}
 	builtinRunning = muxd.Running
+	tmuxRunning    = func(socket string) bool { return tmux.New(socket).HasSession() }
+	tmuxVersion    = func(socket string) (string, error) { return tmux.New(socket).Version() }
 	goos           = runtime.GOOS
 )
 
@@ -64,13 +69,36 @@ func Choose(socket string) (Choice, error) {
 	if goos == "windows" {
 		return Choice{mux.BackendBuiltin, "Windows has no tmux"}, nil
 	}
+	haveTmux := lookTmux()
 	if builtinRunning(socket) {
+		if haveTmux && tmuxRunning(socket) {
+			return Choice{mux.BackendTmux, "a tmux server and a built-in server are both running for this socket; " +
+				"tmux takes precedence (" + Env + "=builtin reaches the built-in terminals)"}, nil
+		}
 		return Choice{mux.BackendBuiltin, "a built-in server is already running for this socket"}, nil
 	}
-	if lookTmux() {
+	if haveTmux {
+		v, err := tmuxVersion(socket)
+		if err == nil && tooOld(v) {
+			return Choice{mux.BackendBuiltin, "tmux " + v + " is older than 3.2"}, nil
+		}
 		return Choice{mux.BackendTmux, "tmux is installed"}, nil
 	}
 	return Choice{mux.BackendBuiltin, "tmux is not installed"}, nil
+}
+
+// tooOld reports a tmux version token ("3.1c", "next-3.4") below 3.2. A token
+// it cannot read (a "master" build, say) is not called too old: tmux stays the
+// choice, as it always was, and doctor reports the version.
+func tooOld(v string) bool {
+	v = strings.TrimPrefix(v, "next-")
+	var major, minor int
+	if _, err := fmt.Sscanf(v, "%d.%d", &major, &minor); err != nil {
+		if _, err := fmt.Sscanf(v, "%d", &major); err != nil {
+			return false
+		}
+	}
+	return major < 3 || (major == 3 && minor < 2)
 }
 
 // Open returns the multiplexer client for socket per Choose.

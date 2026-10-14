@@ -4,12 +4,12 @@
 package notify
 
 import (
-	"encoding/base64"
 	"fmt"
 	"os/exec"
 	"runtime"
 	"strings"
-	"unicode/utf16"
+
+	"github.com/treeleaves30760/pairmux/internal/shellhooks"
 )
 
 // Notify shows a desktop notification: osascript on macOS, notify-send on
@@ -62,7 +62,7 @@ func argvFor(goos, title, body string) ([]string, error) {
 			"Start-Sleep -Seconds 8\n" +
 			"$n.Dispose()\n"
 		return []string{"powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
-			"-EncodedCommand", encodePowerShell(script)}, nil
+			"-EncodedCommand", shellhooks.EncodeCommand(script)}, nil
 	default:
 		return nil, fmt.Errorf("notify: unsupported platform %q", goos)
 	}
@@ -95,16 +95,4 @@ func flattenNewlines(s string) string {
 // which only the quote itself needs escaping (by doubling).
 func powershellArg(s string) string {
 	return "'" + strings.ReplaceAll(flattenNewlines(s), "'", "''") + "'"
-}
-
-// encodePowerShell renders a script for -EncodedCommand (base64 UTF-16LE), so
-// no command-line quoting is involved at all.
-func encodePowerShell(script string) string {
-	units := utf16.Encode([]rune(script))
-	b := make([]byte, 2*len(units))
-	for i, u := range units {
-		b[2*i] = byte(u)
-		b[2*i+1] = byte(u >> 8)
-	}
-	return base64.StdEncoding.EncodeToString(b)
 }

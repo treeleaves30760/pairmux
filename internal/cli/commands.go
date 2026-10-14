@@ -209,11 +209,14 @@ func (c *Ctx) cmdNew(args []string) int {
 		return c.fail(output.CodeInternal, err.Error(), "")
 	}
 
-	// In hooks mode, nudge one prompt cycle so an OSC-133 A mark is guaranteed
-	// to land AFTER pipe-pane is capturing, even if the very first prompt raced
-	// ahead of capture. It precedes any run's send offset because `new` waits
-	// for the cycle to complete (detect.WaitPromptCycle below).
-	if mode == core.ModeHooks {
+	// In hooks mode on tmux, nudge one prompt cycle so an OSC-133 A mark is
+	// guaranteed to land AFTER pipe-pane is capturing, even if the very first
+	// prompt raced ahead of capture. It precedes any run's send offset because
+	// `new` waits for the cycle to complete (detect.WaitPromptCycle below). A
+	// backend that journals from the first byte has no such race, so it gets no
+	// nudge — and none of the stale marks a nudge can leave behind.
+	nudged := mode == core.ModeHooks && !atomic
+	if nudged {
 		_ = c.Mux.SendKeys(paneID, "Enter")
 	}
 
@@ -223,7 +226,7 @@ func (c *Ctx) cmdNew(args []string) int {
 	if err != nil {
 		return c.fail(output.CodeInternal, "wait ready: "+err.Error(), "")
 	}
-	if mode == core.ModeHooks && gotHooks {
+	if nudged && gotHooks {
 		// Not fatal when it never completes: the terminal still works, and the
 		// first run merely risks the stale mark this wait exists to absorb.
 		_, _ = detect.WaitPromptCycle(j, 5*time.Second)

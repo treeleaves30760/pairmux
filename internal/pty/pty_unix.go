@@ -22,6 +22,13 @@ import (
 // behind gets this long to finish talking before the terminal goes.
 const drainQuiet = 150 * time.Millisecond
 
+// drainMax bounds the drain after the program exits, however busy its output
+// stays. darwin and Linux hang the terminal up when its session leader exits,
+// which normally ends a leftover job's output at once; this is the backstop so
+// output that keeps arriving can never keep the terminal — and its journal —
+// alive forever. tmux likewise removes a pane when its program exits.
+const drainMax = 2 * time.Second
+
 // killGrace is how long a SIGHUP'd terminal has to exit before SIGKILL.
 const killGrace = 2 * time.Second
 
@@ -38,6 +45,7 @@ type unixPty struct {
 	cmd    *exec.Cmd
 
 	exited   chan struct{}
+	exitedAt time.Time // set before exited is closed
 	code     int
 	waitErr  error
 	killOnce sync.Once
@@ -94,6 +102,7 @@ func start(o Options) (Pty, error) {
 func (p *unixPty) reap() {
 	err := p.cmd.Wait()
 	p.code, p.waitErr = exitCode(p.cmd.ProcessState, err)
+	p.exitedAt = time.Now()
 	close(p.exited)
 	// Wake a Read blocked on a now-silent terminal so it can report EOF.
 	_ = p.master.SetReadDeadline(time.Now().Add(drainQuiet))
@@ -123,7 +132,11 @@ func (p *unixPty) Read(b []byte) (int, error) {
 		n, err := p.master.Read(b)
 		if n > 0 {
 			if p.isExited() {
-				_ = p.master.SetReadDeadline(time.Now().Add(drainQuiet))
+				deadline := time.Now().Add(drainQuiet)
+				if limit := p.exitedAt.Add(drainMax); deadline.After(limit) {
+					deadline = limit
+				}
+				_ = p.master.SetReadDeadline(deadline)
 			}
 			return n, nil
 		}

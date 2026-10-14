@@ -18,9 +18,11 @@ import (
 // same everywhere. It is a package var so tests can override it. The rare
 // false positive (/dev/null is also a char device) is harmless: tmux refuses a
 // non-terminal itself, and the built-in attach fails to switch it to raw mode.
-var isTTY = func() bool {
-	return isCharDevice(os.Stdout) && isCharDevice(os.Stdin)
-}
+var isTTY = func() bool { return isCharDevice(os.Stdout) }
+
+// stdinIsTTY is isTTY for stdin. Only attach needs it — it reads keystrokes —
+// so watch, which only draws, keeps working with a piped stdin.
+var stdinIsTTY = func() bool { return isCharDevice(os.Stdin) }
 
 func isCharDevice(f *os.File) bool {
 	fi, err := f.Stat()
@@ -78,9 +80,9 @@ func (c *Ctx) cmdAttach(args []string) int {
 			"already inside tmux ($TMUX is set); attaching here would nest tmux",
 			"detach from the current tmux client, then run pairmux attach from the outer shell (or use another terminal)")
 	}
-	if !isTTY() {
+	if !isTTY() || !stdinIsTTY() {
 		return c.fail(output.CodeBadArgs,
-			"attach needs an interactive terminal, but stdin/stdout is not a tty",
+			"attach needs an interactive terminal, but stdin or stdout is not a tty",
 			"run pairmux attach from an interactive shell")
 	}
 

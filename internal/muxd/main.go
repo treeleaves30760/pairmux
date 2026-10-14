@@ -30,3 +30,13 @@ func ServeMain(args []string) int {
 // serverExecutable is the program spawned as the server: this pairmux binary.
 // A package variable so tests can point it elsewhere.
 var serverExecutable = os.Executable
+
+// truncateLog empties the server log once this process owns the endpoint.
+// Spawners open the log for appending, not truncating, so a starter that loses
+// the race for the endpoint cannot wipe the running server's log; the winner
+// starts it afresh here. Best effort: stderr may not be a regular file.
+func truncateLog() {
+	if fi, err := os.Stderr.Stat(); err == nil && fi.Mode().IsRegular() {
+		_ = os.Stderr.Truncate(0)
+	}
+}

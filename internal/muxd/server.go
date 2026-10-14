@@ -69,6 +69,14 @@ const (
 	// into its journal and its files to close.
 	killWait = 5 * time.Second
 
+	// lockWait bounds how long a starting server waits for a previous one,
+	// still draining its terminals, to release the endpoint.
+	lockWait = 15 * time.Second
+
+	// errShuttingDown is the reply of a server that has begun to exit; clients
+	// treat it like no server at all.
+	errShuttingDown = "server is shutting down"
+
 	// BuiltinPaneEnv is set in every built-in pane to "<socket>/<pane id>", so
 	// an attach issued from inside a pane can refuse to attach to itself.
 	BuiltinPaneEnv = "PAIRMUX_BUILTIN_PANE"
@@ -105,6 +113,7 @@ type pane struct {
 	scr     *vt.Screen
 	journal *os.File
 	jerr    bool // a journal write already failed (logged once)
+	dead    bool // finish has run: no new clients, no resizes
 	opts    map[string]string
 	clients map[*client]struct{}
 	cols    int
@@ -140,17 +149,13 @@ func Serve(socket string) error {
 	// One server per endpoint: the lock is held for the server's lifetime and
 	// vanishes with it, so a crashed server never blocks its successor and two
 	// racing starters cannot both listen.
-	lockFile, err := os.OpenFile(filepath.Join(dir, base+".lock"), os.O_RDWR|os.O_CREATE, 0o600)
-	if err != nil {
-		return fmt.Errorf("muxd: open lock: %w", err)
+	lockPath := filepath.Join(dir, base+".lock")
+	lockFile, err := acquireEndpointLock(lockPath, socket)
+	if err != nil || lockFile == nil {
+		return err // nil: another server owns the endpoint
 	}
 	defer lockFile.Close()
-	if err := flock.TryLock(lockFile, true); err != nil {
-		if errors.Is(err, flock.ErrWouldBlock) {
-			return nil
-		}
-		return fmt.Errorf("muxd: lock: %w", err)
-	}
+	truncateLog()
 	_ = os.Remove(path) // a stale socket from a server that died
 	ln, err := net.Listen("unix", path)
 	if err != nil {
@@ -175,7 +180,50 @@ func Serve(socket string) error {
 	// process may exit; shutdown is idempotent and waits for a concurrent one.
 	s.shutdown()
 	_ = os.Remove(path)
+	// A clean exit leaves nothing behind, so endpoints that come and go —
+	// nested layers, doctor probes, tests — do not accumulate files. The lock
+	// file is removed while still held; acquireEndpointLock re-checks that the
+	// path still names the file it locked, so this cannot admit two servers.
+	releaseLog()
+	_ = os.Remove(filepath.Join(dir, base+".log"))
+	removeHeldLock(lockFile, lockPath)
 	return nil
+}
+
+// acquireEndpointLock opens and locks lockPath, waiting for a server that is
+// still shutting down (draining its terminals) to hand the endpoint over —
+// so a create that races a kill-server gets a fresh server instead of none —
+// and yielding at once to a healthy one (nil file, nil error).
+//
+// A lock file can be unlinked by its exiting owner (see Serve). Holding a lock
+// on an unlinked file proves nothing, so after locking, the path must still
+// name the same file; otherwise the attempt starts over on the new one.
+func acquireEndpointLock(lockPath, socket string) (*os.File, error) {
+	deadline := time.Now().Add(lockWait)
+	for {
+		f, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0o600)
+		if err != nil {
+			return nil, fmt.Errorf("muxd: open lock: %w", err)
+		}
+		err = flock.TryLock(f, true)
+		if err == nil {
+			held, serr := f.Stat()
+			now, perr := os.Stat(lockPath)
+			if serr == nil && perr == nil && os.SameFile(held, now) {
+				return f, nil
+			}
+			f.Close() // locked a file its owner already unlinked
+			continue
+		}
+		f.Close()
+		if !errors.Is(err, flock.ErrWouldBlock) {
+			return nil, fmt.Errorf("muxd: lock: %w", err)
+		}
+		if Running(socket) || !time.Now().Before(deadline) {
+			return nil, nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func (s *Server) acceptLoop() {
@@ -219,15 +267,27 @@ func (s *Server) idleLoop() {
 			return
 		case <-t.C:
 		}
-		s.mu.Lock()
-		idle := len(s.panes) == 0 && s.conns == 0 && time.Since(s.lastActive) > idleExit
-		s.mu.Unlock()
-		if idle {
-			log.Printf("idle for %s with no terminals; exiting", idleExit)
-			s.shutdown()
+		if s.shutdownIfIdle() {
 			return
 		}
 	}
+}
+
+// shutdownIfIdle shuts the server down when it has had no terminals and no
+// connections for idleExit. The decision and the closing flag are taken under
+// one lock, so a connection that arrives meanwhile either counts against it or
+// is refused as shutting down — never accepted into a server that then exits.
+func (s *Server) shutdownIfIdle() bool {
+	s.mu.Lock()
+	if s.closing || len(s.panes) != 0 || s.conns != 0 || time.Since(s.lastActive) <= idleExit {
+		s.mu.Unlock()
+		return false
+	}
+	s.closing = true
+	s.mu.Unlock()
+	log.Printf("idle for %s with no terminals; exiting", idleExit)
+	s.finishShutdown(nil)
+	return true
 }
 
 // shutdown stops accepting, kills every terminal and waits for each to drain.
@@ -246,6 +306,10 @@ func (s *Server) shutdown() {
 	}
 	s.panes = map[string]*pane{}
 	s.mu.Unlock()
+	s.finishShutdown(panes)
+}
+
+func (s *Server) finishShutdown(panes []*pane) {
 	close(s.done)
 	_ = s.ln.Close()
 	for _, p := range panes {
@@ -294,6 +358,14 @@ func (s *Server) lookup(id string) (*pane, response, bool) {
 }
 
 func (s *Server) handle(req request) response {
+	s.mu.Lock()
+	closing := s.closing
+	s.mu.Unlock()
+	if closing {
+		// Including ping: a client must not mistake a draining server for a
+		// usable one. It spawns a successor, which waits for this one's lock.
+		return fail(errShuttingDown)
+	}
 	switch req.Op {
 	case "ping":
 		return response{OK: true, Version: version.Version, Pid: os.Getpid()}
@@ -404,7 +476,7 @@ func (s *Server) newWindow(req request) response {
 		if journal != nil {
 			journal.Close()
 		}
-		return fail("server is shutting down")
+		return fail(errShuttingDown)
 	}
 	id := "%" + strconv.Itoa(s.nextID)
 	order := s.nextID
@@ -451,7 +523,7 @@ func (s *Server) newWindow(req request) response {
 	go p.readLoop()
 	if closing {
 		_ = t.Kill()
-		return fail("server is shutting down")
+		return fail(errShuttingDown)
 	}
 	return response{OK: true, Pane: id}
 }
@@ -527,10 +599,12 @@ func (p *pane) output(b []byte) {
 			log.Printf("pane %s: journal write: %v (further errors not logged)", p.id, err)
 		}
 	}
+	p.scr.SetForwarding(len(p.clients) > 0)
 	fwd, reply := p.scr.Feed(b)
 	if len(fwd) > 0 {
+		frame := encodeFrame(frameOutput, fwd) // shared: clients only write it
 		for c := range p.clients {
-			c.push(encodeFrame(frameOutput, fwd))
+			c.push(frame)
 		}
 	}
 	p.mu.Unlock()
@@ -549,6 +623,7 @@ func (p *pane) finish(code int) {
 	s.mu.Unlock()
 
 	p.mu.Lock()
+	p.dead = true
 	msg := fmt.Sprintf("terminal %s exited with status %d", p.displayName(), code)
 	for c := range p.clients {
 		c.finish(encodeFrame(frameExit, []byte(msg)))
@@ -631,7 +706,7 @@ func (p *pane) writeLoop() {
 // resizeLocked changes the pane's size; p.mu must be held. Every attached
 // client is redrawn, since a size change invalidates what each one shows.
 func (p *pane) resizeLocked(cols, rows int) {
-	if cols <= 0 || rows <= 0 || (cols == p.cols && rows == p.rows) {
+	if p.dead || cols <= 0 || rows <= 0 || (cols == p.cols && rows == p.rows) {
 		return
 	}
 	if err := p.pty.Resize(cols, rows); err != nil {

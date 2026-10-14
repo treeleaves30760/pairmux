@@ -23,8 +23,9 @@ import (
 var ErrNoServer = errors.New("no server running")
 
 // startWait bounds how long EnsureSession waits for a freshly spawned server
-// to accept connections.
-const startWait = 10 * time.Second
+// to accept connections — including, when the previous server is still
+// draining its terminals, for that one to hand the endpoint over.
+const startWait = 20 * time.Second
 
 // callTimeout bounds one request. Every operation is local and quick; kill
 // waits for a terminal's output to drain, which is bounded by killWait.
@@ -68,6 +69,14 @@ func Running(socket string) bool {
 func (c *Client) dial() (net.Conn, error) {
 	if !mux.ValidSocketName(c.Socket) {
 		return nil, fmt.Errorf("built-in multiplexer: invalid socket name %q", c.Socket)
+	}
+	// Never talk to a socket in a directory another user could have prepared:
+	// the server receives this command's environment and every keystroke.
+	if _, err := rundir.Verify(); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("built-in multiplexer: %w (%v)", ErrNoServer, err)
+		}
+		return nil, fmt.Errorf("built-in multiplexer: refusing an unsafe runtime directory: %w", err)
 	}
 	path, err := rundir.SocketPath(c.Socket)
 	if err != nil {
@@ -126,6 +135,9 @@ func (c *Client) call(req request) (*response, error) {
 	var resp response
 	if err := readMsg(conn, &resp); err != nil {
 		return nil, fmt.Errorf("built-in multiplexer: %s: no reply: %w", req.Op, err)
+	}
+	if !resp.OK && resp.Error == errShuttingDown {
+		return nil, fmt.Errorf("built-in multiplexer: %w (%s)", ErrNoServer, resp.Error)
 	}
 	if !resp.OK {
 		msg := resp.Error

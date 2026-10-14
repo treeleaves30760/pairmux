@@ -118,6 +118,10 @@ type Modes struct {
 // to its PTY and maintains the visible screen, the scrollback history and the
 // terminal modes. It is not safe for concurrent use; callers serialize access.
 type Screen struct {
+	// discardForward and fwdScratch implement SetForwarding(false).
+	discardForward bool
+	fwdScratch     []byte
+
 	cols, rows int
 
 	main, alt *buffer
