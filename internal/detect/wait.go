@@ -227,6 +227,47 @@ func WaitReady(j *journal.Journal, mode core.Mode, timeout time.Duration) (gotHo
 	}
 }
 
+// WaitPromptCycle waits, after WaitReady saw a prompt, for the prompt cycle
+// that a nudge (an Enter sent to a new hooks terminal) produces to finish: a
+// D mark followed by an A, or simply a second A (fish may mark an empty line
+// with A alone). It reports whether the cycle was seen before timeout.
+//
+// Without it the nudge's own completion mark can land after the first `run`
+// has taken its send offset, and that run then reports "done" for a command
+// that has not yet executed. Shells that start slowly — PowerShell under
+// ConPTY, or any shell with a heavy profile — hit this reliably.
+func WaitPromptCycle(j *journal.Journal, timeout time.Duration) (bool, error) {
+	poll := 25 * time.Millisecond
+	deadline := time.Now().Add(timeout)
+	sc := NewScanner(0)
+	off := int64(0)
+	prompts, sawD := 0, false
+	for {
+		if size := j.Size(); size > off {
+			data, err := j.ReadRange(off, size)
+			if err != nil {
+				return false, fmt.Errorf("detect: wait prompt cycle: %w", err)
+			}
+			off += int64(len(data))
+			for _, m := range sc.Feed(data) {
+				switch m.Kind {
+				case MarkD:
+					sawD = true
+				case MarkA:
+					prompts++
+					if sawD || prompts >= 2 {
+						return true, nil
+					}
+				}
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return false, nil
+		}
+		time.Sleep(poll)
+	}
+}
+
 // Quiesce blocks until raw.log's size is unchanged for idle, or until timeout
 // elapses. quiet is true when the idle period was reached, false on timeout.
 func Quiesce(j *journal.Journal, idle, timeout time.Duration) (quiet bool, err error) {

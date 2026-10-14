@@ -376,6 +376,9 @@ func probeShell(cl mux.Mux, stateDir string, idx int, shell string) shellTierRes
 		res.err = "wait ready: " + err.Error()
 		return res
 	}
+	if mode == core.ModeHooks && gotHooks {
+		_, _ = detect.WaitPromptCycle(j, 5*time.Second) // as cmdNew: absorb the nudge's marks
+	}
 
 	// Send a trivial command. If a nominal hooks shell emitted no ready mark,
 	// exercise the same shell-specific sentinel fallback that `new` records and

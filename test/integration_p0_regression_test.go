@@ -241,7 +241,7 @@ func invokePmx(e tenv, args ...string) (result concurrentResult) {
 		"PAIRMUX_BACKEND="+itBackend,
 	)
 	if e.tmuxTmp != "" {
-		cmd.Env = append(cmd.Env, "TMUX_TMPDIR="+e.tmuxTmp)
+		cmd.Env = append(cmd.Env, runtimeRootEnv(e)...)
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

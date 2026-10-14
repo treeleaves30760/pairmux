@@ -349,3 +349,34 @@ func TestDeriveStatusReadOnly(t *testing.T) {
 		t.Fatalf("DeriveStatus wrote events: before=%d after=%d", len(before), len(after))
 	}
 }
+
+func TestWaitPromptCycle(t *testing.T) {
+	const a, d = "\x1b]133;A\a", "\x1b]133;D;0\a"
+	cases := []struct {
+		name   string
+		stream string
+		late   string // appended by a goroutine shortly after the wait starts
+		want   bool
+	}{
+		{"first prompt only", a + "PS> ", "", false},
+		{"nudge completes later", a + "PS> ", "\r\n" + d + a + "PS> ", true},
+		{"lost first prompt, nudge seen", "\r\n" + d + a + "$ ", "", true},
+		{"fish marks an empty line with A alone", a + "> ", "\r\n" + a + "> ", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			j := mustOpen(t)
+			writeRawFile(t, j, []byte(c.stream))
+			if c.late != "" {
+				go func() {
+					time.Sleep(60 * time.Millisecond)
+					appendRaw(t, j, []byte(c.late))
+				}()
+			}
+			got, err := WaitPromptCycle(j, 400*time.Millisecond)
+			if err != nil || got != c.want {
+				t.Fatalf("WaitPromptCycle = %v, %v; want %v", got, err, c.want)
+			}
+		})
+	}
+}

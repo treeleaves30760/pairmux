@@ -52,6 +52,7 @@ func requireTmuxBackend(t *testing.T) {
 }
 
 // endpointDir is the state namespace pmx uses for e, under either backend.
+// e.tmuxTmp is the custom runtime root either way (see runtimeRootEnv).
 func endpointDir(e tenv) string {
 	if builtinIT() {
 		return state.BuiltinEndpointDir(e.state, e.tmuxTmp, e.socket)
@@ -150,7 +151,7 @@ func pmx(t *testing.T, e tenv, args ...string) (output.Envelope, int) {
 		cmd.Env = append(cmd.Env, "SHELL="+e.shell)
 	}
 	if e.tmuxTmp != "" {
-		cmd.Env = append(cmd.Env, "TMUX_TMPDIR="+e.tmuxTmp)
+		cmd.Env = append(cmd.Env, runtimeRootEnv(e)...)
 	}
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out

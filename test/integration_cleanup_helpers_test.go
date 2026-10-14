@@ -100,14 +100,17 @@ func shutdownEnv(e tenv) error {
 		if err != nil && !errors.Is(err, muxd.ErrNoServer) {
 			return fmt.Errorf("kill owned built-in server: %w", err)
 		}
-		if runtime.GOOS == "windows" {
-			return waitBuiltinGone(ctx, e)
-		}
 	} else if server {
 		out, err := cleanupTmux(ctx, e, "kill-server")
 		if err != nil && !cleanupNoServer(err, out) {
 			return fmt.Errorf("kill owned server: %w: %s", err, strings.TrimSpace(out))
 		}
+	}
+
+	if builtinIT() && runtime.GOOS == "windows" {
+		// No ps to track writers with; the server's exit (it waits for every
+		// terminal to drain before going) is the signal instead.
+		return waitBuiltinGone(ctx, e)
 	}
 
 	ticker := time.NewTicker(10 * time.Millisecond)
@@ -218,19 +221,29 @@ func captureBuiltinWriters(ctx context.Context, e tenv) (bool, error) {
 // runtimeRootMu serializes the process-wide TMUX_TMPDIR swap below.
 var runtimeRootMu sync.Mutex
 
-// withRuntimeRoot points this process at e's runtime root (the CLI receives
-// it as TMUX_TMPDIR) for an in-process built-in client call.
+// runtimeRootEnv is how e's custom runtime root reaches the CLI: TMUX_TMPDIR
+// for tmux, PAIRMUX_TMPDIR for the built-in server (TMUX_TMPDIR would also
+// work on Unix, but Windows has no tmux and reads only PAIRMUX_TMPDIR).
+func runtimeRootEnv(e tenv) []string {
+	if builtinIT() {
+		return []string{"PAIRMUX_TMPDIR=" + e.tmuxTmp}
+	}
+	return []string{"TMUX_TMPDIR=" + e.tmuxTmp}
+}
+
+// withRuntimeRoot points this process at e's runtime root, as runtimeRootEnv
+// does for the CLI, for an in-process built-in client call.
 func withRuntimeRoot(e tenv) (restore func()) {
 	runtimeRootMu.Lock()
-	old, had := os.LookupEnv("TMUX_TMPDIR")
+	old, had := os.LookupEnv("PAIRMUX_TMPDIR")
 	if e.tmuxTmp != "" {
-		os.Setenv("TMUX_TMPDIR", e.tmuxTmp)
+		os.Setenv("PAIRMUX_TMPDIR", e.tmuxTmp)
 	}
 	return func() {
 		if had {
-			os.Setenv("TMUX_TMPDIR", old)
+			os.Setenv("PAIRMUX_TMPDIR", old)
 		} else {
-			os.Unsetenv("TMUX_TMPDIR")
+			os.Unsetenv("PAIRMUX_TMPDIR")
 		}
 		runtimeRootMu.Unlock()
 	}

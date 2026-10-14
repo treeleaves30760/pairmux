@@ -279,6 +279,9 @@ class VerifyReleaseTest(unittest.TestCase):
                 with zipfile.ZipFile(archive, "w") as zf:
                     for member_name, data, mode in members:
                         info = zipfile.ZipInfo(member_name)
+                        # On Windows ZipInfo rewrites os.sep to "/"; keep the
+                        # hostile name byte-for-byte so it is really tested.
+                        info.filename = member_name
                         info.create_system = 3
                         file_type = 0 if mode & 0o170000 else 0o100000
                         info.external_attr = (file_type | mode) << 16

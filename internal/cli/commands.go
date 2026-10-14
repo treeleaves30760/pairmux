@@ -211,7 +211,8 @@ func (c *Ctx) cmdNew(args []string) int {
 
 	// In hooks mode, nudge one prompt cycle so an OSC-133 A mark is guaranteed
 	// to land AFTER pipe-pane is capturing, even if the very first prompt raced
-	// ahead of capture. Harmless: it precedes any run's send offset.
+	// ahead of capture. It precedes any run's send offset because `new` waits
+	// for the cycle to complete (detect.WaitPromptCycle below).
 	if mode == core.ModeHooks {
 		_ = c.Mux.SendKeys(paneID, "Enter")
 	}
@@ -221,6 +222,11 @@ func (c *Ctx) cmdNew(args []string) int {
 	gotHooks, err := detect.WaitReady(j, mode, 5*time.Second)
 	if err != nil {
 		return c.fail(output.CodeInternal, "wait ready: "+err.Error(), "")
+	}
+	if mode == core.ModeHooks && gotHooks {
+		// Not fatal when it never completes: the terminal still works, and the
+		// first run merely risks the stale mark this wait exists to absorb.
+		_, _ = detect.WaitPromptCycle(j, 5*time.Second)
 	}
 	if mode == core.ModeHooks && !gotHooks {
 		effMode = core.ModeSentinel

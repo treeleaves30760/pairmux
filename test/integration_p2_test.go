@@ -37,7 +37,7 @@ func pmxAsync(t *testing.T, e tenv, args ...string) func() (output.Envelope, int
 		cmd.Env = append(cmd.Env, "SHELL="+e.shell)
 	}
 	if e.tmuxTmp != "" {
-		cmd.Env = append(cmd.Env, "TMUX_TMPDIR="+e.tmuxTmp)
+		cmd.Env = append(cmd.Env, runtimeRootEnv(e)...)
 	}
 	var out bytes.Buffer
 	cmd.Stdout = &out
