@@ -9,9 +9,10 @@
 //
 // The canonical entry point is Render, which composes the individual steps in
 // the one order that is correct: CollapseCR (while the \r positions are still
-// intact) -> StripANSI -> trailing-blank trim -> DropEchoedCommand ->
-// leading-blank trim -> Truncate. The steps are exported individually so
-// callers (peek/log) can compose subsets.
+// intact; it drops escape sequences first, since they occupy no column) ->
+// StripANSI -> trailing-blank trim -> DropEchoedCommand -> leading-blank trim
+// -> Truncate. The steps are exported individually so callers (peek/log) can
+// compose subsets.
 package shape
 
 import (
@@ -48,12 +49,20 @@ var promptSPRe = regexp.MustCompile(`(?:\x1b\[[0-9;]*m)*%(?:\x1b\[[0-9;]*m)*[ ]{
 // its visual meaning is "keep the partial content, continue on a fresh line",
 // so `200<trailer>` becomes "200\n". Without this, the keep-after-final-\r rule
 // below would wipe the whole partial line — the trailer ends in \r — and eat
-// the output of any command that does not print a trailing newline.
+// the output of any command that does not print a trailing newline. It runs
+// first because the trailer is recognised by its SGR sequences.
+//
+// Escape sequences are then dropped (dropEscapes), before any \r is resolved:
+// they occupy no column, so they are not content that a \r overwrites. ConPTY
+// emits a cursor-show between the \r and \n of a line end when the screen
+// scrolls; counted as content, "out\r\x1b[?25h\n" read as an overwrite of the
+// whole line, and the run returned no output.
 //
 // Run this BEFORE StripANSI: StripANSI drops \r as a C0 control, so the overwrite
 // information would be lost if the order were reversed.
 func CollapseCR(b []byte) []byte {
 	b = promptSPRe.ReplaceAll(b, []byte("\n"))
+	b = dropEscapes(b)
 	b = bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n"))
 	lines := bytes.Split(b, []byte("\n"))
 	for i, line := range lines {
@@ -113,6 +122,38 @@ func StripANSI(b []byte) []byte {
 		default:
 			out = append(out, c)
 			i++
+		}
+	}
+	return out
+}
+
+// dropEscapes removes the escape sequences StripANSI recognises — CSI, the
+// OSC/DCS/APC/SOS/PM strings, ESC plus a single byte — and keeps every other
+// byte, \r and the other C0 controls included, for CollapseCR to resolve.
+func dropEscapes(b []byte) []byte {
+	if bytes.IndexByte(b, 0x1b) < 0 {
+		return b
+	}
+	out := make([]byte, 0, len(b))
+	n := len(b)
+	i := 0
+	for i < n {
+		if b[i] != 0x1b {
+			out = append(out, b[i])
+			i++
+			continue
+		}
+		if i+1 >= n {
+			i++ // lone trailing ESC: drop it
+			continue
+		}
+		switch b[i+1] {
+		case '[':
+			i = skipCSI(b, i)
+		case ']', 'P', '_', 'X', '^':
+			i = skipStringSeq(b, i)
+		default:
+			i += 2
 		}
 	}
 	return out
@@ -260,6 +301,11 @@ func Truncate(text string, head, tail int) (string, int) {
 // Render is the full pipeline: CollapseCR -> StripANSI -> trailing-blank trim ->
 // DropEchoedCommand -> leading-blank trim -> Truncate. It returns the cleaned
 // text and the number of lines Truncate omitted (0 when nothing was truncated).
+//
+// CollapseCR drops escape sequences before it resolves \r, because a sequence
+// between a \r and its \n (ConPTY's cursor-show at a scroll) is not content and
+// must not turn a line end into an overwrite; StripANSI then removes the
+// remaining control bytes.
 //
 // The leading trim runs AFTER DropEchoedCommand: dropping the echoed command
 // line can expose blank echo artifacts (zsh hooks mode emits one between the

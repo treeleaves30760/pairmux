@@ -137,6 +137,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   terminals (it has no console, so this cannot expose it to console events) and children inherit
   the enabled state.
 
+- A command's output line was lost when the terminal put an escape sequence between its ``
+  and `
+` — ConPTY does so with its cursor-show sequence at the moment the screen first scrolls, so
+  in a PowerShell terminal about every 25th fast `run` came back with no output. Escape sequences
+  occupy no column, so output shaping now removes them before resolving carriage-return overwrites
+  instead of treating such a `` as one.
+
 - A failing PowerShell installer now throws instead of closing the PowerShell window, so the error
   stays readable when it was run as `irm ... | iex`.
 

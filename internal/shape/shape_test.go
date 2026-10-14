@@ -22,6 +22,11 @@ func TestCollapseCR(t *testing.T) {
 		{"cr at end of line clears it", "junk\r", ""},
 		{"cr only affects its own line", "keep\nover\rwrite\n", "keep\nwrite\n"},
 		{"mixed crlf and bare cr", "a\r\nb0\rb1\r\n", "a\nb1\n"},
+		// Escape sequences occupy no column, so they are not content after a \r:
+		// ConPTY may put a cursor-show between the \r and \n of a line end.
+		{"escape between cr and lf is a line end", "a\r\x1b[?25h\nb", "a\nb"},
+		{"genuine overwrite", "47%\r100%\n", "100%\n"},
+		{"overwrite after an erase", "47%\r\x1b[K100%\n", "100%\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -76,6 +81,16 @@ func TestCollapseCRPromptSP(t *testing.T) {
 				t.Fatalf("CollapseCR(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestRenderConPTYScrollLineEnd is the Windows PowerShell repro: at the run
+// where the screen first scrolls, ConPTY emits the cursor-show between the \r
+// and \n ending the output line. Read as an overwrite, it left the line empty.
+func TestRenderConPTYScrollLineEnd(t *testing.T) {
+	raw := []byte("\x1b[?25l\x1b[93mecho \x1b[37miter-25\x1b[m\r\niter-25\r\x1b[?25h\n")
+	if got, _ := Render(raw, "echo iter-25", 50, 200); got != "iter-25" {
+		t.Fatalf("Render = %q, want %q", got, "iter-25")
 	}
 }
 
