@@ -116,7 +116,9 @@ def zip_archive_binary(path: Path) -> Tuple[bytes, int]:
     with zipfile.ZipFile(path) as archive:
         members = {}
         for info in archive.infolist():
-            name = info.filename
+            # orig_filename is the name as stored: on Windows, zipfile rewrites
+            # backslashes in .filename to "/", which would hide an unsafe name.
+            name = info.orig_filename
             member_path = PurePosixPath(name)
             if ("\\" in name or ":" in name or member_path.is_absolute()
                     or ".." in member_path.parts):

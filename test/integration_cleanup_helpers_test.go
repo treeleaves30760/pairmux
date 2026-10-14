@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/treeleaves30760/pairmux/internal/mux"
 	"github.com/treeleaves30760/pairmux/internal/muxd"
 	"github.com/treeleaves30760/pairmux/internal/tmux"
 )
@@ -85,6 +86,9 @@ func trackCleanupCommand(e tenv, args []string) error {
 func shutdownEnv(e tenv) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	if builtinIT() && runtime.GOOS == "windows" {
+		return shutdownBuiltinWindows(ctx, e)
+	}
 	if e.writers == nil {
 		e.writers = &cleanupTracker{}
 	}
@@ -105,12 +109,6 @@ func shutdownEnv(e tenv) error {
 		if err != nil && !cleanupNoServer(err, out) {
 			return fmt.Errorf("kill owned server: %w: %s", err, strings.TrimSpace(out))
 		}
-	}
-
-	if builtinIT() && runtime.GOOS == "windows" {
-		// No ps to track writers with; the server's exit (it waits for every
-		// terminal to drain before going) is the signal instead.
-		return waitBuiltinGone(ctx, e)
 	}
 
 	ticker := time.NewTicker(10 * time.Millisecond)
@@ -249,19 +247,42 @@ func withRuntimeRoot(e tenv) (restore func()) {
 	}
 }
 
-func waitBuiltinGone(ctx context.Context, e tenv) error {
-	for {
-		restore := withRuntimeRoot(e)
-		running := muxd.Running(e.socket)
-		restore()
-		if !running {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("built-in server %q still running: %w", e.socket, ctx.Err())
-		case <-time.After(20 * time.Millisecond):
-		}
+// shutdownBuiltinWindows stops e's built-in server and waits for its process
+// to exit. Windows has no ps to track writers with, but the server exits only
+// after every terminal (and its job of child processes) has drained, so its
+// exit is the signal — and until it exits, its private executable copy keeps
+// the runtime root from being removed.
+func shutdownBuiltinWindows(ctx context.Context, e tenv) error {
+	if !mux.ValidSocketName(e.socket) {
+		return nil
+	}
+	restore := withRuntimeRoot(e)
+	c := builtinClient(e)
+	pid, err := c.ServerPID()
+	if err == nil {
+		err = c.KillServer()
+	}
+	restore()
+	if errors.Is(err, muxd.ErrNoServer) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("kill owned built-in server: %w", err)
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return nil // already gone
+	}
+	exited := make(chan struct{})
+	go func() {
+		_, _ = proc.Wait()
+		close(exited)
+	}()
+	select {
+	case <-exited:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("built-in server %q (pid %d) still running: %w", e.socket, pid, ctx.Err())
 	}
 }
 
