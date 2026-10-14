@@ -2,9 +2,10 @@
 
 This directory contains the [Docusaurus](https://docusaurus.io/) documentation
 site at **https://pairmux-docs.treeleaves30760.com/**. The separate
-**https://pairmux.treeleaves30760.com** landing page is built from `../landing/`
-and serves the root installers. Neither site's local build changes external
-Pages settings or DNS.
+**https://pairmux.treeleaves30760.com** homepage lives in the private
+`treeleaves30760/pairmux-website` repository and serves this repository's root
+installers. This site's local build does not change external Pages settings or
+DNS.
 
 ## Installation
 
@@ -51,40 +52,17 @@ those gates to make a domain migration pass.
 
 | Site | Hosting | Build | Output |
 | --- | --- | --- | --- |
-| Home and installers | Cloudflare Pages Git integration | `node landing/build.mjs` from the repository root | `landing/dist` |
+| Home and installers | Cloudflare Pages project `pairmux-website`, deployed by GitHub Actions | `ci` workflow in `treeleaves30760/pairmux-website` | Managed in that repository |
 | Documentation | GitHub Actions Pages | `npm run build` from `website/` | `website/build` |
 
-### Cloudflare Pages landing
+### Homepage
 
-1. In the Cloudflare Dashboard, open **Workers & Pages** and create a
-   **Pages** project using **Connect to Git / Git integration**. Connect the
-   core `treeleaves30760/pairmux` repository, granting access only to the
-   necessary repository. Configure the build exactly as follows:
-
-   | Dashboard field | Value |
-   | --- | --- |
-   | Production branch | `main` |
-   | Framework preset | `None` |
-   | Root directory | Repository root (leave blank) |
-   | Build command | `node landing/build.mjs` |
-   | Build output directory | `landing/dist` |
-   | Node.js version | `24` (`NODE_VERSION=24` if a version override is needed) |
-
-   This dependency-free build does not need the Docusaurus npm dependencies.
-2. If build watch paths are configured, include `landing/**`, `install.sh`,
-   and `install.ps1`; a change to either installer must redeploy the landing.
-   The build copies both root scripts into the output, so the public
-   `/install.sh` and `/install.ps1` are not independently maintained copies.
-3. After a preview deployment succeeds, register
-   `pairmux.treeleaves30760.com` in the Pages project's **Custom domains**
-   panel. Then use the project's actual `*.pages.dev` target for the required
-   DNS record (or let the Cloudflare custom-domain setup create it).
-   **A DNS CNAME alone, without Pages domain registration, is not sufficient.**
-   Do not guess the Pages project hostname.
-4. Confirm HTTPS, a real 404 for unknown paths, and installer delivery.
-   `/install.sh` must return the script as plain text with `nosniff` and
-   revalidation-friendly caching, not an HTML page or SPA fallback. Compare
-   the served scripts with the source revision that was deployed.
+The homepage and the public `/install.sh` and `/install.ps1` are built and
+deployed from `treeleaves30760/pairmux-website`; its build fetches the root
+installers from this repository's `main`. See
+[RELEASING.md](../RELEASING.md#websites-and-installer-delivery) for
+redeploying it after an installer change. The in-repository `landing/` build
+and its Cloudflare Pages Git integration were retired on 2026-10-15.
 
 ### GitHub Pages docs
 
@@ -117,7 +95,7 @@ Coordinate the domain switch with the root-baseUrl build:
 5. Once DNS verification and certificate provisioning complete, enable
    **Enforce HTTPS**. Check the root, deep links, assets, 404s, and the old
    `https://treeleaves30760.github.io/pairmux/` URLs for correct redirects
-   without loops. Update the GitHub repository homepage to the landing URL
+   without loops. Update the GitHub repository homepage to the homepage URL
    after verification.
 
 Local commands below perform only read-only endpoint checks after deployment:
@@ -137,7 +115,6 @@ links on desktop and mobile. If account permissions or authentication block
 custom-domain setup, hand off that step to the operator; a successful local
 build is not evidence that a site or domain is live.
 
-References: [Cloudflare Pages Git integration](https://developers.cloudflare.com/pages/configuration/git-integration/),
-[Cloudflare custom domains](https://developers.cloudflare.com/pages/configuration/custom-domains/),
+References: [Cloudflare custom domains](https://developers.cloudflare.com/pages/configuration/custom-domains/),
 [GitHub Pages custom domains](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site),
 [GitHub Actions and CNAME](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/troubleshooting-custom-domains-and-github-pages#cname-errors).
