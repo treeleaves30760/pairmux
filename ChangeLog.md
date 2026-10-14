@@ -128,6 +128,13 @@ Versioning.
 
 ### Fixed
 
+- A cold Windows PowerShell start could take longer than the five seconds `new` waited for its
+  first prompt mark, so the terminal fell back to sentinel mode; PowerShell now gets 20 seconds
+  (a fast shell still returns at its first mark). Its sentinel also writes through the console
+  host's Unicode output: `[Console]::Write` encodes with Windows PowerShell's OEM code page, which
+  turned the zero-width completion boundary into `???`, so a `run` could end early with the wrong
+  output.
+
 - `cmd.exe` terminals (sentinel mode) on Windows reported `run` output as empty and leaked a stale
   exit status into the next command. ConPTY emits a pass-through OSC sequence at the start of the
   render frame it arrived in, ahead of the text written in that frame, so the completion sentinel

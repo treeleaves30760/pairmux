@@ -222,7 +222,7 @@ func (c *Ctx) cmdNew(args []string) int {
 
 	var next []string
 	effMode := mode
-	gotHooks, err := detect.WaitReady(j, mode, 5*time.Second)
+	gotHooks, err := detect.WaitReady(j, mode, shellhooks.ReadyTimeout(shell))
 	if err != nil {
 		return c.fail(output.CodeInternal, "wait ready: "+err.Error(), "")
 	}

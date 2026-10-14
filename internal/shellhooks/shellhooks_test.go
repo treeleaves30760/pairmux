@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf16"
 
 	"github.com/treeleaves30760/pairmux/internal/core"
@@ -397,5 +398,25 @@ func TestWindowsCommandOverrideUsesTheShell(t *testing.T) {
 	argv, _, _, _ = Prepare(t.TempDir(), "cmd.exe", []string{"dir"})
 	if !reflect.DeepEqual(argv, []string{"cmd.exe", "/s", "/c", "dir"}) {
 		t.Fatalf("cmd argv=%q", argv)
+	}
+}
+
+func TestPowerShellSentinelAvoidsTheConsoleCodePage(t *testing.T) {
+	// [Console]::Write encodes through an OEM code page in Windows PowerShell,
+	// which garbles the zero-width boundary; the host's Unicode writer does not.
+	if !strings.Contains(powershellSentinelSuffix, "$Host.UI.Write(") || strings.Contains(powershellSentinelSuffix, "[Console]::Write") {
+		t.Fatalf("PowerShell sentinel suffix = %q", powershellSentinelSuffix)
+	}
+}
+
+func TestReadyTimeout(t *testing.T) {
+	for shell, want := range map[string]time.Duration{
+		"/bin/bash": 5 * time.Second, "zsh": 5 * time.Second, "cmd.exe": 5 * time.Second,
+		`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`: 20 * time.Second,
+		"pwsh": 20 * time.Second,
+	} {
+		if got := ReadyTimeout(shell); got != want {
+			t.Errorf("ReadyTimeout(%q) = %s, want %s", shell, got, want)
+		}
 	}
 }
