@@ -218,8 +218,9 @@ x86-64 and ARM64, with the built-in multiplexer: neither tmux nor WSL is needed.
 :::caution New and not yet released
 Native Windows ships in the next release after v0.6.0, which adds `win_amd64`/`win_arm64` wheels and
 `pairmux_<version>_windows_amd64.zip` / `_windows_arm64.zip` release archives. It is validated by CI
-on hosted Windows Server 2025 runners; it has not yet been accepted on real Windows hardware, and the
-ARM64 build has not been exercised at runtime. Until the release is published, the native install
+on hosted Windows Server 2025 runners and was accepted on real Windows 11 x86-64 hardware (Windows
+PowerShell 5.1, cmd.exe and Git Bash terminals through ConPTY, including a human `attach`); the ARM64
+build has not been exercised at runtime. Until the release is published, the native install
 below fails with a hint to use WSL — use the WSL route at the end of this tab.
 :::
 

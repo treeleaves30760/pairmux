@@ -261,9 +261,10 @@ the reply teaches the next step.
 ## Windows
 
 On Windows (10 1809 or newer, x86-64 or ARM64) pairmux always uses the built-in backend over
-ConPTY; neither tmux nor WSL is needed. This support is new: it is validated by CI on hosted Windows Server 2025
-runners, has not been accepted on real Windows hardware, and the ARM64 build has not been
-exercised at runtime. WSL remains possible: inside it, pairmux is a Linux program and chooses its
+ConPTY; neither tmux nor WSL is needed. This support is new: it is validated by CI on hosted Windows
+Server 2025 runners and was accepted on real Windows 11 x86-64 hardware (Windows PowerShell 5.1,
+cmd.exe and Git Bash terminals through ConPTY, including a human `attach`); the ARM64 build has not
+been exercised at runtime. WSL remains possible: inside it, pairmux is a Linux program and chooses its
 backend as on Linux.
 
 - **Shell.** A new terminal starts PowerShell 7 (`pwsh.exe`), else Windows PowerShell

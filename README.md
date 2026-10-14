@@ -206,8 +206,9 @@ This manual path remains available, but the website's `install.sh` now uses PyPI
 pairmux runs natively on Windows 10 1809 or newer (needed for ConPTY and AF_UNIX sockets), on
 x86-64 and ARM64, using the [built-in multiplexer](#terminal-backends); neither tmux nor
 WSL is needed. **This is new and not yet released**: it ships in the next release after v0.6.0, which
-adds `win_amd64`/`win_arm64` wheels and Windows release zips. Its validation is CI on hosted Windows Server 2025
-runners; it has not yet been accepted on real Windows hardware, and the ARM64 build has not
+adds `win_amd64`/`win_arm64` wheels and Windows release zips. It is validated by CI on hosted Windows
+Server 2025 runners and was accepted on real Windows 11 x86-64 hardware (Windows PowerShell 5.1,
+cmd.exe and Git Bash terminals through ConPTY, including a human `attach`); the ARM64 build has not
 been exercised at runtime. Until that release is published, use WSL as described at the end of this
 section.
 

@@ -144,13 +144,22 @@ documentation and landing copy mark native Windows and optional tmux as
 "next release after v0.6.0"; replace that wording with the actual version when
 the tag is chosen.
 
-**Not verified for that release.** Native Windows is validated by CI on hosted
+**Verified before that release.** Native Windows is validated by CI on hosted
 Windows runners (unit, ConPTY integration with PowerShell, source install and
 installer tests, plus cross-compiled vet for both architectures) and by the
 release smoke job above. Draft PR #10's CI passed all of them on
 `windows-latest` (Windows Server 2025) at `ce3f74e`, including PowerShell's
-OSC 133 marks reaching pairmux through ConPTY. Acceptance on real Windows
-hardware is in progress and not yet recorded, older Windows 10 builds are
+OSC 133 marks reaching pairmux through ConPTY. On 2026-10-14 the branch was
+also accepted on real Windows 11 Pro x86-64 hardware (build 26200) with a
+locally built binary: unit, packaging and built-in integration suites;
+`doctor`; the `new` → `run` → `peek` → `log` → `kill` loop with exit codes and
+CJK/emoji output in Windows PowerShell 5.1, cmd.exe and Git Bash terminals;
+interactive prompts answered with `send`; job-object process-tree kill; Ctrl-C
+delivery; the server's idle exit and on-demand restart; a human `attach` driven
+through a nested ConPTY (mirroring, typing, `Ctrl-b d`); `watch`; `mcp serve`
+over stdio; and `install.ps1` with `PAIRMUX_DRY_RUN`. That acceptance found and
+fixed the cmd.exe sentinel output and exit-status defects and the inherited
+Ctrl-C suppression recorded in the changelog. Older Windows 10 builds are
 untested, and the Windows ARM64 binary has been cross-compiled but not run. The
 published-release acceptance workflow keeps its WSL1 job (now through the
 opt-in WSL target) and gains a `windows-native` job, described below, that has
