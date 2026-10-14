@@ -2,9 +2,12 @@
 
 pairmux is a Go binary, but `uv tool install pairmux`, `uvx pairmux version`,
 and `pipx install pairmux` should still Just Work. We get that the same way
-**ruff** and **uv** do: publish one **platform wheel per OS/arch**, each carrying
-the prebuilt native binary in the wheel's *scripts* section. No build backend,
-no compilation on the user's machine, and **no sdist**.
+**ruff** and **uv** do: publish one **platform wheel per OS/arch** (macOS,
+Linux and Windows, each on x86-64 and ARM64), each carrying the prebuilt native
+binary in the wheel's *scripts* section. No build backend on the release path,
+no compilation on the user's machine, and **no sdist**. A separate, in-tree
+backend lets people [install from a source checkout](#install-from-a-source-checkout)
+without PyPI; it never produces release artifacts.
 
 ## Install from public PyPI
 
@@ -75,9 +78,22 @@ cache, and wheels only. The pipe executes downloaded code; download and review
 The pairmux wheel comes from [PyPI](https://pypi.org/project/pairmux/); when the
 installer needs uv or a managed Python, those may come from Astral upstream,
 not PyPI. Python 3.9+ is required for wheel installation, not for executing the
-native binary. Install **tmux 3.2+ separately**; neither the wheel nor the
-installer supplies it. Supported targets are macOS 12+ and glibc 2.17+ Linux,
-on x86-64 or ARM64; use compatible Linux inside WSL on Windows.
+native binary. Supported targets are macOS 12+, glibc 2.17+ Linux and Windows
+10 version 1809+ (ConPTY), each on x86-64 or ARM64.
+
+tmux is optional. On macOS and Linux pairmux uses tmux (3.2+, installed
+separately) when it is present and its built-in multiplexer otherwise; Windows
+always uses the built-in multiplexer. `PAIRMUX_BACKEND=builtin` or
+`PAIRMUX_BACKEND=tmux` overrides the automatic choice. Neither the wheel nor
+the installers supply tmux.
+
+On Windows, the PowerShell installer applies the same PyPI-only uv policy
+natively; set `$env:PAIRMUX_INSTALL_TARGET = 'wsl'` first to install into WSL
+instead:
+
+```powershell
+irm https://pairmux.treeleaves30760.com/install.ps1 | iex
+```
 
 [Homepage](https://pairmux.treeleaves30760.com) ·
 [Documentation](https://pairmux-docs.treeleaves30760.com/) ·
@@ -86,17 +102,18 @@ on x86-64 or ARM64; use compatible Linux inside WSL on Windows.
 ## The model
 
 * **Binary-in-wheel.** Each wheel contains the executable at
-  `pairmux-<ver>.data/scripts/pairmux`. Installers (pip, uv, pipx) copy files
-  from a wheel's `*.data/scripts/` directory straight into the target
-  environment's `bin/`, so the binary lands on `PATH` with its exec bit intact.
+  `pairmux-<ver>.data/scripts/pairmux` (`pairmux.exe` in Windows wheels).
+  Installers (pip, uv, pipx) copy files from a wheel's `*.data/scripts/`
+  directory straight into the target environment's `bin/` (`Scripts\` on
+  Windows), so the binary lands on `PATH` with its exec bit intact.
 * **Per-platform, `py3-none-<platform>` tags.** The wheel is platform-specific
   (`Root-Is-Purelib: false`) but Python-agnostic — any CPython/PyPy ≥ 3.9 can
   install it, because there is no Python code to run.
 * **No sdist.** An sdist would tempt a source build (and a Go toolchain) on the
   user's box. We only ship wheels. PyPI is happy to host wheels with no sdist.
 * **Shebang safety.** pip/uv rewrite a `scripts/` file's shebang *only* when it
-  starts with `#!python`. A native Mach-O/ELF binary starts with its own magic
-  bytes, so it is copied verbatim — never mangled.
+  starts with `#!python`. A native Mach-O/ELF/PE binary starts with its own
+  magic bytes, so it is copied verbatim — never mangled.
 
 ### Platform mapping
 
@@ -108,9 +125,12 @@ The builder maps GoReleaser's `goos_goarch` to a PyPI platform tag:
 | `darwin_amd64` | `macosx_12_0_x86_64` |
 | `linux_amd64`  | `manylinux_2_17_x86_64.manylinux2014_x86_64` |
 | `linux_arm64`  | `manylinux_2_17_aarch64.manylinux2014_aarch64` |
+| `windows_amd64` | `win_amd64` |
+| `windows_arm64` | `win_arm64` |
 
-Windows is intentionally unsupported (use WSL). The compressed manylinux tags
-expand to two `Tag:` lines each in the wheel's `WHEEL` metadata, per spec.
+The compressed manylinux tags expand to two `Tag:` lines each in the wheel's
+`WHEEL` metadata, per spec. Windows tags carry no OS-version floor; ConPTY
+needs Windows 10 version 1809 or newer.
 
 ## Project metadata and PyPI description
 
@@ -123,8 +143,8 @@ site, `DOCUMENTATION` to the docs site, and `REPOSITORY` remains GitHub;
 
 Keep every link in `DESCRIPTION.md` absolute so it works outside the GitHub
 repository view. Metadata tests verify the content type, source file, project
-links, runtime requirement, and install examples. Before publishing, also ask
-PyPI's renderer to check the completed wheels:
+links, the absence of a tmux requirement, and install examples. Before
+publishing, also ask PyPI's renderer to check the completed wheels:
 
 ```bash
 uvx --from twine==6.2.0 twine check --strict dist/wheels/*.whl
@@ -176,17 +196,24 @@ Native headers are checked before any wheel is emitted:
   `macosx_*` wheel tag.
 - Linux inputs must be little-endian ELF64 executables (or PIE executables)
   whose machine architecture matches the x86-64 or aarch64 manylinux tag.
+- Windows inputs must be PE32+ images (`MZ` header, `PE\0\0` signature,
+  optional-header magic `0x20b`) marked as executables, not DLLs, for the
+  console subsystem, with machine `0x8664` for `win_amd64` or `0xAA64` for
+  `win_arm64`. The wheel entry is named `pairmux.exe`.
 
-This rejects swapped cross-build artifacts and prevents a tag from claiming an
-older macOS release than the bundled binary actually supports.
+This rejects swapped cross-build artifacts, GUI-subsystem or 32-bit Windows
+builds, and prevents a tag from claiming an older macOS release than the
+bundled binary actually supports. A platform tag without a header check is
+refused rather than packaged unverified.
 
 ### CI invocation
 
 GoReleaser produces one binary per build under
 `<dist>/<build>_<goos>_<goarch>[_<variant>]/pairmux` (for example,
-`pairmux_linux_amd64_v1` and `pairmux_darwin_arm64_v8.0`). Point the builder at
-that directory and it scans for the four supported platforms, ignoring anything else
-(Windows builds, `checksums.txt`, `artifacts.json`, archives, ...):
+`pairmux_linux_amd64_v1` and `pairmux_darwin_arm64_v8.0`), or `pairmux.exe`
+for Windows (`pairmux_windows_amd64_v1`, `pairmux_windows_arm64_v8.0`). Point
+the builder at that directory and it scans for the six supported platforms,
+ignoring anything else (`checksums.txt`, `artifacts.json`, archives, ...):
 
 ```bash
 python3 packaging/pypi/build_wheels.py --version "$VERSION" \
@@ -198,12 +225,14 @@ workflow. Publishing is intentionally ordered after validation:
 
 1. The read-only `validate` job runs Go/Python/shell/workflow checks and
    race-enabled unit and tmux integration tests.
-2. A single `goreleaser release --skip=publish` invocation builds four native
-   binaries, four archives, two RPM packages, and one checksum manifest.
-   `verify_release.py` checks the structured artifact manifest, archive contents,
-   binary identity, filenames, and every checksum before staging **seven public
-   assets**. Unexpected Debian packages or checksum rows are rejected.
-3. The wheel builder consumes those same four binaries and emits exactly four
+2. A single `goreleaser release --skip=publish` invocation builds six native
+   binaries, four `.tar.gz` archives (macOS/Linux), two `.zip` archives
+   (Windows), two RPM packages, and one checksum manifest. `verify_release.py`
+   checks the structured artifact manifest, archive contents, binary identity,
+   filenames, every checksum, and that the rendered Homebrew cask references
+   only the four macOS/Linux tarballs, before staging **nine public assets**.
+   Unexpected Debian packages or checksum rows are rejected.
+3. The wheel builder consumes those same six binaries and emits exactly six
    wheels. The just-built Linux x86-64 wheel is smoke-tested with pip, persistent
    `uv tool install`, and temporary `uvx --from` using exact tag-version
    comparisons. uv is bootstrapped as the pinned `uv==0.11.16` official PyPI
@@ -211,7 +240,11 @@ workflow. Publishing is intentionally ordered after validation:
    isolated. Both uv paths use the local wheel with `--offline`, `--no-index`,
    `--no-build`, `--no-config`, and the runner's existing Python with downloads
    disabled. Validation never requests a not-yet-published version or public
-   PyPI's latest pairmux.
+   PyPI's latest pairmux. A `windows-latest` job then runs the preserved bytes:
+   it pip-installs the `win_amd64` wheel into a fresh venv with no index, runs
+   `pairmux.exe version` from it and from the checksum-verified
+   `windows_amd64` zip, and requires both to report the tag version and to be
+   byte-identical. Publishing waits for that job.
 4. The native assets, wheels, and rendered Homebrew cask are preserved separately.
    The publish job downloads those exact bytes and never invokes GoReleaser or
    a compiler.
@@ -229,11 +262,99 @@ The validation step is equivalent to:
       --version "$GITHUB_REF_NAME" \
       --dist-dir dist \
       --out-dir dist/wheels --check
-    test "$(find dist/wheels -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')" -eq 4
+    test "$(find dist/wheels -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')" -eq 6
 ```
 
 > Keep GoReleaser's build directories under `dist/` and wheel output under
 > `dist/wheels/`, so the uploaded artifact contains only verified wheel files.
+
+## Install from a source checkout
+
+For people who can clone this repository but cannot install pairmux from PyPI.
+The repository-root `pyproject.toml` declares an in-tree PEP 517 backend,
+[`pairmux_build_backend.py`](./pairmux_build_backend.py), with **no build
+dependencies** (`requires = []`), so pip and uv need no index at all. It reuses
+`build_wheels.py` for metadata, header checks and the wheel writer, but always
+produces a host-only **development** wheel; it is never part of a release.
+
+**With Go 1.25+** ([go.dev/dl](https://go.dev/dl/)) on PATH, from the clone:
+
+```bash
+python -m pip install .                    # into the active environment
+uv tool install --offline .                # or: a persistent uv tool
+uv tool install --offline --reinstall .    # after git pull, to rebuild
+```
+
+`pipx install .` uses the same backend, but pipx first installs its own shared
+pip from an index, so it is not an offline path on a fresh machine.
+
+`pip install git+https://github.com/treeleaves30760/pairmux` also works where
+GitHub is reachable but PyPI is not (pip clones with tags, so the version is
+derived as below). The backend runs `go build -trimpath -buildvcs=false
+-ldflags "-s -w -X …/internal/version.Version=<version>"` with
+`CGO_ENABLED=0` and the interpreter's GOOS/GOARCH into a temporary directory
+outside the checkout. It downloads nothing itself; Go resolves its toolchain as
+you configured it.
+
+**Without Go**, download your platform's archive from
+[GitHub Releases](https://github.com/treeleaves30760/pairmux/releases), verify
+it against `checksums.txt`, extract `pairmux` (`pairmux.exe` on Windows), and
+point `PAIRMUX_PREBUILT_BINARY` at its **absolute** path:
+
+```bash
+PAIRMUX_PREBUILT_BINARY="$PWD/../pairmux-download/pairmux" python -m pip install .
+```
+
+```powershell
+# Windows PowerShell, from the clone, after downloading the release zip
+# pairmux_<version>_windows_amd64.zip next to it and checking its SHA256:
+Expand-Archive ..\pairmux_<version>_windows_amd64.zip -DestinationPath ..\pairmux-download
+$env:PAIRMUX_PREBUILT_BINARY = (Resolve-Path ..\pairmux-download\pairmux.exe).Path
+python -m pip install .            # or: uv tool install --offline .
+Remove-Item Env:PAIRMUX_PREBUILT_BINARY
+```
+
+The binary is packaged byte-for-byte after the same Mach-O/ELF/PE header checks
+the release wheels use, against the installing interpreter's platform (an
+x86-64 Python under Rosetta needs the darwin amd64 binary). It is never
+executed during the build. `pairmux version` then reports that binary's own
+stamp (the release version for a release binary), while the wheel keeps the
+development version below.
+
+**Version.** `git describe` against the latest canonical `vX.Y.Z` tag yields
+`X.Y.Z.post<N>.dev0+g<12-hex sha>`, with `.dirty` appended to the local label
+for uncommitted changes to tracked files: `0.6.0.post2.dev0+gdc23e7f011a2`
+is two commits after v0.6.0. Even the tagged commit itself builds as
+`X.Y.Z.post0.dev0+g<sha>`. The `.dev` segment and the `+` local label make the
+build sort after its base release, impossible to upload to PyPI (local versions
+are refused) and impossible to confuse with a published wheel. The same string
+is stamped into the binary, and `pairmux update` refuses it as not a canonical
+release; reinstall from the clone instead. Without usable git metadata (a
+source archive, a vendored copy, no `git`) the version is `0.0.0.dev0+unknown`,
+or `0.0.0.dev0+g<sha>` for history without release tags.
+
+`PAIRMUX_VERSION` overrides the version with a canonical SemVer tag (`v0.7.0`,
+`v0.7.0-rc.1`) or a canonical PEP 440 version (`0.7.0.dev3+mybuild`); anything
+else is rejected. A release-shaped override (no `.dev`, no `+`) is honored with
+a warning, because it gives up the distinction above. The installer
+`install.ps1` reads the same variable as a release pin, so clear it before a
+source build unless you mean it.
+
+**Wheel tags.** The host's own tag, read from the binary: `macosx_<minos>_<arch>`
+from the Mach-O deployment target, `win_amd64`/`win_arm64`, or on Linux the
+host-only `linux_x86_64`/`linux_aarch64`. A locally built static binary has not
+been audited for manylinux, `linux_*` installs on glibc and musl distributions
+alike, and PyPI refuses `linux_*` uploads: one more guard against publishing a
+development build.
+
+**Not supported, with an explanation:** `build_sdist` (there is no sdist, as
+for the release; `uv build` needs `--wheel`), editable installs (a compiled
+binary has nothing to link), and `--config-settings` (use the two environment
+variables). The checkout must contain `pyproject.toml`, so tags up to v0.6.0
+cannot be installed this way. uv may reuse a wheel it built from the directory,
+so the root `pyproject.toml` lists Go sources, embedded assets, packaging files,
+git commit/tags and both variables as uv cache keys; a changed file behind an
+unchanged `PAIRMUX_PREBUILT_BINARY` path still needs `--reinstall`.
 
 ## Publishing
 

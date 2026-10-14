@@ -7,6 +7,8 @@
 package integration
 
 import (
+	"github.com/treeleaves30760/pairmux/internal/muxd"
+
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,6 +33,23 @@ func humanTypes(t *testing.T, e tenv, name, text string) {
 // that need the keystroke and the Enter to be separate events.
 func humanKeys(t *testing.T, e tenv, name string, keys ...string) {
 	t.Helper()
+	if builtinIT() {
+		// The built-in server's own input path: no pairmux command, no event.
+		restore := withRuntimeRoot(e)
+		defer restore()
+		c := builtinClient(e)
+		pane := builtinPaneID(t, c, name)
+		var err error
+		if len(keys) == 2 && keys[0] == "-l" {
+			err = c.SendLiteral(pane, keys[1])
+		} else {
+			err = c.SendKeys(pane, keys...)
+		}
+		if err != nil {
+			t.Fatalf("built-in send %v: %v", keys, err)
+		}
+		return
+	}
 	argv := append([]string{"-L", e.socket, "send-keys", "-t", paneID(t, e, name)}, keys...)
 	cmd := exec.Command("tmux", argv...)
 	if e.tmuxTmp != "" {
@@ -394,4 +413,19 @@ func TestWaitDoneRejectsProgramTerminal(t *testing.T) {
 	if !strings.Contains(env.Error.Hint, "--pattern") {
 		t.Fatalf("hint = %q, want a workable alternative", env.Error.Hint)
 	}
+}
+
+func builtinPaneID(t *testing.T, c *muxd.Client, name string) string {
+	t.Helper()
+	panes, err := c.ListManaged()
+	if err != nil {
+		t.Fatalf("list built-in panes: %v", err)
+	}
+	for _, p := range panes {
+		if p.Name == name {
+			return p.PaneID
+		}
+	}
+	t.Fatalf("no built-in pane for terminal %q", name)
+	return ""
 }

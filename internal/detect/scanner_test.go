@@ -269,7 +269,7 @@ func TestScannerBackToBackMarks(t *testing.T) {
 
 func TestMarkKindString(t *testing.T) {
 	cases := map[MarkKind]string{
-		MarkA: "A", MarkB: "B", MarkC: "C", MarkD: "D", MarkSentinel: "sentinel",
+		MarkA: "A", MarkB: "B", MarkC: "C", MarkD: "D", MarkSentinel: "sentinel", MarkBoundary: "boundary",
 	}
 	for k, want := range cases {
 		if got := k.String(); got != want {

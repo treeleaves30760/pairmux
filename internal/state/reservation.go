@@ -1,5 +1,3 @@
-//go:build unix
-
 package state
 
 import (
@@ -8,7 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"syscall"
+
+	"github.com/treeleaves30760/pairmux/internal/flock"
 )
 
 // ErrNameReserved means another pairmux process is currently creating the
@@ -36,9 +35,9 @@ func AcquireNameReservation(namespace, name string) (release func(), err error) 
 	if err != nil {
 		return nil, fmt.Errorf("state: open name reservation: %w", err)
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := flock.TryLock(f, true); err != nil {
 		_ = f.Close()
-		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+		if errors.Is(err, flock.ErrWouldBlock) {
 			return nil, ErrNameReserved
 		}
 		return nil, fmt.Errorf("state: lock name reservation: %w", err)
@@ -53,7 +52,7 @@ func AcquireNameReservation(namespace, name string) (release func(), err error) 
 			return
 		}
 		released = true
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = flock.Unlock(f)
 		_ = f.Close()
 	}, nil
 }

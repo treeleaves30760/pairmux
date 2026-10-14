@@ -5,17 +5,30 @@ description: attach, watch, and note — how a human steps into an agent's termi
 
 # Human collaboration
 
-pairmux terminals are real tmux panes, so a human can watch them, take one over, perform an action
-the agent cannot or should not perform, and hand back in the same live session. A **note**, rather
+pairmux terminals are real PTYs — tmux panes, or panes on pairmux's built-in server — so a human
+can watch them, take one over, perform an action the agent cannot or should not perform, and hand
+back in the same live session. A **note**, rather
 than attach/detach itself, is the explicit hand-back signal.
 
 ## The three human commands
 
 - **`pairmux watch`** — a live dashboard of every terminal: status, lock holder, current command, last activity. Awaiting-input rows are flagged `!!`, dead rows `xx`. `Ctrl-C` quits.
-- **`pairmux attach [name]`** — from an interactive terminal outside tmux, open a tmux client focused
-  on `name`. Detach with tmux's `Ctrl-b d`. The command refuses non-TTY output and nested tmux. If
-  already inside tmux, detach to the outer shell or use another terminal before running `attach`;
-  `switch-client` cannot cross to pairmux's separate named socket.
+- **`pairmux attach [name]`** — from an interactive terminal, step into the live pane. Detach with
+  `Ctrl-b d` on either backend. The command refuses a non-interactive stdin or stdout. What it opens
+  depends on the [backend](../concepts.md#terminal-backends):
+  - **tmux:** a tmux client focused on `name`; detach with tmux's configured binding (default
+    `Ctrl-b d`). It refuses to nest inside tmux: if already inside tmux, detach to the outer shell or
+    use another terminal before running `attach`, because `switch-client` cannot cross to pairmux's
+    separate named socket.
+  - **built-in:** your terminal attaches straight to the pane, with no session or window list and no
+    status bar, on the alternate screen so your own scrollback survives. `Ctrl-b d` detaches,
+    `Ctrl-b Ctrl-b` sends a literal `Ctrl-b`, and other keys after `Ctrl-b` are dropped. With no
+    name it opens the only live terminal (several → `E_BAD_ARGS` listing them). It works inside tmux
+    but refuses to attach a pane to itself. While you are attached the pane takes your terminal's
+    size (with several humans, the latest attach or resize wins) and returns to 220x50 when the last
+    one detaches. Detaching prints
+    `[detached from NAME] tell the agent what you did: pairmux note NAME "..."`; if the program exits
+    while you are attached, you see its exit message instead.
 - **`pairmux note <name> <text>`** — append a non-secret message. `run` and `peek` expose unseen notes
   in `notes`; `wait --human` returns one as `status: human-done` with the note text in `output`.
 - **Subscribe** — `wait --done` blocks until the terminal's command finishes and reports its
@@ -63,7 +76,8 @@ make this decision.
 pairmux --json wait review --human --notify --timeout 5m
 ```
 
-`--notify` uses `osascript` on macOS or `notify-send` on Linux and is best-effort. `wait --human`
+`--notify` uses `osascript` on macOS, `notify-send` on Linux, or Windows PowerShell on Windows,
+and is best-effort. `wait --human`
 returns on a note, on the handoff resolving without one (below), on pane death, or on the deadline;
 its default timeout is 300 seconds. A `status: timeout` means the human has not come yet: the `next`
 repeats that exact wait — conditions preserved, deadline doubled, never under 300 seconds — so
@@ -75,6 +89,9 @@ follow it and keep waiting instead of sleeping or acting alone.
 pairmux attach review # type y in the pane, then detach with Ctrl-b d
 pairmux --json note review "approved; entered y and detached"
 ```
+
+The `run` command in step 1 is POSIX shell syntax. In a Windows PowerShell terminal (the Windows
+default), prompt with `Read-Host` instead; the handoff, attach, and note steps are the same.
 
 **4. The agent's `wait` returns on the next polling pass after the note lands:**
 
@@ -104,6 +121,11 @@ This is guidance, not a credential vault or input firewall. The agent must not p
 programs normally suppress terminal echo, but a program that echoes typed input can put it in the
 journal. Before entering a real secret, the human must confirm that the prompt hides input.
 
+On macOS/Linux an echo-suppressed prompt is classified as secret whatever its wording. Windows has no
+tty line discipline to read, so there classification relies on the prompt's wording alone (for
+example PowerShell's `Read-Host -AsSecureString -Prompt Password` shows `Password: `); extend it
+with `PAIRMUX_SECRET_PROMPT_RE` when your tools phrase credential prompts differently.
+
 ## Notes flow both ways
 
 A note is a general side channel, not just for handoffs. A human (or another agent) can leave context at any time:
@@ -126,7 +148,7 @@ also carries the usual `pairmux.v1` fields and may include shell output):
 :::note
 ### When the human leaves no note
 
-A human who answers a prompt and walks away records nothing at all — attaching is a live tmux
+A human who answers a prompt and walks away records nothing at all — attaching is a live terminal
 operation, and typing into the pane is not an event. So `wait --human` also ends the moment the
 terminal is visibly moving again: `status: running`, whose `next` offers `wait --done` for following
 the command the rest of the way. The distinction is deliberate — a password answered at second two
@@ -160,6 +182,6 @@ in `output`, not `notes`.
 ## When the agent should wait for the human
 
 While a human is typing in a pane, the agent should not fight them for it. Once the agent initiates a
-handoff, it should `wait --human` rather than `run` or repeatedly `send`. Attaching alone is a live
-tmux operation and creates no event, so the note — not detach — is the machine-visible hand-back
-signal.
+handoff, it should `wait --human` rather than `run` or repeatedly `send`; `send` warns when a human
+is attached. Attaching alone is a live terminal operation and creates no event, so the note — not
+detach — is the machine-visible hand-back signal.

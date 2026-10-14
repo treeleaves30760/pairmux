@@ -55,7 +55,7 @@ func (e SubprocessExecutor) Execute(ctx context.Context, argv []string) (Executi
 	stdout := newBoundedBufferWithOverflow(maxChildStdoutBytes, signalOverflow)
 	stderr := newBoundedBufferWithOverflow(maxChildStderrBytes, signalOverflow)
 	cmd := exec.Command(e.Path, argv...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = childSysProcAttr()
 	cmd.WaitDelay = childPipeWaitDelay
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -134,12 +134,6 @@ func executionFromBuffers(stdout, stderr *boundedBuffer, err error) Execution {
 		result.ExitCode = exitErr.ExitCode()
 	}
 	return result
-}
-
-func terminateProcessGroup(pid int, signal syscall.Signal) {
-	if pid > 0 {
-		_ = syscall.Kill(-pid, signal)
-	}
 }
 
 type boundedBuffer struct {

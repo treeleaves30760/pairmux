@@ -11,21 +11,21 @@ import (
 )
 
 func TestSkillTargetDirs(t *testing.T) {
-	t.Setenv("HOME", "/fakehome")
+	setHome(t, "/fakehome")
 	tests := []struct {
 		target  string
 		want    string
 		projRel bool
 	}{
-		{"claude-code", "/fakehome/.claude/skills/pairmux", false},
-		{"codex", "/fakehome/.agents/skills/pairmux", false},
-		{"gemini", "/fakehome/.gemini/skills/pairmux", false},
-		{"opencode", "/fakehome/.config/opencode/skills/pairmux", false},
-		{"copilot", "/fakehome/.copilot/skills/pairmux", false},
-		{"windsurf", "/fakehome/.codeium/windsurf/skills/pairmux", false},
-		{"kiro", "/fakehome/.kiro/skills/pairmux", false},
-		{"amp", "/fakehome/.config/amp/skills/pairmux", false},
-		{"agents", "/fakehome/.agents/skills/pairmux", false},
+		{"claude-code", filepath.FromSlash("/fakehome/.claude/skills/pairmux"), false},
+		{"codex", filepath.FromSlash("/fakehome/.agents/skills/pairmux"), false},
+		{"gemini", filepath.FromSlash("/fakehome/.gemini/skills/pairmux"), false},
+		{"opencode", filepath.FromSlash("/fakehome/.config/opencode/skills/pairmux"), false},
+		{"copilot", filepath.FromSlash("/fakehome/.copilot/skills/pairmux"), false},
+		{"windsurf", filepath.FromSlash("/fakehome/.codeium/windsurf/skills/pairmux"), false},
+		{"kiro", filepath.FromSlash("/fakehome/.kiro/skills/pairmux"), false},
+		{"amp", filepath.FromSlash("/fakehome/.config/amp/skills/pairmux"), false},
+		{"agents", filepath.FromSlash("/fakehome/.agents/skills/pairmux"), false},
 		{"cursor", filepath.Join(".cursor", "skills", "pairmux"), true},
 	}
 	for _, tt := range tests {
@@ -54,7 +54,7 @@ var skillRels = []string{
 
 func TestSkillInstallDryRun(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 
 	var buf bytes.Buffer
 	c := newTestCtx(&buf, true)
@@ -79,7 +79,7 @@ func TestSkillInstallDryRun(t *testing.T) {
 
 func TestSkillInstallWritesAndPreserves(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 	dir := filepath.Join(home, ".claude", "skills", "pairmux")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func TestSkillInstallWritesAndPreserves(t *testing.T) {
 
 func TestSkillInstallReplacesSymlinkWithoutFollowingIt(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 	dir := filepath.Join(home, ".claude", "skills", "pairmux")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -152,7 +152,7 @@ func TestSkillInstallReplacesSymlinkWithoutFollowingIt(t *testing.T) {
 
 func TestSkillInstallAllSkipsMissingAgents(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 	// Only the shared Codex/agents skill root is "installed" on this machine.
 	if err := os.MkdirAll(filepath.Join(home, ".agents"), 0o755); err != nil {
 		t.Fatal(err)
@@ -210,4 +210,12 @@ func TestSkillBareUsage(t *testing.T) {
 	if rc := c.dispatch([]string{"skill", "remove"}); rc != 2 {
 		t.Errorf("unknown action: rc = %d, want 2", rc)
 	}
+}
+
+// setHome points the user's home directory at dir on every platform:
+// os.UserHomeDir reads HOME on Unix and USERPROFILE on Windows.
+func setHome(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 }

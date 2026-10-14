@@ -7,9 +7,11 @@ import argparse
 import hashlib
 import json
 import shutil
+import stat
 import sys
 import tarfile
-from pathlib import Path
+import zipfile
+from pathlib import Path, PurePosixPath
 from typing import Dict, Iterable, List, Tuple
 
 from build_wheels import normalize_version
@@ -20,7 +22,13 @@ TARGETS = (
     ("darwin", "arm64"),
     ("linux", "amd64"),
     ("linux", "arm64"),
+    ("windows", "amd64"),
+    ("windows", "arm64"),
 )
+# macOS/Linux archives are tarballs; Windows archives are zips (GoReleaser
+# format_overrides). Every archive carries the same documentation members.
+ARCHIVE_DOCUMENTS = ("LICENSE", "README.md", "man/pairmux.1")
+CASK_TARGETS = tuple(target for target in TARGETS if target[0] != "windows")
 PACKAGE_FORMATS = ("rpm",)
 ALLOWED_TYPES = {"Metadata", "Binary", "Archive", "Linux Package", "Checksum", "Homebrew Cask"}
 
@@ -97,8 +105,49 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def archive_name(release_version: str, os_name: str, arch: str) -> str:
+    extension = "zip" if os_name == "windows" else "tar.gz"
+    return "pairmux_%s_%s_%s.%s" % (release_version, os_name, arch, extension)
+
+
+def zip_archive_binary(path: Path) -> Tuple[bytes, int]:
+    """Return pairmux.exe from a Windows zip after checking its exact members."""
+    required = {"pairmux.exe", *ARCHIVE_DOCUMENTS}
+    with zipfile.ZipFile(path) as archive:
+        members = {}
+        for info in archive.infolist():
+            # orig_filename is the name as stored: on Windows, zipfile rewrites
+            # backslashes in .filename to "/", which would hide an unsafe name.
+            name = info.orig_filename
+            member_path = PurePosixPath(name)
+            if ("\\" in name or ":" in name or member_path.is_absolute()
+                    or ".." in member_path.parts):
+                fail("%s contains an unsafe archive member: %s" % (path, name))
+            if name in members:
+                fail("%s contains a duplicate archive member: %s" % (path, name))
+            members[name] = info
+        extra = set(members) - required
+        if extra:
+            fail("%s contains unexpected archive members: %s" %
+                 (path, ", ".join(sorted(extra))))
+        missing = required - set(members)
+        if missing:
+            fail("%s is missing archive members: %s" % (path, ", ".join(sorted(missing))))
+        for name in required:
+            info = members[name]
+            mode = info.external_attr >> 16
+            # Zips written on Windows carry no Unix file type (only DOS or
+            # permission bits); when a type is present it must be a regular
+            # file, never a symlink or directory.
+            if info.is_dir() or stat.S_IFMT(mode) not in (0, stat.S_IFREG):
+                fail("%s member %s is not a regular file" % (path, name))
+        return archive.read(members["pairmux.exe"]), members["pairmux.exe"].external_attr >> 16
+
+
 def archive_binary(path: Path) -> Tuple[bytes, int]:
-    required = {"pairmux", "LICENSE", "README.md", "man/pairmux.1"}
+    if path.name.endswith(".zip"):
+        return zip_archive_binary(path)
+    required = {"pairmux", *ARCHIVE_DOCUMENTS}
     with tarfile.open(path, "r:gz") as archive:
         members = {}
         for member in archive.getmembers():
@@ -151,6 +200,15 @@ def verify_release(dist_dir: Path, tag: str, commit: str, out_dir: Path) -> List
     # to the tap separately — but its presence is part of the exact inventory.
     if len(grouped["Homebrew Cask"]) != 1:
         fail("expected exactly one Homebrew Cask artifact")
+    # Homebrew keeps installing the macOS/Linux tarballs (and tmux). A Windows
+    # zip in the cask would mean GoReleaser's OS filtering changed under us.
+    cask_path = artifact_path(dist_dir, grouped["Homebrew Cask"][0])
+    cask = cask_path.read_text(encoding="utf-8")
+    if "_windows_" in cask or ".zip" in cask:
+        fail("Homebrew cask %s references a Windows or zip archive" % cask_path)
+    for os_name, arch in CASK_TARGETS:
+        if "_%s_%s.tar.gz" % (os_name, arch) not in cask:
+            fail("Homebrew cask %s has no %s/%s tarball" % (cask_path, os_name, arch))
     binaries = one_by_target(grouped["Binary"], "Binary")
     archives = one_by_target(grouped["Archive"], "Archive")
 
@@ -170,14 +228,16 @@ def verify_release(dist_dir: Path, tag: str, commit: str, out_dir: Path) -> List
     for os_name, arch in TARGETS:
         binary_path = artifact_path(dist_dir, binaries[(os_name, arch)])
         archive_entry = archives[(os_name, arch)]
-        expected_name = "pairmux_%s_%s_%s.tar.gz" % (release_version, os_name, arch)
+        expected_name = archive_name(release_version, os_name, arch)
         if archive_entry.get("name") != expected_name:
             fail("archive name is %r; expected %r" % (archive_entry.get("name"), expected_name))
         archive_path = artifact_path(dist_dir, archive_entry)
         archived, mode = archive_binary(archive_path)
         if archived != binary_path.read_bytes():
             fail("%s does not contain the verified %s/%s binary" % (archive_path, os_name, arch))
-        if mode & 0o111 == 0:
+        # Windows has no exec bit; its zip members are only required to be
+        # regular files (checked above).
+        if os_name != "windows" and mode & 0o111 == 0:
             fail("pairmux is not executable in %s" % archive_path)
         public.append(archive_path)
 
@@ -224,7 +284,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     try:
         verify_release(args.dist_dir, args.tag, args.commit, args.out_dir)
-    except (OSError, ValueError, tarfile.TarError) as exc:
+    except (OSError, ValueError, tarfile.TarError, zipfile.BadZipFile) as exc:
         print("error: %s" % exc, file=sys.stderr)
         return 1
     return 0

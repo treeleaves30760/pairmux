@@ -14,8 +14,10 @@ RECORD with correct sha256 hashes, plus the binary with its 0755 exec bit
 encoded in the zip entry's external_attr.
 
 Shebang note: pip/uv rewrite the shebang of a script in .data/scripts/ ONLY when
-its first bytes are ``#!python``. A native ELF/Mach-O binary starts with its own
-magic, so it is copied verbatim (exec bit preserved) — exactly what we want.
+its first bytes are ``#!python``. A native ELF/Mach-O/PE binary starts with its
+own magic, so it is copied verbatim (exec bit preserved) — exactly what we want.
+Windows wheels carry ``pairmux.exe``; pip/uv copy it into the environment's
+``Scripts`` directory, the same model ruff and uv use for their Windows wheels.
 
 Usage
 -----
@@ -32,9 +34,10 @@ Scan a goreleaser dist directory (this is how CI calls it)::
 
 Scanning follows goreleaser's default binary layout: each build lives in a
 subdirectory named ``<build>_<goos>_<goarch>[_<variant>]`` (e.g.
-``pairmux_darwin_arm64``, ``pairmux_linux_amd64_v1``) containing the ``pairmux``
-executable. Only the four supported goos/goarch combinations are picked up;
-anything else (windows, universal, checksums, archives) is ignored.
+``pairmux_darwin_arm64``, ``pairmux_linux_amd64_v1``,
+``pairmux_windows_amd64_v1``) containing the ``pairmux`` executable
+(``pairmux.exe`` for Windows). Only the six supported goos/goarch combinations
+are picked up; anything else (universal, checksums, archives) is ignored.
 
 Wheels are written to ``--out-dir`` (default ``dist/``) as
 ``pairmux-<version>-py3-none-<platform-tag>.whl``. Publish them with
@@ -61,7 +64,8 @@ from typing import List, Tuple
 
 PROJECT_NAME = "pairmux"          # PyPI distribution name (already lowercase/normalized)
 SCRIPT_NAME = "pairmux"           # command installed into bin/
-SUMMARY = "Blocking tmux terminal control for AI agents, with captured logs and live human handoff"
+SUMMARY = ("Blocking terminal control for AI agents on macOS, Linux and Windows, "
+           "with captured logs and live human handoff")
 HOMEPAGE = "https://pairmux.treeleaves30760.com"
 REPOSITORY = "https://github.com/treeleaves30760/pairmux"
 DOCUMENTATION = "https://pairmux-docs.treeleaves30760.com/"
@@ -69,7 +73,7 @@ CHANGELOG = REPOSITORY + "/blob/main/ChangeLog.md"
 ISSUES = REPOSITORY + "/issues"
 DESCRIPTION_PATH = Path(__file__).resolve().with_name("DESCRIPTION.md")
 DESCRIPTION_CONTENT_TYPE = "text/markdown; charset=UTF-8; variant=GFM"
-KEYWORDS = "ai agents, tmux, terminal, cli, mcp, developer tools"
+KEYWORDS = "ai agents, terminal, pty, conpty, tmux, cli, mcp, developer tools"
 REQUIRES_PYTHON = ">=3.9"
 GENERATOR = "pairmux-build"
 METADATA_VERSION = "2.1"
@@ -85,6 +89,10 @@ PLATFORM_TAGS = {
     ("darwin", "amd64"): "macosx_12_0_x86_64",
     ("linux", "amd64"): "manylinux_2_17_x86_64.manylinux2014_x86_64",
     ("linux", "arm64"): "manylinux_2_17_aarch64.manylinux2014_aarch64",
+    # Windows tags carry no OS-version floor. The PE header is still parsed so
+    # a swapped or non-console binary cannot ship under either tag.
+    ("windows", "amd64"): "win_amd64",
+    ("windows", "arm64"): "win_arm64",
 }
 
 # Trove classifiers — all valid values from the official list, so PyPI accepts
@@ -95,6 +103,7 @@ CLASSIFIERS = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Go",
     "Topic :: Software Development",
@@ -134,11 +143,40 @@ LINUX_PLATFORM_ARCHES = {
     PLATFORM_TAGS[("linux", "amd64")]: "x86_64",
     PLATFORM_TAGS[("linux", "arm64")]: "aarch64",
 }
+# Host-only tags for wheels built from a clone by pairmux_build_backend.py. They
+# make no cross-distribution claim, and PyPI refuses them, which is intended:
+# a locally built wheel must never be mistaken for a release artifact. The
+# release CLI below cannot emit them because it only uses PLATFORM_TAGS.
+LOCAL_LINUX_PLATFORM_ARCHES = {
+    "linux_x86_64": "x86_64",
+    "linux_aarch64": "aarch64",
+}
+
+# PE/COFF (Windows). A Go console executable is a PE32+ image with the
+# IMAGE_FILE_EXECUTABLE_IMAGE characteristic and the Windows CUI subsystem.
+PE_DOS_HEADER_SIZE = 64
+PE_LFANEW_OFFSET = 0x3C
+PE_SIGNATURE = b"PE\0\0"
+PE_COFF_HEADER_FORMAT = "<HHIIIHH"
+PE_COFF_HEADER_SIZE = struct.calcsize(PE_COFF_HEADER_FORMAT)
+PE32_PLUS_MAGIC = 0x20B
+PE_SUBSYSTEM_OFFSET = 68   # within the optional header; same for PE32 and PE32+
+IMAGE_FILE_EXECUTABLE_IMAGE = 0x0002
+IMAGE_FILE_DLL = 0x2000
+IMAGE_SUBSYSTEM_WINDOWS_CUI = 3
+PE_MACHINE_TO_WHEEL_ARCH = {
+    0x8664: "amd64",   # IMAGE_FILE_MACHINE_AMD64
+    0xAA64: "arm64",   # IMAGE_FILE_MACHINE_ARM64
+}
+WINDOWS_PLATFORM_ARCHES = {
+    PLATFORM_TAGS[("windows", "amd64")]: "amd64",
+    PLATFORM_TAGS[("windows", "arm64")]: "arm64",
+}
 
 # goreleaser build-subdir names end with _<goos>_<goarch>[_<variant>]. Go's
 # arm64 default is rendered as ``v8.0``, so variants may contain dots.
 GORELEASER_DIR_RE = re.compile(
-    r"_(darwin|linux)_(amd64|arm64)(?:_[0-9A-Za-z][0-9A-Za-z.]*)?$"
+    r"_(darwin|linux|windows)_(amd64|arm64)(?:_[0-9A-Za-z][0-9A-Za-z.]*)?$"
 )
 
 
@@ -243,6 +281,61 @@ def linux_elf_arch(binary_path: Path) -> str:
     return arch
 
 
+def windows_pe_arch(binary_path: Path) -> str:
+    """Read a PE32+ console executable's header and return its goarch."""
+    with binary_path.open("rb") as f:
+        dos = f.read(PE_DOS_HEADER_SIZE)
+        if len(dos) < PE_DOS_HEADER_SIZE:
+            raise ValueError("%s is too short to be a PE executable" % binary_path)
+        if dos[:2] != b"MZ":
+            raise ValueError("%s is not a PE executable (no MZ header)" % binary_path)
+        (pe_offset,) = struct.unpack_from("<I", dos, PE_LFANEW_OFFSET)
+        if pe_offset < PE_DOS_HEADER_SIZE or pe_offset > 16 * 1024 * 1024:
+            raise ValueError("%s has an unreasonable PE header offset %#x" %
+                             (binary_path, pe_offset))
+        f.seek(pe_offset)
+        header = f.read(len(PE_SIGNATURE) + PE_COFF_HEADER_SIZE)
+        if len(header) < len(PE_SIGNATURE) + PE_COFF_HEADER_SIZE:
+            raise ValueError("%s has a truncated PE header" % binary_path)
+        if header[:4] != PE_SIGNATURE:
+            raise ValueError("%s has no PE signature" % binary_path)
+        (machine, _, _, _, _, optional_size,
+         characteristics) = struct.unpack_from(PE_COFF_HEADER_FORMAT, header, 4)
+        if optional_size < PE_SUBSYSTEM_OFFSET + 2:
+            raise ValueError("%s has a PE optional header too short (%d bytes)" %
+                             (binary_path, optional_size))
+        optional = f.read(optional_size)
+    if len(optional) != optional_size:
+        raise ValueError("%s has a truncated PE optional header" % binary_path)
+    (magic,) = struct.unpack_from("<H", optional, 0)
+    if magic != PE32_PLUS_MAGIC:
+        raise ValueError("%s is not a 64-bit PE32+ image (optional header magic %#x)" %
+                         (binary_path, magic))
+    if not characteristics & IMAGE_FILE_EXECUTABLE_IMAGE:
+        raise ValueError("%s is not marked as a PE executable image" % binary_path)
+    if characteristics & IMAGE_FILE_DLL:
+        raise ValueError("%s is a DLL, not a PE executable" % binary_path)
+    (subsystem,) = struct.unpack_from("<H", optional, PE_SUBSYSTEM_OFFSET)
+    if subsystem != IMAGE_SUBSYSTEM_WINDOWS_CUI:
+        raise ValueError("%s has PE subsystem %d, not a console executable" %
+                         (binary_path, subsystem))
+    arch = PE_MACHINE_TO_WHEEL_ARCH.get(machine)
+    if arch is None:
+        raise ValueError("%s has unsupported PE machine type %#x" %
+                         (binary_path, machine))
+    return arch
+
+
+def binary_name(goos: str) -> str:
+    """File name of the pairmux executable that goreleaser emits for goos."""
+    return SCRIPT_NAME + ".exe" if goos == "windows" else SCRIPT_NAME
+
+
+def script_name(plat: str) -> str:
+    """Wheel scripts entry for a platform tag; pip/uv copy it to bin or Scripts."""
+    return SCRIPT_NAME + ".exe" if plat.startswith("win_") else SCRIPT_NAME
+
+
 def parse_platform_token(token: str) -> Tuple[str, str]:
     """Turn a goreleaser 'goos_goarch' token into (goos, goarch)."""
     parts = token.split("_")
@@ -307,7 +400,8 @@ def metadata_bytes(version: str) -> bytes:
         "Project-URL: Issues, " + ISSUES,
         "Keywords: " + KEYWORDS,
         "Requires-Python: " + REQUIRES_PYTHON,
-        "Requires-External: tmux (>=3.2)",
+        # No Requires-External: tmux is optional. pairmux uses tmux >= 3.2 on
+        # macOS/Linux when it is installed and its built-in backend otherwise.
         "Description-Content-Type: " + DESCRIPTION_CONTENT_TYPE,
     ]
     header = "\n".join(lines)
@@ -331,7 +425,13 @@ def render_record(rows: List[Tuple[str, str, str]]) -> bytes:
     return ("\n".join("%s,%s,%s" % r for r in rows) + "\n").encode("utf-8")
 
 
-def build_one(version: str, binary_path: Path, plat: str, out_dir: Path) -> Path:
+def validate_binary(binary_path: Path, plat: str) -> None:
+    """Fail unless the native header proves binary_path runs under plat.
+
+    Every tag family has a header check; an unknown tag is rejected rather
+    than packaged unverified.
+    """
+    linux_arches = dict(LINUX_PLATFORM_ARCHES, **LOCAL_LINUX_PLATFORM_ARCHES)
     if plat.startswith("macosx_"):
         actual = macos_platform_tag(binary_path)
         if actual != plat:
@@ -339,17 +439,39 @@ def build_one(version: str, binary_path: Path, plat: str, out_dir: Path) -> Path
                 "%s declares %s but its Mach-O requires %s"
                 % (binary_path, plat, actual)
             )
-    elif plat in LINUX_PLATFORM_ARCHES:
-        expected = LINUX_PLATFORM_ARCHES[plat]
+    elif plat in linux_arches:
+        expected = linux_arches[plat]
         actual = linux_elf_arch(binary_path)
         if actual != expected:
             raise ValueError(
                 "%s declares %s but its ELF architecture is %s"
                 % (binary_path, plat, actual)
             )
-    binary = binary_path.read_bytes()
+    elif plat in WINDOWS_PLATFORM_ARCHES:
+        expected = WINDOWS_PLATFORM_ARCHES[plat]
+        actual = windows_pe_arch(binary_path)
+        if actual != expected:
+            raise ValueError(
+                "%s declares %s but its PE machine is %s"
+                % (binary_path, plat, actual)
+            )
+    else:
+        raise ValueError("no native header check exists for platform tag %r" % plat)
+
+
+def build_one(version: str, binary_path: Path, plat: str, out_dir: Path) -> Path:
+    validate_binary(binary_path, plat)
+    return write_wheel(version, binary_path.read_bytes(), plat, out_dir)
+
+
+def write_wheel(version: str, binary: bytes, plat: str, out_dir: Path) -> Path:
+    """Write one wheel for an already validated native binary.
+
+    Shared by the release CLI (build_one) and the in-tree source build backend,
+    so both emit the same layout, metadata and RECORD for a given version.
+    """
     prefix = "%s-%s" % (PROJECT_NAME, version)
-    scripts_arc = "%s.data/scripts/%s" % (prefix, SCRIPT_NAME)
+    scripts_arc = "%s.data/scripts/%s" % (prefix, script_name(plat))
     meta_arc = "%s.dist-info/METADATA" % prefix
     wheel_arc = "%s.dist-info/WHEEL" % prefix
     record_arc = "%s.dist-info/RECORD" % prefix
@@ -442,7 +564,7 @@ def scan_dist_dir(dist_dir: Path) -> List[Tuple[Path, Tuple[str, str]]]:
         key = (m.group(1), m.group(2))
         if key not in PLATFORM_TAGS:
             continue
-        binary = child / SCRIPT_NAME
+        binary = child / binary_name(key[0])
         if binary.is_file():
             if previous := seen.get(key):
                 raise ValueError(
@@ -466,7 +588,7 @@ def main(argv=None) -> int:
     p.add_argument("--platform", action="append", default=[], metavar="GOOS_GOARCH",
                    help="goreleaser token for the matching --binary, e.g. darwin_arm64")
     p.add_argument("--dist-dir", metavar="DIR",
-                   help="scan a goreleaser dist dir for <build>_<goos>_<goarch>*/pairmux")
+                   help="scan a goreleaser dist dir for <build>_<goos>_<goarch>*/pairmux[.exe]")
     p.add_argument("--out-dir", default="dist", metavar="DIR",
                    help="where to write the .whl files (default: dist)")
     p.add_argument("--check", action="store_true",

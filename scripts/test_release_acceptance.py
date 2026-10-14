@@ -24,12 +24,35 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
-class PublishedMetadataTest(unittest.TestCase):
+def windows_zip(binary: bytes, executable: str = "pairmux.exe") -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive:
+        for name, data in ((executable, binary), ("LICENSE", b"license"), ("README.md", b"readme"),
+                           ("man/pairmux.1", b"man")):
+            info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
+            info.create_system, info.external_attr = 3, (0o100755 if name == executable else 0o100644) << 16
+            archive.writestr(info, data)
+    return buf.getvalue()
+
+
+class PublishedInventoryContract:
+    """Inventory, checksum and wheel-identity contracts shared by both shapes.
+
+    Mixed into one TestCase per published release shape, so every contract
+    runs against v0.6.0's macOS/Linux shape and the shape with Windows assets.
+    """
+
+    WINDOWS: bool
+    SHAPE: str
+    NATIVE_ASSETS: int
+    WHEELS: int
+
     def setUp(self):
         self.tag = "v0.6.0"
         self.version = "0.6.0"
         self.base = f"https://github.com/{MODULE.REPO}/releases/download/{self.tag}/"
         self.binary = b"a public native executable fixture"
+        self.exe = b"MZ a public native windows executable fixture"
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as archive:
             entry = tarfile.TarInfo("pairmux")
@@ -40,6 +63,9 @@ class PublishedMetadataTest(unittest.TestCase):
                        for os_name in ("darwin", "linux") for arch in ("amd64", "arm64")}
         self.native.update({f"pairmux_{self.version}_linux_{arch}.rpm": b"rpm fixture"
                             for arch in ("amd64", "arm64")})
+        if self.WINDOWS:
+            self.native.update({f"pairmux_{self.version}_windows_{arch}.zip": windows_zip(self.exe)
+                                for arch in ("amd64", "arm64")})
         self.urls = {self.base + name: data for name, data in self.native.items()}
         checksum = "".join(hashlib.sha256(data).hexdigest() + "  " + name + "\n"
                            for name, data in sorted(self.native.items())).encode()
@@ -51,11 +77,16 @@ class PublishedMetadataTest(unittest.TestCase):
                       + [{"name": "checksums.txt", "state": "uploaded", "size": len(checksum), "browser_download_url": self.base + "checksums.txt"}],
         }
         self.pypi = {"info": {"name": "pairmux", "version": self.version}, "urls": []}
-        for platform in MODULE.PLATFORMS.values():
+        for target, platform in MODULE.PLATFORMS.items():
+            windows = target.startswith("windows-")
+            if windows and not self.WINDOWS:
+                continue
             name = f"pairmux-{self.version}-py3-none-{platform}.whl"
             buf = io.BytesIO()
             with zipfile.ZipFile(buf, "w") as archive:
-                archive.writestr(f"pairmux-{self.version}.data/scripts/pairmux", self.binary)
+                script = "pairmux.exe" if windows else "pairmux"
+                archive.writestr(f"pairmux-{self.version}.data/scripts/{script}",
+                                 self.exe if windows else self.binary)
             data = buf.getvalue()
             url = "https://files.pythonhosted.org/fixtures/" + name
             self.urls[url] = data
@@ -75,16 +106,46 @@ class PublishedMetadataTest(unittest.TestCase):
             return json.dumps(self.all_pypi).encode()
         return self.urls[url]
 
-    def verify(self, tag=None):
+    def verify(self, tag=None, target="linux-amd64", rpm=True):
         with tempfile.TemporaryDirectory() as directory, patch.object(MODULE, "fetch", self.fetch):
-            return MODULE.verify(tag or self.tag, Path(directory), "linux-amd64", True)
+            return MODULE.verify(tag or self.tag, Path(directory), target, rpm)
+
+    def asset(self, name, data):
+        self.native[name] = data
+        self.urls[self.base + name] = data
+        self.release["assets"].append({"name": name, "state": "uploaded", "size": len(data),
+                                       "browser_download_url": self.base + name})
 
     def test_selected_public_bytes_and_inventory(self):
         report = self.verify()
         self.assertEqual(report["selected"]["binary_sha256"], hashlib.sha256(self.binary).hexdigest())
         self.assertTrue(report["tag_is_latest_on_both"])
-        self.assertEqual(len(report["assets"]), 6)
-        self.assertEqual(len(report["wheels"]), 4)
+        self.assertEqual(report["shape"], self.SHAPE)
+        self.assertEqual(len(report["assets"]), self.NATIVE_ASSETS)
+        self.assertEqual(len(report["wheels"]), self.WHEELS)
+
+    def outputs(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(MODULE, "fetch", self.fetch):
+            out = Path(directory) / "out"
+            github_output = Path(directory) / "github-output"
+            env = {"ACCEPTANCE_TAG": self.tag, "GITHUB_OUTPUT": str(github_output)}
+            with patch.dict(os.environ, env), patch.object(sys, "argv", ["release-acceptance.py", "--out-dir", str(out)]), \
+                    patch("sys.stdout", io.StringIO()):
+                self.assertEqual(MODULE.main(), 0)
+            return dict(line.split("=", 1) for line in github_output.read_text().splitlines())
+
+    def test_github_outputs_name_the_shape(self):
+        outputs = self.outputs()
+        self.assertEqual(outputs["shape"], self.SHAPE)
+        self.assertEqual(outputs["windows_assets"], "true" if self.WINDOWS else "false")
+
+    def test_extra_or_duplicate_asset_matches_no_shape(self):
+        self.asset(f"pairmux_{self.version}_freebsd_amd64.tar.gz", self.archive)
+        with self.assertRaisesRegex(ValueError, "no published release shape"):
+            self.verify()
+        self.release["assets"] = self.release["assets"][:-1] + [dict(self.release["assets"][0])]
+        with self.assertRaisesRegex(ValueError, "duplicate asset"):
+            self.verify()
 
     def test_canonical_tag(self):
         for tag in ("0.6.0", "v00.6.0", "v0.6.0-rc.1", "v0.6.0;exit 0"):
@@ -144,6 +205,88 @@ class PublishedMetadataTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, patch.object(MODULE, "fetch", self.fetch):
             with self.assertRaisesRegex(ValueError, "SHA256 mismatch"):
                 MODULE.actual_provenance(previous, "0.6.0", Path(directory))
+
+
+class PublishedMetadataTest(PublishedInventoryContract, unittest.TestCase):
+    """The v0.6.0 shape: macOS/Linux tarballs, RPMs and four wheels."""
+
+    WINDOWS = False
+    SHAPE = "macos-linux"
+    NATIVE_ASSETS = 6
+    WHEELS = 4
+
+    def test_windows_target_is_refused_without_windows_assets(self):
+        for target in ("windows-amd64", "windows-arm64"):
+            with self.subTest(target=target), self.assertRaisesRegex(ValueError, "has no " + target):
+                self.verify(target=target, rpm=False)
+
+    def test_windows_wheels_without_windows_zips_fail_closed(self):
+        for platform in ("win_amd64", "win_arm64"):
+            name = f"pairmux-{self.version}-py3-none-{platform}.whl"
+            self.pypi["urls"].append({"filename": name, "packagetype": "bdist_wheel", "yanked": False,
+                                      "url": "https://files.pythonhosted.org/fixtures/" + name,
+                                      "digests": {"sha256": "0" * 64}})
+        with self.assertRaisesRegex(ValueError, "exactly the 4 platform wheels of a macos-linux release"):
+            self.verify()
+
+
+class WindowsPublishedMetadataTest(PublishedInventoryContract, unittest.TestCase):
+    """Releases with the built-in multiplexer: plus two Windows zips and wheels."""
+
+    WINDOWS = True
+    SHAPE = "macos-linux-windows"
+    NATIVE_ASSETS = 8
+    WHEELS = 6
+
+    def rewrite_checksums(self):
+        for name, data in self.native.items():
+            self.urls[self.base + name] = data
+        self.urls[self.base + "checksums.txt"] = "".join(
+            hashlib.sha256(data).hexdigest() + "  " + name + "\n"
+            for name, data in sorted(self.native.items())).encode()
+
+    def test_windows_target_selects_the_zip_and_win_wheel(self):
+        report = self.verify(target="windows-amd64", rpm=False)
+        self.assertEqual(report["selected"]["binary_sha256"], hashlib.sha256(self.exe).hexdigest())
+        self.assertTrue(report["selected"]["archive"].endswith("_windows_amd64.zip"))
+        self.assertTrue(report["selected"]["wheel"].endswith("-win_amd64.whl"))
+
+    def test_missing_windows_wheel_fails_closed(self):
+        self.pypi["urls"] = [w for w in self.pypi["urls"] if "win_arm64" not in w["filename"]]
+        with self.assertRaisesRegex(ValueError, "exactly the 6 platform wheels of a macos-linux-windows release"):
+            self.verify()
+
+    def test_one_windows_zip_or_a_windows_tarball_matches_no_shape(self):
+        zip_entry = next(a for a in self.release["assets"] if a["name"].endswith("_windows_arm64.zip"))
+        self.release["assets"].remove(zip_entry)
+        with self.assertRaisesRegex(ValueError, "no published release shape"):
+            self.verify()
+        self.asset(f"pairmux_{self.version}_windows_arm64.tar.gz", self.archive)
+        with self.assertRaisesRegex(ValueError, "no published release shape"):
+            self.verify()
+
+    def test_windows_zip_must_hold_a_unique_regular_pairmux_exe(self):
+        for executable in ("pairmux", "bin/pairmux.exe"):
+            with self.subTest(executable=executable):
+                self.native[f"pairmux_{self.version}_windows_amd64.zip"] = windows_zip(self.exe, executable)
+                self.rewrite_checksums()
+                with self.assertRaisesRegex(ValueError, "no unique regular pairmux.exe"):
+                    self.verify(target="windows-amd64", rpm=False)
+
+    def test_windows_wheel_must_carry_the_zip_binary(self):
+        wheel = next(w for w in self.pypi["urls"] if w["filename"].endswith("-win_amd64.whl"))
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            archive.writestr(f"pairmux-{self.version}.data/scripts/pairmux.exe", b"MZ different")
+        self.urls[wheel["url"]] = buf.getvalue()
+        wheel["digests"]["sha256"] = hashlib.sha256(buf.getvalue()).hexdigest()
+        with self.assertRaisesRegex(ValueError, "differs"):
+            self.verify(target="windows-amd64", rpm=False)
+
+    def test_windows_zip_checksum_is_enforced(self):
+        self.urls[self.base + f"pairmux_{self.version}_windows_amd64.zip"] = b"corrupt"
+        with self.assertRaisesRegex(ValueError, "SHA256 mismatch"):
+            self.verify(target="windows-amd64", rpm=False)
 
 
 class InstalledRefreshTest(unittest.TestCase):

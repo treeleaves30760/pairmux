@@ -8,11 +8,14 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+
+	"github.com/treeleaves30760/pairmux/internal/shellhooks"
 )
 
 // Notify shows a desktop notification: osascript on macOS, notify-send on
-// Linux. On other platforms, or when the helper binary is missing, it returns
-// an error the caller may ignore.
+// Linux, a Windows PowerShell notification-area balloon (shown as a toast on
+// Windows 10/11) on Windows. On other platforms, or when the helper binary is
+// missing, it returns an error the caller may ignore.
 func Notify(title, body string) error {
 	argv, err := argvFor(runtime.GOOS, title, body)
 	if err != nil {
@@ -21,6 +24,16 @@ func Notify(title, body string) error {
 	bin, err := exec.LookPath(argv[0])
 	if err != nil {
 		return fmt.Errorf("notify: %s not found: %w", argv[0], err)
+	}
+	if runtime.GOOS == "windows" {
+		// The balloon lives only as long as its PowerShell process, which
+		// therefore lingers for a few seconds; do not make the caller wait.
+		cmd := exec.Command(bin, argv[1:]...)
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("notify: %s failed: %w", argv[0], err)
+		}
+		go func() { _ = cmd.Wait() }()
+		return nil
 	}
 	out, err := exec.Command(bin, argv[1:]...).CombinedOutput()
 	if err != nil {
@@ -38,6 +51,18 @@ func argvFor(goos, title, body string) ([]string, error) {
 		return []string{"osascript", "-e", script}, nil
 	case "linux":
 		return []string{"notify-send", title, body}, nil
+	case "windows":
+		script := "Add-Type -AssemblyName System.Windows.Forms\n" +
+			"$n = New-Object System.Windows.Forms.NotifyIcon\n" +
+			"$n.Icon = [System.Drawing.SystemIcons]::Information\n" +
+			"$n.BalloonTipTitle = " + powershellArg(title) + "\n" +
+			"$n.BalloonTipText = " + powershellArg(body) + "\n" +
+			"$n.Visible = $true\n" +
+			"$n.ShowBalloonTip(10000)\n" +
+			"Start-Sleep -Seconds 8\n" +
+			"$n.Dispose()\n"
+		return []string{"powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+			"-EncodedCommand", shellhooks.EncodeCommand(script)}, nil
 	default:
 		return nil, fmt.Errorf("notify: unsupported platform %q", goos)
 	}
@@ -64,4 +89,10 @@ func flattenNewlines(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "\r", " ")
 	return s
+}
+
+// powershellArg renders s as a PowerShell single-quoted string literal, in
+// which only the quote itself needs escaping (by doubling).
+func powershellArg(s string) string {
+	return "'" + strings.ReplaceAll(flattenNewlines(s), "'", "''") + "'"
 }

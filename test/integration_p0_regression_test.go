@@ -9,18 +9,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/treeleaves30760/pairmux/internal/core"
+	"github.com/treeleaves30760/pairmux/internal/muxd"
 	"github.com/treeleaves30760/pairmux/internal/output"
 	"github.com/treeleaves30760/pairmux/internal/state"
 )
 
 func terminalStatePath(e tenv, name string) string {
-	return filepath.Join(state.EndpointDir(e.state, e.tmuxTmp, os.Getuid(), e.socket), name)
+	return filepath.Join(endpointDir(e), name)
 }
 
 func TestInvalidNamesNeverReachStateOrTmux(t *testing.T) {
@@ -42,7 +44,11 @@ func TestInvalidNamesNeverReachStateOrTmux(t *testing.T) {
 			t.Fatalf("%v: code=%d env=%+v, want E_BAD_ARGS", args, code, env)
 		}
 	}
-	if err := exec.Command("tmux", "-L", e.socket, "has-session", "-t", core.SessionName).Run(); err == nil {
+	if builtinIT() {
+		if serverRunning(e) {
+			t.Fatal("invalid-name commands unexpectedly started a built-in server")
+		}
+	} else if err := exec.Command("tmux", "-L", e.socket, "has-session", "-t", core.SessionName).Run(); err == nil {
 		t.Fatal("invalid-name commands unexpectedly created a tmux session")
 	}
 	entries, err := os.ReadDir(e.state)
@@ -120,20 +126,25 @@ func TestSocketNamespacesShareRootWithoutSharingTerminals(t *testing.T) {
 		}
 	}
 	paths, code := pmx(t, eA, "run", "only-a", `printf '%s\n%s\n' "$PAIRMUX_STATE_NAMESPACE" "$PAIRMUX_TERMINAL_DIR"`)
-	if code != 0 || !strings.Contains(paths.Output, state.EndpointDir(eA.state, eA.tmuxTmp, os.Getuid(), eA.socket)) ||
+	if code != 0 || !strings.Contains(paths.Output, endpointDir(eA)) ||
 		!strings.Contains(paths.Output, terminalStatePath(eA, "only-a")) {
 		t.Fatalf("terminal state locator env missing: code=%d output=%q", code, paths.Output)
 	}
 }
 
 func TestSameSocketNameInDifferentTmuxRootsIsIsolated(t *testing.T) {
-	if !haveTmux {
+	if !haveTmux && !builtinIT() {
 		t.Skip("tmux not installed; skipping integration tests")
 	}
 	sharedState := t.TempDir()
 	socket := "pmx-same"
 	shortTmp := func() string {
-		dir, err := os.MkdirTemp("/tmp", "pmx-root-")
+		// Short, because a socket path must fit in about 100 bytes.
+		base := "/tmp"
+		if runtime.GOOS == "windows" {
+			base = os.TempDir()
+		}
+		dir, err := os.MkdirTemp(base, "pmx-root-")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -166,16 +177,13 @@ func TestSameSocketNameInDifferentTmuxRootsIsIsolated(t *testing.T) {
 	if !hasTerminal(listB, "only-b") || hasTerminal(listB, "only-a") {
 		t.Fatalf("endpoint B state leaked: %+v", listB.Terminals)
 	}
-	if state.EndpointDir(sharedState, eA.tmuxTmp, os.Getuid(), socket) ==
-		state.EndpointDir(sharedState, eB.tmuxTmp, os.Getuid(), socket) {
+	if endpointDir(eA) == endpointDir(eB) {
 		t.Fatal("different TMUX_TMPDIR roots resolved to one namespace")
 	}
 }
 
 func TestLegacyDefaultLiveTerminalRemainsOperable(t *testing.T) {
-	if !haveTmux {
-		t.Skip("tmux not installed; skipping integration tests")
-	}
+	requireTmuxBackend(t) // the legacy unnamespaced layout only ever existed for tmux
 	t.Setenv("TMUX_TMPDIR", "")
 	// Never disturb a developer's real default pairmux server.
 	if err := exec.Command("tmux", "-L", core.DefaultSocket, "list-sessions").Run(); err == nil {
@@ -230,9 +238,10 @@ func invokePmx(e tenv, args ...string) (result concurrentResult) {
 		"PAIRMUX_SOCKET="+e.socket,
 		"HOME="+e.home,
 		"SHELL="+e.shell,
+		"PAIRMUX_BACKEND="+itBackend,
 	)
 	if e.tmuxTmp != "" {
-		cmd.Env = append(cmd.Env, "TMUX_TMPDIR="+e.tmuxTmp)
+		cmd.Env = append(cmd.Env, runtimeRootEnv(e)...)
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -289,18 +298,14 @@ func TestConcurrentNewSameNameCreatesExactlyOnePane(t *testing.T) {
 		t.Fatalf("successful concurrent new calls = %d, want exactly 1", successes)
 	}
 
-	out, err := exec.Command("tmux", "-L", e.socket, "list-windows", "-t", core.SessionName, "-F", "#{window_name}").Output()
-	if err != nil {
-		t.Fatalf("list-windows: %v", err)
-	}
 	count := 0
-	for _, name := range strings.Fields(string(out)) {
+	for _, name := range windowNames(t, e) {
 		if name == "same" {
 			count++
 		}
 	}
 	if count != 1 {
-		t.Fatalf("tmux windows named same = %d, want 1; output=%q", count, out)
+		t.Fatalf("windows named same = %d, want 1", count)
 	}
 	list, _ := pmx(t, e, "ls")
 	if len(list.Terminals) != 1 || list.Terminals[0].Name != "same" {
@@ -369,4 +374,34 @@ func hasTerminal(env output.Envelope, name string) bool {
 		}
 	}
 	return false
+}
+
+// serverRunning reports whether e's built-in server is up.
+func serverRunning(e tenv) bool {
+	restore := withRuntimeRoot(e)
+	defer restore()
+	return muxd.Running(e.socket)
+}
+
+// windowNames lists every window on e's endpoint, managed or not.
+func windowNames(t *testing.T, e tenv) []string {
+	t.Helper()
+	if builtinIT() {
+		restore := withRuntimeRoot(e)
+		panes, err := builtinClient(e).ListManaged()
+		restore()
+		if err != nil {
+			t.Fatalf("list built-in panes: %v", err)
+		}
+		var names []string
+		for _, p := range panes {
+			names = append(names, p.Window)
+		}
+		return names
+	}
+	out, err := exec.Command("tmux", "-L", e.socket, "list-windows", "-t", core.SessionName, "-F", "#{window_name}").Output()
+	if err != nil {
+		t.Fatalf("list-windows: %v", err)
+	}
+	return strings.Fields(string(out))
 }

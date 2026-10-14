@@ -5,16 +5,20 @@ package integration
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/treeleaves30760/pairmux/internal/mux"
+	"github.com/treeleaves30760/pairmux/internal/muxd"
 	"github.com/treeleaves30760/pairmux/internal/tmux"
 )
 
@@ -82,6 +86,9 @@ func trackCleanupCommand(e tenv, args []string) error {
 func shutdownEnv(e tenv) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	if builtinIT() && runtime.GOOS == "windows" {
+		return shutdownBuiltinWindows(ctx, e)
+	}
 	if e.writers == nil {
 		e.writers = &cleanupTracker{}
 	}
@@ -90,7 +97,14 @@ func shutdownEnv(e tenv) error {
 		return err
 	}
 	owned := e.writers.snapshot()
-	if server {
+	if server && builtinIT() {
+		restore := withRuntimeRoot(e)
+		err := builtinClient(e).KillServer()
+		restore()
+		if err != nil && !errors.Is(err, muxd.ErrNoServer) {
+			return fmt.Errorf("kill owned built-in server: %w", err)
+		}
+	} else if server {
 		out, err := cleanupTmux(ctx, e, "kill-server")
 		if err != nil && !cleanupNoServer(err, out) {
 			return fmt.Errorf("kill owned server: %w: %s", err, strings.TrimSpace(out))
@@ -121,6 +135,9 @@ func captureCleanupWriters(ctx context.Context, e tenv) (bool, error) {
 	// Never let harness instrumentation query those endpoints ahead of the CLI.
 	if !tmux.ValidSocketName(e.socket) {
 		return false, nil
+	}
+	if builtinIT() {
+		return captureBuiltinWriters(ctx, e)
 	}
 	out, err := cleanupTmux(ctx, e, "list-panes", "-a", "-F", "#{pid} #{pane_pid} #{pane_dead}")
 	server := err == nil
@@ -162,6 +179,111 @@ func captureCleanupWriters(ctx context.Context, e tenv) (bool, error) {
 	addCleanupDescendants(captured, processes)
 	e.writers.remember(captured, processes)
 	return server, nil
+}
+
+func builtinClient(e tenv) *muxd.Client { return muxd.New(e.socket) }
+
+// captureBuiltinWriters is captureCleanupWriters for the built-in backend: the
+// server process and everything under it (pane programs, their jobs). TMUX_TMPDIR
+// also moves the built-in runtime directory, so a custom root is honoured by
+// running the probe with the same environment the CLI had.
+func captureBuiltinWriters(ctx context.Context, e tenv) (bool, error) {
+	restore := withRuntimeRoot(e)
+	pid, err := builtinClient(e).ServerPID()
+	restore()
+	server := err == nil
+	if err != nil && !errors.Is(err, muxd.ErrNoServer) {
+		return false, fmt.Errorf("probe owned built-in server: %w", err)
+	}
+	if runtime.GOOS == "windows" {
+		return server, nil // no ps; shutdown waits for the server instead
+	}
+	captured := make(map[int]bool)
+	if server {
+		captured[pid] = true
+	}
+	processes, err := cleanupProcesses(ctx)
+	if err != nil {
+		return false, err
+	}
+	for pid, born := range e.writers.snapshot() {
+		if process, ok := processes[pid]; ok && process.born == born && cleanupProcessLiving(process) {
+			captured[pid] = true
+		}
+	}
+	addCleanupDescendants(captured, processes)
+	e.writers.remember(captured, processes)
+	return server, nil
+}
+
+// runtimeRootMu serializes the process-wide TMUX_TMPDIR swap below.
+var runtimeRootMu sync.Mutex
+
+// runtimeRootEnv is how e's custom runtime root reaches the CLI: TMUX_TMPDIR
+// for tmux, PAIRMUX_TMPDIR for the built-in server (TMUX_TMPDIR would also
+// work on Unix, but Windows has no tmux and reads only PAIRMUX_TMPDIR).
+func runtimeRootEnv(e tenv) []string {
+	if builtinIT() {
+		return []string{"PAIRMUX_TMPDIR=" + e.tmuxTmp}
+	}
+	return []string{"TMUX_TMPDIR=" + e.tmuxTmp}
+}
+
+// withRuntimeRoot points this process at e's runtime root, as runtimeRootEnv
+// does for the CLI, for an in-process built-in client call.
+func withRuntimeRoot(e tenv) (restore func()) {
+	runtimeRootMu.Lock()
+	old, had := os.LookupEnv("PAIRMUX_TMPDIR")
+	if e.tmuxTmp != "" {
+		os.Setenv("PAIRMUX_TMPDIR", e.tmuxTmp)
+	}
+	return func() {
+		if had {
+			os.Setenv("PAIRMUX_TMPDIR", old)
+		} else {
+			os.Unsetenv("PAIRMUX_TMPDIR")
+		}
+		runtimeRootMu.Unlock()
+	}
+}
+
+// shutdownBuiltinWindows stops e's built-in server and waits for its process
+// to exit. Windows has no ps to track writers with, but the server exits only
+// after every terminal (and its job of child processes) has drained, so its
+// exit is the signal — and until it exits, its private executable copy keeps
+// the runtime root from being removed.
+func shutdownBuiltinWindows(ctx context.Context, e tenv) error {
+	if !mux.ValidSocketName(e.socket) {
+		return nil
+	}
+	restore := withRuntimeRoot(e)
+	c := builtinClient(e)
+	pid, err := c.ServerPID()
+	if err == nil {
+		err = c.KillServer()
+	}
+	restore()
+	if errors.Is(err, muxd.ErrNoServer) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("kill owned built-in server: %w", err)
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return nil // already gone
+	}
+	exited := make(chan struct{})
+	go func() {
+		_, _ = proc.Wait()
+		close(exited)
+	}()
+	select {
+	case <-exited:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("built-in server %q (pid %d) still running: %w", e.socket, pid, ctx.Err())
+	}
 }
 
 func cleanupTmux(ctx context.Context, e tenv, args ...string) (string, error) {
@@ -306,6 +428,7 @@ func TestCleanupTrackerSharesAndPrunesWriterIdentities(t *testing.T) {
 }
 
 func TestCleanupTrackingNeverExecutesMalformedEndpoints(t *testing.T) {
+	requireTmuxBackend(t)
 	bin := t.TempDir()
 	called := filepath.Join(bin, "tmux-called")
 	stub := fmt.Sprintf("#!/bin/sh\nprintf called >> %s\nexit 42\n", cleanupShellQuote(called))
@@ -353,8 +476,9 @@ func TestCleanupWithoutServer(t *testing.T) {
 }
 
 func TestCleanupHonorsCustomTmuxRoots(t *testing.T) {
-	if !haveTmux || !isExec(bashShell) {
-		t.Skip("tmux and bash required")
+	requireTmuxBackend(t)
+	if !isExec(bashShell) {
+		t.Skip("bash required")
 	}
 	shortRoot := func() string {
 		dir, err := os.MkdirTemp("/tmp", "pmx-cleanup-root-")
@@ -394,4 +518,8 @@ func TestCleanupHonorsCustomTmuxRoots(t *testing.T) {
 	if err := shutdownEnv(eB); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func cleanupShellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }

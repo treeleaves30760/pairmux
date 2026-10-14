@@ -20,7 +20,7 @@ func TestCompletionWatcherIncremental(t *testing.T) {
 	pre = append(pre, []byte("Password: ")...)
 	dSeq := buildOSC("133;D;0", "bel")
 
-	w := NewCompletionWatcher(from, core.ModeHooks)
+	w := NewCompletionWatcher(from, core.ModeHooks, false)
 	feed := [][]byte{pre[:4], pre[4:], dSeq[:2], dSeq[2:]}
 	for i, chunk := range feed {
 		if res, done, err := w.Poll(j); err != nil {
@@ -50,7 +50,7 @@ func TestCompletionWatcherIgnoresStrayD(t *testing.T) {
 	j := mustOpen(t)
 	writeRawFile(t, j, []byte("$ "))
 	from := int64(2)
-	w := NewCompletionWatcher(from, core.ModeHooks)
+	w := NewCompletionWatcher(from, core.ModeHooks, false)
 
 	// The human's command finishes: a stray D with no C of ours before it.
 	appendRaw(t, j, buildOSC("133;D;7", "bel"))
@@ -81,7 +81,7 @@ func TestCompletionWatcherIgnoresStrayD(t *testing.T) {
 func TestCompletionWatcherGraceAcceptsCLessD(t *testing.T) {
 	j := mustOpen(t)
 	writeRawFile(t, j, []byte("$ "))
-	w := NewCompletionWatcher(2, core.ModeHooks)
+	w := NewCompletionWatcher(2, core.ModeHooks, false)
 
 	appendRaw(t, j, buildOSC("133;D;5", "bel"))
 	if _, done, _ := w.Poll(j); done {
@@ -102,7 +102,7 @@ func TestCompletionWatcherGraceAcceptsCLessD(t *testing.T) {
 func TestCompletionWatcherSentinel(t *testing.T) {
 	j := mustOpen(t)
 	writeRawFile(t, j, []byte("$ "))
-	w := NewCompletionWatcher(2, core.ModeSentinel)
+	w := NewCompletionWatcher(2, core.ModeSentinel, false)
 
 	appendRaw(t, j, buildOSC("133;D;9", "bel")) // a hooks mark: not ours in sentinel mode
 	if _, done, _ := w.Poll(j); done {
@@ -126,7 +126,7 @@ func TestCompletionWatcherIgnoresMarksBeforeBaseline(t *testing.T) {
 	past := append(buildOSC("133;C", "bel"), buildOSC("133;D;0", "bel")...)
 	writeRawFile(t, j, past)
 
-	w := NewCompletionWatcher(int64(len(past)), core.ModeHooks)
+	w := NewCompletionWatcher(int64(len(past)), core.ModeHooks, false)
 	if res, done, _ := w.Poll(j); done {
 		t.Fatalf("woke on a pre-baseline completion: %+v", res)
 	}

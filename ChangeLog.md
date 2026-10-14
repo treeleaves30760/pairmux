@@ -7,6 +7,146 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **pairmux no longer requires tmux.** A built-in multiplexer now owns terminals when tmux is
+  absent: real PTYs through `/dev/ptmx` on macOS/Linux and ConPTY on Windows. It is the same
+  `pairmux` executable running as a server through a hidden subcommand, started on demand by the
+  first command that needs it, detached from the caller's session or console, one per endpoint
+  (`--socket` / `PAIRMUX_SOCKET`), and it exits by itself after about 30 seconds with no terminals
+  and no connections — so there is still no service to install or supervise. `new`, `run`, `peek`,
+  `wait`, `send`, `log`, `ls`, `kill`, `note`, `prune`, `watch` and `mcp` behave the same on both
+  backends; `peek --screen` renders a virtual screen with tmux `capture-pane -p` semantics, and the
+  default size is 220x50 as with tmux. The built-in backend journals a program from its very first
+  byte, so it needs no start gate.
+
+- **`PAIRMUX_BACKEND` selects the backend:** `tmux`, `builtin`, or unset/`auto`. The automatic
+  choice is Windows → built-in; else a built-in server already running for this socket → built-in,
+  so terminals created without tmux stay reachable after tmux is installed; else tmux if it is on
+  PATH, so existing users see no change and their live tmux terminals stay where they are; else
+  built-in. Every terminal is created with `PAIRMUX_BACKEND` set to its own backend, so nested
+  layers stay on it. `PAIRMUX_BACKEND=tmux` on Windows is an error, and an invalid value is
+  `E_BAD_ARGS` for terminal commands while `help`, `version`, `doctor`, `skill` and `update` still
+  work.
+
+- **Native Windows, x86-64 and ARM64 (Windows 10 1809+).** A new terminal starts PowerShell 7,
+  else Windows PowerShell, else `%COMSPEC%`; `$SHELL` is honored only if it names an existing file,
+  because Git Bash exports `/usr/bin/bash`, which Windows cannot start. PowerShell terminals use
+  hooks mode through an inline prompt wrapper passed with `-NoExit -EncodedCommand` (so the script
+  execution policy does not apply) that emits OSC 133 A/D marks with the exit status after the
+  user's profile loads; it has no C mark, so `doctor` reports `hooks-no-C`. `cmd.exe` uses sentinel
+  mode (`cmd /v:on /k`, `ERRORLEVEL`), and Git Bash gets the bash hooks shim. `new --cmd` runs
+  through the shell (PowerShell `-EncodedCommand`, `cmd /s /c`, or `bash -lc`). Windows has no tty
+  line discipline to read, so secret-prompt classification there uses prompt wording only;
+  `PAIRMUX_SECRET_PROMPT_RE` can extend it. Killing a terminal kills its whole process tree through
+  a job object, and `--notify` shows a best-effort notification through Windows PowerShell. This
+  support is new: it is validated by CI on hosted Windows Server 2025 runners and was accepted on
+  real Windows 11 x86-64 hardware (Windows PowerShell 5.1, cmd.exe and Git Bash terminals through
+  ConPTY, including a human `attach`); the ARM64 build has not been exercised at runtime. WSL
+  remains possible; inside it pairmux is a Linux program and picks its backend as on Linux.
+
+- `PAIRMUX_SHELL` overrides the terminal shell on every platform (for example
+  `PAIRMUX_SHELL=C:\Program Files\Git\bin\bash.exe`). `PAIRMUX_TMPDIR` selects the built-in
+  server's runtime directory: on Unix `$PAIRMUX_TMPDIR`, else `$TMUX_TMPDIR`, else `/tmp`, then
+  `pairmux-<uid>/` (created 0700; refused if another uid owns it or group/others can access it); on
+  Windows `%PAIRMUX_TMPDIR%`, else `%LOCALAPPDATA%\pairmux`, then `run\`. It holds `<socket>.sock`,
+  `<socket>.lock` and the server log `<socket>.log`. Socket paths are limited to about 100 bytes; a
+  long socket name gets a digest name, and a too-deep directory fails with a hint to set
+  `PAIRMUX_TMPDIR` to a short writable directory. On Windows the server runs from a private copy,
+  `pairmux-muxd-<hash>.exe`, so an upgrade can replace the installed `pairmux.exe` while terminals
+  are open.
+
+- **Install from a clone without PyPI.** The repository root has a `pyproject.toml` with an in-tree
+  build backend that needs no build dependencies, so `python -m pip install .`,
+  `uv tool install --offline .`, `uv pip install .` and
+  `pip install git+https://github.com/treeleaves30760/pairmux` work offline. The backend builds the
+  binary with Go 1.25+, or packages a release binary named by `PAIRMUX_PREBUILT_BINARY` after
+  checking its Mach-O/ELF/PE header against the host (a wrong OS/architecture, relative path or
+  missing file is refused). These are host-only development wheels versioned
+  `X.Y.Z.post<N>.dev0+g<sha>` from `git describe`, which `pairmux update` refuses; there is no sdist
+  and no editable install. `make local-wheel` builds such a wheel into `dist/local-wheel`, and
+  `make pypi-test` runs the packaging tests, including an install of the checkout into a temporary
+  virtual environment when Go and git are available.
+
+- Releases gain `pairmux_<version>_windows_amd64.zip` and `pairmux_<version>_windows_arm64.zip`
+  (`pairmux.exe`, LICENSE, README.md, `man/pairmux.1`) and `win_amd64`/`win_arm64` wheels: nine
+  native GitHub assets and six wheels per release. A Windows smoke job installs the `win_amd64`
+  wheel and runs `pairmux.exe` from both the wheel and the checksummed zip, requiring identical
+  bytes, and gates publication.
+
+### Changed
+
+- **The built-in and tmux backends keep separate state.** Built-in endpoints have their own hashed
+  namespace under `<state root>/.sockets/`, so equal terminal names on the two backends never
+  collide, and each backend lists only its own terminals, dead ones included. The legacy
+  unnamespaced default-socket fallback remains tmux-only.
+
+- **`attach` on the built-in backend attaches this terminal straight to the pane** — no session or
+  window list, no status bar. `Ctrl-b d` detaches, as in tmux, and `Ctrl-b Ctrl-b` sends a literal
+  `Ctrl-b`; other keys after the prefix are dropped. The pane takes the human's terminal size while
+  attached (the most recent attach or resize wins when several humans attach) and returns to 220x50
+  when the last one detaches. With no name it opens the only live terminal, and with several it
+  fails with `E_BAD_ARGS` listing them. It needs interactive stdin and stdout and works inside
+  tmux, but refuses to attach a pane to itself. It uses the alternate screen, so the human's
+  scrollback survives; on detach it prints
+  `[detached from NAME] tell the agent what you did: pairmux note NAME "..."`. The tmux backend's
+  `attach`, including its refusal to nest inside tmux, is unchanged, and `send` still warns the
+  agent when a human is attached.
+
+- `doctor` starts with a `backend` check naming the backend, why it was chosen, and the built-in
+  socket path or tmux version, and notes "tmux not installed (not required)" when relevant. Its live
+  probe runs on an isolated throwaway endpoint of the selected backend.
+
+- `E_TMUX` keeps its name but now means that the terminal backend — tmux or the built-in server —
+  failed. Built-in failures carry built-in-specific hints, such as setting `PAIRMUX_TMPDIR`.
+
+- `pairmux update` refuses on Windows with `E_UPDATE`: uv installs Windows tools as copied `.exe`
+  files rather than the symlinked layout the updater verifies, and Windows cannot replace a running
+  executable. The hint says to close pairmux and run `uv tool install --upgrade pairmux` (or
+  `pip install -U pairmux` in that environment).
+
+- The PowerShell installer (`irm https://pairmux.treeleaves30760.com/install.ps1 | iex`) installs
+  natively by default, with `install.sh`'s policy: uv installs the PyPI wheel exclusively from
+  `https://pypi.org/simple`, wheel-only and uncached, ignoring inherited `UV_*` settings and uv
+  configuration. The previous WSL behavior is opt-in with `$env:PAIRMUX_INSTALL_TARGET = 'wsl'`;
+  naming a WSL distribution without that target is refused rather than silently ignored. Until a
+  release with Windows wheels is on PyPI, the native default fails with a hint to use WSL.
+
+- The RPM recommends `tmux >= 3.2` (a weak dependency) instead of requiring it. The Homebrew cask
+  still installs tmux, which therefore remains the automatically selected backend there.
+
+- README, documentation, man page, landing page and the Agent Skill describe both backends, native
+  Windows installation, installing from a clone, and per-backend `attach`.
+
+### Fixed
+
+- `cmd.exe` terminals (sentinel mode) on Windows reported `run` output as empty and leaked a stale
+  exit status into the next command. ConPTY emits a pass-through OSC sequence at the start of the
+  render frame it arrived in, ahead of the text written in that frame, so the completion sentinel
+  could land before the very output it reported; the Windows sentinels now print an invisible
+  zero-width boundary after the OSC, which keeps its place in the text, and a command ends there.
+  The sentinel's `<nul set /p` also left `ERRORLEVEL` at 1, which builtins such as `echo` never
+  reset, so `echo` after any command reported exit code 1; `run` now clears `ERRORLEVEL` with
+  `(call )` before the command and again once the sentinel has read it, so a status left behind by
+  a `send`-typed command or a human no longer leaks into the next `run` either.
+
+- Programs in built-in Windows terminals never received Ctrl-C (`send --key C-c`): the server is
+  started with `CREATE_NEW_PROCESS_GROUP`, which makes it ignore Ctrl-C, and every ConPTY child
+  inherited that state, so `ping` in a cmd.exe or Windows PowerShell terminal kept running and the
+  terminal stayed busy. The server now re-enables Ctrl-C handling for itself before spawning
+  terminals (it has no console, so this cannot expose it to console events) and children inherit
+  the enabled state.
+
+- A command's output line was lost when the terminal put an escape sequence between its ``
+  and `
+` — ConPTY does so with its cursor-show sequence at the moment the screen first scrolls, so
+  in a PowerShell terminal about every 25th fast `run` came back with no output. Escape sequences
+  occupy no column, so output shaping now removes them before resolving carriage-return overwrites
+  instead of treating such a `` as one.
+
+- A failing PowerShell installer now throws instead of closing the PowerShell window, so the error
+  stays readable when it was run as `irm ... | iex`.
+
 ## [0.6.0] - 2026-10-09
 
 ### Added

@@ -104,10 +104,24 @@ func TestParseInterval(t *testing.T) {
 // withTTY overrides the isTTY/insideTmux seams for the duration of a test.
 func withTTY(t *testing.T, tty, inTmux bool) {
 	t.Helper()
-	oldTTY, oldTmux := isTTY, insideTmux
-	t.Cleanup(func() { isTTY, insideTmux = oldTTY, oldTmux })
+	oldTTY, oldStdin, oldTmux := isTTY, stdinIsTTY, insideTmux
+	t.Cleanup(func() { isTTY, stdinIsTTY, insideTmux = oldTTY, oldStdin, oldTmux })
 	isTTY = func() bool { return tty }
+	stdinIsTTY = func() bool { return tty }
 	insideTmux = func() bool { return inTmux }
+}
+
+func TestAttachNeedsAnInteractiveStdin(t *testing.T) {
+	withTTY(t, true, false)
+	stdinIsTTY = func() bool { return false } // stdout is a terminal, stdin a pipe
+	var buf bytes.Buffer
+	c := newTestCtx(&buf, true)
+	if rc := c.cmdAttach([]string{"build"}); rc != 1 {
+		t.Fatalf("rc = %d", rc)
+	}
+	if e := decode(t, &buf); e.Error == nil || e.Error.Code != output.CodeBadArgs || !strings.Contains(e.Error.Message, "stdin") {
+		t.Fatalf("envelope = %+v", e)
+	}
 }
 
 func TestAttachRefusesInsideTmux(t *testing.T) {

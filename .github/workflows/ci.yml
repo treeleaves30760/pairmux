@@ -60,16 +60,19 @@ jobs:
         run: |
           # install.ps1 is normally run as `irm ... | iex`, so a syntax error in
           # it is a syntax error in someone's terminal. Parse it and analyse it
-          # here; the ubuntu runner ships pwsh already.
-          $errors = $null
-          $tokens = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            "$PWD/install.ps1", [ref]$tokens, [ref]$errors) | Out-Null
-          if ($errors) {
-            $errors | ForEach-Object {
-              Write-Host "install.ps1:$($_.Extent.StartLineNumber): $($_.Message)"
+          # here; the ubuntu runner ships pwsh already. Its stub test helper is
+          # parsed too, so a syntax error there cannot pass as a skipped test.
+          foreach ($script in @('install.ps1', 'scripts/test-install-windows.ps1')) {
+            $errors = $null
+            $tokens = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              "$PWD/$script", [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors) {
+              $errors | ForEach-Object {
+                Write-Host "${script}:$($_.Extent.StartLineNumber): $($_.Message)"
+              }
+              exit 1
             }
-            exit 1
           }
           Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
           # PSAvoidUsingWriteHost is excluded on purpose: for an installer run
@@ -86,19 +89,23 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Test legacy PowerShell WSL argument transport
+      # Native (uv) and opt-in WSL modes, both against compiled stubs: no
+      # network, no real uv/WSL, no installation outside a temporary directory.
+      - name: Test the native and WSL installer modes under Windows PowerShell
         shell: powershell
         run: ./scripts/test-install-windows.ps1
-      - name: Parse the real WSL acceptance helper
+      - name: Parse the real WSL and native Windows acceptance helpers
         shell: pwsh
         run: |
-          $errors = $null
-          $tokens = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            "$PWD/scripts/test-release-wsl.ps1", [ref]$tokens, [ref]$errors) | Out-Null
-          if ($errors) {
-            $errors | ForEach-Object { Write-Host $_.Message }
-            exit 1
+          foreach ($script in @('scripts/test-release-wsl.ps1', 'scripts/test-release-windows.ps1')) {
+            $errors = $null
+            $tokens = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              "$PWD/$script", [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors) {
+              $errors | ForEach-Object { Write-Host "${script}: $($_.Message)" }
+              exit 1
+            }
           }
 
   # Fast feedback: static analysis + unit tests, no tmux required.
@@ -127,6 +134,81 @@ jobs:
           PAIRMUX_TEST_PYTHON="$(command -v python3)" \
             ./scripts/test-update-uv.sh
 
+  # Native Windows: the built-in ConPTY backend replaces tmux there. -race needs
+  # cgo on Windows, so this leg runs without it; macOS/Linux keep -race above.
+  # The packaging suite also builds and pip-installs this checkout for real.
+  windows-unit:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.x'
+      - run: go vet ./...
+      - run: go test -count=1 ./...
+      - name: Test release packaging and the source-install backend
+        run: python -m unittest discover -s packaging/pypi -p 'test_*.py'
+
+  # Release builds cross-compile both Windows targets from Linux. Catch a
+  # Windows-only compile or vet failure (including integration-tagged tests)
+  # without waiting for a tag.
+  windows-cross-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - name: Build and vet for windows/amd64 and windows/arm64
+        env:
+          CGO_ENABLED: '0'
+          GOOS: windows
+        run: |
+          set -eu
+          for arch in amd64 arm64; do
+            echo "::group::windows/$arch"
+            GOARCH=$arch go build -trimpath -o "$RUNNER_TEMP/pairmux-$arch.exe" ./cmd/pairmux
+            GOARCH=$arch go vet ./...
+            GOARCH=$arch go vet -tags integration ./test/...
+            echo "::endgroup::"
+          done
+
+  # Builds and installs this checkout the way users without PyPI access do:
+  # pip and uv tool, offline, through the in-tree PEP 517 backend. Full history
+  # so the development version is derived from the real release tags.
+  source-install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.x'
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: 0.11.16
+          enable-cache: false
+      # PAIRMUX_TEST_SOURCE_INSTALL=1 turns a missing go/git/venv/uv into a
+      # failure, so this job cannot pass by skipping the real installs.
+      - name: Install this checkout with pip and uv tool (offline)
+        env:
+          PAIRMUX_TEST_SOURCE_INSTALL: '1'
+          PAIRMUX_TEST_UV: uv
+        run: python -m unittest discover -v -s packaging/pypi -p 'test_pairmux_build_backend.py'
+
   # tmux-backed suite behind the `integration` build tag.
   integration:
     strategy:
@@ -149,3 +231,30 @@ jobs:
           fi
       - run: tmux -V
       - run: go test -race -tags integration -count=1 ./test/...
+
+  # The same integration suite on pairmux's built-in multiplexer: PTY on
+  # macOS/Linux, ConPTY on Windows (where the harness drives PowerShell).
+  # PAIRMUX_IT_BACKEND=builtin selects it even where tmux is installed. The
+  # tmux job above is unchanged.
+  builtin-integration:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            race: -race
+          - os: ubuntu-latest
+            race: -race
+          # -race needs cgo on Windows.
+          - os: windows-latest
+            race: ''
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      PAIRMUX_IT_BACKEND: builtin
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: go test ${{ matrix.race }} -tags integration -count=1 ./test/...

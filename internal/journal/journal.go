@@ -1,12 +1,10 @@
-//go:build unix
-
 // Package journal owns the on-disk state of a single pairmux terminal: the
 // append-only raw.log byte stream, the index.jsonl event log, meta.json, and a
-// flock-based write lock. All I/O here is best effort against a file that a
-// separate tmux pipe-pane process is concurrently appending to.
+// advisory write lock. All I/O here is best effort against a file that a
+// separate process — tmux's pipe-pane, or pairmux's built-in server — is
+// concurrently appending to.
 //
-// Unix only: the write lock uses syscall.Flock, which pairmux supports on
-// darwin and linux (no windows build).
+// The locks go through package flock: flock(2) on Unix, LockFileEx on Windows.
 package journal
 
 import (
@@ -19,10 +17,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/treeleaves30760/pairmux/internal/core"
+	"github.com/treeleaves30760/pairmux/internal/flock"
 )
 
 const (
@@ -287,15 +285,15 @@ func (j *Journal) AcquireWriteLock() (release func(), err error) {
 	if err != nil {
 		return nil, fmt.Errorf("journal: open write.lock: %w", err)
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := flock.TryLock(f, true); err != nil {
 		f.Close()
-		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+		if errors.Is(err, flock.ErrWouldBlock) {
 			if pid, ok := LockHolder(j.Dir); ok {
 				return nil, fmt.Errorf("journal: write.lock held by pid %d: %w", pid, ErrLocked)
 			}
 			return nil, ErrLocked
 		}
-		return nil, fmt.Errorf("journal: flock write.lock: %w", err)
+		return nil, fmt.Errorf("journal: lock write.lock: %w", err)
 	}
 
 	// Record our pid so a blocked writer can report the holder. Best effort:
@@ -310,7 +308,7 @@ func (j *Journal) AcquireWriteLock() (release func(), err error) {
 			return
 		}
 		once = true
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = flock.Unlock(f)
 		_ = f.Close()
 	}
 	return release, nil
@@ -365,13 +363,13 @@ func (j *Journal) AcquireSendLock() (release func(), err error) {
 	}
 	deadline := time.Now().Add(sendLockWait)
 	for {
-		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		err := flock.TryLock(f, true)
 		if err == nil {
 			break
 		}
-		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+		if !errors.Is(err, flock.ErrWouldBlock) {
 			f.Close()
-			return nil, fmt.Errorf("journal: flock send.lock: %w", err)
+			return nil, fmt.Errorf("journal: lock send.lock: %w", err)
 		}
 		if !time.Now().Before(deadline) {
 			f.Close()
@@ -392,7 +390,7 @@ func (j *Journal) AcquireSendLock() (release func(), err error) {
 			return
 		}
 		once = true
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = flock.Unlock(f)
 		_ = f.Close()
 	}
 	return release, nil

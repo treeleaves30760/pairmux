@@ -10,15 +10,21 @@ import (
 	"os"
 	"strings"
 
+	"github.com/treeleaves30760/pairmux/internal/backend"
+	"github.com/treeleaves30760/pairmux/internal/core"
+	"github.com/treeleaves30760/pairmux/internal/mux"
+	"github.com/treeleaves30760/pairmux/internal/muxd"
 	"github.com/treeleaves30760/pairmux/internal/output"
 	"github.com/treeleaves30760/pairmux/internal/shape"
 	"github.com/treeleaves30760/pairmux/internal/state"
-	"github.com/treeleaves30760/pairmux/internal/tmux"
 )
 
 // Ctx carries the per-invocation dependencies each command needs.
 type Ctx struct {
-	Tmux     *tmux.Client
+	// Mux is the terminal multiplexer this invocation drives: tmux, or the
+	// built-in server (see package backend for how one is chosen).
+	Mux      mux.Mux
+	Choice   backend.Choice
 	JSON     bool
 	StateDir string
 	Stdout   io.Writer
@@ -28,15 +34,43 @@ type Ctx struct {
 // and environment overrides, builds a Ctx, and dispatches. It returns the
 // process exit code (0 ok, 1 pairmux error, 2 usage).
 func Main(args []string) int {
+	// The built-in multiplexer's server is this same binary, spawned with a
+	// hidden subcommand; it never goes through backend selection or envelopes.
+	if len(args) > 0 && args[0] == muxd.ServeCommand {
+		return muxd.ServeMain(args[1:])
+	}
 	socket := os.Getenv("PAIRMUX_SOCKET")
 	rest, jsonMode, socket := stripGlobals(args, false, socket)
+	if socket == "" {
+		socket = core.DefaultSocket
+	}
 	c := &Ctx{
-		Tmux:     tmux.New(socket),
 		JSON:     jsonMode,
 		StateDir: state.BaseDir(),
 		Stdout:   os.Stdout,
 	}
+	m, choice, err := backend.Open(socket)
+	if err != nil {
+		// Commands that never touch a terminal still work, so a bad
+		// PAIRMUX_BACKEND cannot lock anyone out of help, version or doctor.
+		if len(rest) > 0 && noTerminalCommand(rest[0]) {
+			m = backend.OpenKind(mux.BackendTmux, socket)
+			choice = backend.Choice{Kind: "invalid", Reason: err.Error()}
+		} else {
+			return c.fail(output.CodeBadArgs, err.Error(), "unset "+backend.Env+" or set it to tmux or builtin")
+		}
+	}
+	c.Mux, c.Choice = m, choice
 	return c.dispatch(rest)
+}
+
+// noTerminalCommand reports commands that work without a multiplexer.
+func noTerminalCommand(cmd string) bool {
+	switch cmd {
+	case "help", "--help", "-h", "version", "--version", "doctor", "skill", "update":
+		return true
+	}
+	return false
 }
 
 // dispatch routes to a subcommand handler.
@@ -119,9 +153,13 @@ func (c *Ctx) usage(oneline, hint string) int {
 	return 2
 }
 
-// tmuxErr maps a raw tmux failure to an E_TMUX envelope. The raw tmux stderr
-// stays in the message; the hint carries the recovery.
-func (c *Ctx) tmuxErr(err error) int {
+// muxErr maps a raw multiplexer failure to an E_TMUX envelope (the code
+// predates the built-in backend and keeps its meaning: the terminal backend
+// failed). The raw error stays in the message; the hint carries the recovery.
+func (c *Ctx) muxErr(err error) int {
+	if c.Mux != nil && c.Mux.Backend() == mux.BackendBuiltin {
+		return c.fail(output.CodeTmux, err.Error(), builtinHint(err))
+	}
 	return c.fail(output.CodeTmux, err.Error(), tmuxHint(err))
 }
 
@@ -145,6 +183,23 @@ func tmuxHint(err error) string {
 	return "pairmux ls"
 }
 
+// builtinHint is tmuxHint for the built-in server, whose socket lives in its
+// runtime directory (PAIRMUX_TMPDIR, else TMUX_TMPDIR, else /tmp on Unix).
+func builtinHint(err error) string {
+	s := strings.ToLower(err.Error())
+	if strings.Contains(s, "runtime directory") ||
+		strings.Contains(s, "error connecting") ||
+		strings.Contains(s, "permission denied") ||
+		strings.Contains(s, "too deep") {
+		return `the built-in multiplexer cannot use its runtime directory — set PAIRMUX_TMPDIR ` +
+			`to a short writable directory and retry (pairmux doctor shows the path in use)`
+	}
+	if strings.Contains(s, "did not start") {
+		return "pairmux doctor"
+	}
+	return "pairmux ls"
+}
+
 // noTerminal reports E_NO_TERMINAL, listing the terminals that do exist so an
 // agent can correct a mistyped name.
 func (c *Ctx) noTerminal(name string) int {
@@ -162,7 +217,7 @@ func (c *Ctx) noTerminal(name string) int {
 
 // existingNames returns the names of all known terminals (best effort).
 func (c *Ctx) existingNames() []string {
-	terms, err := state.ListAt(c.Tmux, c.StateDir)
+	terms, err := state.ListAt(c.Mux, c.StateDir)
 	if err != nil {
 		return nil
 	}
@@ -190,7 +245,7 @@ func (c *Ctx) unknownCmd(cmd string) int {
 	return 2
 }
 
-const helpText = `pairmux — reliable terminal primitives for AI agents on tmux
+const helpText = `pairmux — reliable terminal primitives for AI agents
 
 usage: pairmux [--json] [--socket S] <command> [args]
 
@@ -206,15 +261,17 @@ agent commands:
   prune [name] [--older-than D] [--dry-run]        reclaim dead terminals' logs e.g. pairmux prune --older-than 7d
 
 human commands:
-  attach [name]            take over the tmux session        e.g. pairmux attach build
+  attach [name]            take over a terminal (Ctrl-b d)   e.g. pairmux attach build
   watch  [--interval 2s]   live dashboard (Ctrl-C quits)     e.g. pairmux watch
   note   <name> <text...>  leave a message for the agent     e.g. pairmux note build "fixed the token"
-  doctor                   probe tmux + shell integration    e.g. pairmux doctor
+  doctor                   probe backend + shell integration e.g. pairmux doctor
   update                   reinstall this uv tool from PyPI  e.g. pairmux update
   skill install [--target T | all] [--dry-run]  teach your agent pairmux   e.g. pairmux skill install --target all
   mcp serve                serve typed tools over MCP stdio  e.g. pairmux mcp serve
   version                  print version
 
+terminals run on tmux when it is installed, else on pairmux's built-in
+multiplexer (always on Windows); PAIRMUX_BACKEND=tmux|builtin chooses explicitly.
 add --json anywhere for machine-readable envelopes from ordinary CLI commands
 (attach/watch are interactive, help is plain text, and mcp serve uses JSON-RPC).
 put -- before a command that itself contains --json or --socket.

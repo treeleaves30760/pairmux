@@ -4,23 +4,26 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 	"unicode"
 
+	"github.com/treeleaves30760/pairmux/internal/backend"
 	"github.com/treeleaves30760/pairmux/internal/core"
 	"github.com/treeleaves30760/pairmux/internal/detect"
+	"github.com/treeleaves30760/pairmux/internal/flock"
 	"github.com/treeleaves30760/pairmux/internal/journal"
+	"github.com/treeleaves30760/pairmux/internal/mux"
 	"github.com/treeleaves30760/pairmux/internal/output"
 	"github.com/treeleaves30760/pairmux/internal/shape"
 	"github.com/treeleaves30760/pairmux/internal/shellhooks"
 	"github.com/treeleaves30760/pairmux/internal/state"
-	"github.com/treeleaves30760/pairmux/internal/tmux"
 	"github.com/treeleaves30760/pairmux/internal/version"
 )
 
@@ -67,19 +70,19 @@ func (c *Ctx) cmdNew(args []string) int {
 
 	pane, hasPane, err := c.findPane(name)
 	if err != nil {
-		return c.tmuxErr(err)
+		return c.muxErr(err)
 	}
 	dir := c.terminalDir(name)
 	if hasPane && !pane.Dead {
 		return c.fail(output.CodeExists, fmt.Sprintf("terminal %q already exists", name), "pairmux ls")
 	}
 	if hasPane && pane.Dead {
-		_ = c.Tmux.KillWindowOf(pane.PaneID) // reclaim the dead window before reusing the name
+		_ = c.Mux.KillWindowOf(pane.PaneID) // reclaim the dead window before reusing the name
 	}
 	if isDir(dir) {
 		// A canonical endpoint namespace should never contain foreign metadata.
 		// Preserve it for inspection rather than archiving possible corruption.
-		if meta, err := (&journal.Journal{Dir: dir}).ReadMeta(); err == nil && !state.MetaMatchesSocket(meta, c.Tmux.Socket) {
+		if meta, err := (&journal.Journal{Dir: dir}).ReadMeta(); err == nil && !state.MetaMatchesSocket(meta, c.Mux.SocketName()) {
 			return c.fail(output.CodeExists,
 				fmt.Sprintf("terminal state %q belongs to socket %q", name, meta.Socket),
 				"inspect or move the foreign state directory: "+dir)
@@ -101,8 +104,8 @@ func (c *Ctx) cmdNew(args []string) int {
 		metaShell = "" // Meta.Shell=="" marks a --cmd program terminal (run refuses it)
 	}
 
-	if err := c.Tmux.EnsureSession(); err != nil {
-		return c.tmuxErr(err)
+	if err := c.Mux.EnsureSession(); err != nil {
+		return c.muxErr(err)
 	}
 	argv, prepEnv, mode, err := shellhooks.Prepare(c.namespaceDir(), shell, cmdVec)
 	if err != nil {
@@ -128,7 +131,10 @@ func (c *Ctx) cmdNew(args []string) int {
 		"PAIRMUX_STATE_DIR":       c.StateDir,
 		"PAIRMUX_STATE_NAMESPACE": c.namespaceDir(),
 		"PAIRMUX_TERMINAL_DIR":    dir,
-		"PAIRMUX_SOCKET":          state.ChildSocket(c.Tmux.Socket, name),
+		"PAIRMUX_SOCKET":          state.ChildSocket(c.Mux.SocketName(), name),
+		// A nested pairmux stays on this backend, whatever auto-selection
+		// would pick from inside the pane.
+		backend.Env: c.Mux.Backend(),
 	}
 	for k, v := range prepEnv {
 		env[k] = v
@@ -151,42 +157,51 @@ func (c *Ctx) cmdNew(args []string) int {
 
 	// A program terminal's command is held until the journal is capturing; see
 	// startGate. A shell needs no gate — it prints nothing before its rc files
-	// run, and hooks mode nudges a prompt cycle to cover the same gap.
+	// run, and hooks mode nudges a prompt cycle to cover the same gap. The
+	// built-in backend opens the journal before it starts the program, so it
+	// needs neither the gate nor a separate pipe.
+	atomic := c.Mux.AtomicJournal()
 	var gate *startGate
-	if len(argv) > 0 {
+	if len(argv) > 0 && !atomic {
 		if gate, err = newStartGate(j.Dir); err != nil {
 			return c.fail(output.CodeInternal, err.Error(), "")
 		}
 	}
-	paneID, err := c.Tmux.NewWindow(tmux.NewWindowReq{Name: name, Dir: cwd, Env: env, Argv: argv, Gate: gate.Path()})
+	req := mux.NewWindowReq{Name: name, Dir: cwd, Env: env, Argv: argv, Gate: gate.Path()}
+	if atomic {
+		req.Journal = j.RawPath()
+	}
+	paneID, err := c.Mux.NewWindow(req)
 	if err != nil {
 		gate.abandon()
-		return c.tmuxErr(err)
+		return c.muxErr(err)
 	}
 	keepPane := false
 	defer func() {
 		if !keepPane {
 			gate.abandon()
-			_ = c.Tmux.KillWindowOf(paneID)
+			_ = c.Mux.KillWindowOf(paneID)
 		}
 	}()
-	if err := c.Tmux.PipePaneAppend(paneID, j.RawPath()); err != nil {
-		return c.tmuxErr(err)
+	if !atomic {
+		if err := c.Mux.PipePaneAppend(paneID, j.RawPath()); err != nil {
+			return c.muxErr(err)
+		}
 	}
 	// Everything the program prints from here on is journalled.
 	if err := gate.release(); err != nil {
 		return c.fail(output.CodeInternal, err.Error(), "")
 	}
-	if err := c.Tmux.SetPaneOption(paneID, core.PaneOptName, name); err != nil {
-		return c.tmuxErr(err)
+	if err := c.Mux.SetPaneOption(paneID, core.PaneOptName, name); err != nil {
+		return c.muxErr(err)
 	}
 
 	// The pane's terminal is asked for once, here: prompt classification reads
 	// its line discipline on every poll, and a tmux round-trip per poll per agent
 	// is exactly the cost this avoids. A failure is not fatal — classification
 	// falls back to reading the wording of the prompt, as it always did.
-	paneTTY, _ := c.Tmux.PaneTTY(paneID)
-	meta := core.Meta{Name: name, PaneID: paneID, Tty: paneTTY, Shell: metaShell, Mode: mode, Socket: c.Tmux.Socket, CreatedAt: time.Now().UTC()}
+	paneTTY, _ := c.Mux.PaneTTY(paneID)
+	meta := core.Meta{Name: name, PaneID: paneID, Tty: paneTTY, Shell: metaShell, Mode: mode, Socket: c.Mux.SocketName(), CreatedAt: time.Now().UTC()}
 	if err := j.WriteMeta(meta); err != nil {
 		return c.fail(output.CodeInternal, err.Error(), "")
 	}
@@ -194,11 +209,15 @@ func (c *Ctx) cmdNew(args []string) int {
 		return c.fail(output.CodeInternal, err.Error(), "")
 	}
 
-	// In hooks mode, nudge one prompt cycle so an OSC-133 A mark is guaranteed
-	// to land AFTER pipe-pane is capturing, even if the very first prompt raced
-	// ahead of capture. Harmless: it precedes any run's send offset.
-	if mode == core.ModeHooks {
-		_ = c.Tmux.SendKeys(paneID, "Enter")
+	// In hooks mode on tmux, nudge one prompt cycle so an OSC-133 A mark is
+	// guaranteed to land AFTER pipe-pane is capturing, even if the very first
+	// prompt raced ahead of capture. It precedes any run's send offset because
+	// `new` waits for the cycle to complete (detect.WaitPromptCycle below). A
+	// backend that journals from the first byte has no such race, so it gets no
+	// nudge — and none of the stale marks a nudge can leave behind.
+	nudged := mode == core.ModeHooks && !atomic
+	if nudged {
+		_ = c.Mux.SendKeys(paneID, "Enter")
 	}
 
 	var next []string
@@ -207,6 +226,11 @@ func (c *Ctx) cmdNew(args []string) int {
 	if err != nil {
 		return c.fail(output.CodeInternal, "wait ready: "+err.Error(), "")
 	}
+	if nudged && gotHooks {
+		// Not fatal when it never completes: the terminal still works, and the
+		// first run merely risks the stale mark this wait exists to absorb.
+		_, _ = detect.WaitPromptCycle(j, 5*time.Second)
+	}
 	if mode == core.ModeHooks && !gotHooks {
 		effMode = core.ModeSentinel
 		meta.Mode = core.ModeSentinel
@@ -214,9 +238,9 @@ func (c *Ctx) cmdNew(args []string) int {
 		next = append(next, "hooks unavailable in this shell config — completion detection degraded to sentinel mode")
 	}
 	if cmdOverride != "" {
-		current, err := state.ResolveAt(c.Tmux, c.StateDir, name)
+		current, err := state.ResolveAt(c.Mux, c.StateDir, name)
 		if err != nil {
-			return c.tmuxErr(err)
+			return c.muxErr(err)
 		}
 		status := deriveTerminalStatus(j, current.Alive, current.Mode, true)
 		next = append(next, peekNext(name, status)...)
@@ -330,12 +354,12 @@ func (c *Ctx) cmdRun(args []string) int {
 		}
 	}
 
-	term, err := state.ResolveAt(c.Tmux, c.StateDir, name)
+	term, err := state.ResolveAt(c.Mux, c.StateDir, name)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return c.noTerminal(name)
 		}
-		return c.tmuxErr(err)
+		return c.muxErr(err)
 	}
 	if !term.Alive {
 		return c.fail(output.CodeDead, fmt.Sprintf("terminal %q is dead", name), "pairmux new")
@@ -369,8 +393,9 @@ func (c *Ctx) cmdRun(args []string) int {
 
 	// Lazy settlement: a prior run that timed out left its cmd_start unmatched.
 	// Settle it if it has since finished; refuse if it is genuinely still running.
+	bounded := shellhooks.SentinelHasBoundary(term.Meta.Shell)
 	if pending, ok, perr := j.PendingCmd(); perr == nil && ok {
-		res, _ := waitDone(j, pending.Offset, mode, 0, term.Meta.Tty)
+		res, _ := waitDone(j, pending.Offset, mode, bounded, 0, term.Meta.Tty)
 		if res.Outcome != detect.OutcomeDone {
 			return c.fail(output.CodeBusy, "a command is still running", fmt.Sprintf("pairmux peek %s", name))
 		}
@@ -385,18 +410,19 @@ func (c *Ctx) cmdRun(args []string) int {
 	sendOffset := j.Size()
 
 	// In sentinel mode the shell substitutes its last-status variable into an
-	// OSC 7779 marker so completion is detectable without hooks. Drop the exact
-	// sent bytes (suffix included) when shaping so the echoed line disappears.
+	// OSC 7779 marker so completion is detectable without hooks (cmd.exe also
+	// gets a prefix that clears that variable first). Drop the exact sent bytes
+	// (prefix and suffix included) when shaping so the echoed line disappears.
 	sent := cmd
 	if mode == core.ModeSentinel {
-		sent = cmd + shellhooks.SentinelSuffix(term.Meta.Shell)
+		sent = shellhooks.SentinelPrefix(term.Meta.Shell) + cmd + shellhooks.SentinelSuffix(term.Meta.Shell)
 	}
 	if err := recordAndSendCommand(j, core.Event{
 		Type: core.EvCmdStart, CmdID: cmdID, Offset: sendOffset, Text: cmd,
 	}, func() error {
-		return c.Tmux.SendLiteral(term.PaneID, sent)
+		return c.Mux.SendLiteral(term.PaneID, sent)
 	}, func() error {
-		return c.Tmux.SendKeys(term.PaneID, "Enter")
+		return c.Mux.SendKeys(term.PaneID, "Enter")
 	}); err != nil {
 		var sendErr *runSendError
 		if !errors.As(err, &sendErr) || sendErr.Stage == runSendRecord || sendErr.AbortErr != nil {
@@ -405,11 +431,11 @@ func (c *Ctx) cmdRun(args []string) int {
 		if sendErr.Stage == runSendEnter {
 			return c.fail(output.CodeTmux, sendErr.Err.Error(), runSendEnterHint(name))
 		}
-		return c.tmuxErr(sendErr.Err)
+		return c.muxErr(sendErr.Err)
 	}
 
 	start := time.Now()
-	res, err := waitDone(j, sendOffset, mode, timeout, term.Meta.Tty)
+	res, err := waitDone(j, sendOffset, mode, bounded, timeout, term.Meta.Tty)
 	if err != nil {
 		return c.fail(output.CodeInternal, "wait completion: "+err.Error(), "")
 	}
@@ -536,13 +562,15 @@ func quotedCommandHint(tokens []string) string {
 // C-correlated variant (review item R1): the completion D must follow our
 // command's own C mark, so a human running commands in the same pane cannot
 // spoof completion. bash 3.2 emits no C, which the correlated wait covers by
-// accepting a lone D after a short grace. Sentinel mode is unchanged. A zero
-// timeout degenerates to a single read-only scan (used for lazy settlement).
-func waitDone(j *journal.Journal, from int64, mode core.Mode, timeout time.Duration, tty string) (detect.RunResult, error) {
+// accepting a lone D after a short grace. Sentinel mode takes the sentinel, or
+// with bounded (shellhooks.SentinelHasBoundary) the boundary printed after it.
+// A zero timeout degenerates to a single read-only scan (used for lazy
+// settlement).
+func waitDone(j *journal.Journal, from int64, mode core.Mode, bounded bool, timeout time.Duration, tty string) (detect.RunResult, error) {
 	if mode == core.ModeHooks {
 		return detect.WaitCommandCorrelated(j, from, timeout, 0, true, tty)
 	}
-	return detect.WaitCommand(j, from, mode, timeout, 0, tty)
+	return detect.WaitCommand(j, from, mode, bounded, timeout, 0, tty)
 }
 
 // deriveTerminalStatus adds terminal-kind context to the journal-derived
@@ -586,12 +614,12 @@ func (c *Ctx) cmdPeek(args []string) int {
 		}
 	}
 
-	term, err := state.ResolveAt(c.Tmux, c.StateDir, name)
+	term, err := state.ResolveAt(c.Mux, c.StateDir, name)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return c.noTerminal(name)
 		}
-		return c.tmuxErr(err)
+		return c.muxErr(err)
 	}
 	j, err := journal.Open(term.Dir)
 	if err != nil {
@@ -603,11 +631,11 @@ func (c *Ctx) cmdPeek(args []string) int {
 	var body string
 	var trunc *output.TruncInfo
 	if screen && term.Alive {
-		out, err := c.Tmux.CapturePane(term.PaneID, 0)
+		out, err := c.Mux.CapturePane(term.PaneID, 0)
 		if err != nil {
-			return c.tmuxErr(err)
+			return c.muxErr(err)
 		}
-		body = trimTrailingBlank(out)
+		body = trimTrailingBlank(shape.StripBoundary(out))
 	} else {
 		raw, start, err := j.TailBytes(64 * 1024)
 		if err != nil {
@@ -729,12 +757,12 @@ func (c *Ctx) cmdSend(args []string) int {
 		}
 	}
 
-	term, err := state.ResolveAt(c.Tmux, c.StateDir, name)
+	term, err := state.ResolveAt(c.Mux, c.StateDir, name)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return c.noTerminal(name)
 		}
-		return c.tmuxErr(err)
+		return c.muxErr(err)
 	}
 	if !term.Alive {
 		return c.fail(output.CodeDead, fmt.Sprintf("terminal %q is dead", name), "pairmux new")
@@ -757,18 +785,18 @@ func (c *Ctx) cmdSend(args []string) int {
 	defer releaseSend()
 
 	if seen["text"] {
-		if err := c.Tmux.SendLiteral(term.PaneID, text); err != nil {
-			return c.tmuxErr(err)
+		if err := c.Mux.SendLiteral(term.PaneID, text); err != nil {
+			return c.muxErr(err)
 		}
 	}
 	if len(keys) > 0 {
-		if err := c.Tmux.SendKeys(term.PaneID, keys...); err != nil {
-			return c.tmuxErr(err)
+		if err := c.Mux.SendKeys(term.PaneID, keys...); err != nil {
+			return c.muxErr(err)
 		}
 	}
 	if enter {
-		if err := c.Tmux.SendKeys(term.PaneID, "Enter"); err != nil {
-			return c.tmuxErr(err)
+		if err := c.Mux.SendKeys(term.PaneID, "Enter"); err != nil {
+			return c.muxErr(err)
 		}
 	}
 
@@ -787,7 +815,7 @@ func (c *Ctx) cmdSend(args []string) int {
 	// their keystrokes go straight to the pane. When one is watching this very
 	// window, say so — sharing an input line is the one collision that cannot be
 	// prevented, only noticed.
-	if n, active, err := c.Tmux.PaneAudience(term.PaneID); err == nil && n > 0 && active {
+	if n, active, err := c.Mux.PaneAudience(term.PaneID); err == nil && n > 0 && active {
 		next = append([]string{"a human is attached to this window — you are sharing its input line"}, next...)
 	}
 	return c.emit(output.Envelope{Status: "sent", Terminal: name, Mode: string(term.Mode), Next: next})
@@ -826,12 +854,12 @@ func (c *Ctx) cmdLog(args []string) int {
 		return c.usage(usageLine, "--cmd, --grep and --range are mutually exclusive")
 	}
 
-	term, err := state.ResolveAt(c.Tmux, c.StateDir, name)
+	term, err := state.ResolveAt(c.Mux, c.StateDir, name)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return c.noTerminal(name)
 		}
-		return c.tmuxErr(err)
+		return c.muxErr(err)
 	}
 	j, err := journal.Open(term.Dir)
 	if err != nil {
@@ -844,7 +872,7 @@ func (c *Ctx) cmdLog(args []string) int {
 		if err != nil {
 			return c.fail(output.CodeBadArgs, fmt.Sprintf("bad --cmd id %q", cmdS), "pairmux log "+name)
 		}
-		return c.logCmd(name, j, term.Mode, id)
+		return c.logCmd(name, j, term.Mode, shellhooks.SentinelHasBoundary(term.Meta.Shell), id)
 	case seen["grep"]:
 		return c.logGrep(name, j, term.Mode, grepS)
 	case seen["range"]:
@@ -953,7 +981,7 @@ func parseRange(s string) (a, b int, err error) {
 // logCmd renders the complete output region of one explicitly selected
 // command. Unlike bounded peek/default-log views, an explicit command lookup
 // never silently byte-caps its output.
-func (c *Ctx) logCmd(name string, j *journal.Journal, mode core.Mode, id int) int {
+func (c *Ctx) logCmd(name string, j *journal.Journal, mode core.Mode, bounded bool, id int) int {
 	events, err := j.Events()
 	if err != nil {
 		return c.fail(output.CodeInternal, err.Error(), "")
@@ -975,7 +1003,7 @@ func (c *Ctx) logCmd(name string, j *journal.Journal, mode core.Mode, id int) in
 	from := startEv.Offset
 	to := endOff
 	if to < 0 {
-		if mk, ok := scanCompletion(j, from, mode); ok {
+		if mk, ok := scanCompletion(j, from, mode, bounded); ok {
 			to = mk
 		}
 	}
@@ -997,9 +1025,9 @@ func (c *Ctx) cmdLs(args []string) int {
 	if rc, rejected := c.rejectInvalidSocket(); rejected {
 		return rc
 	}
-	terms, err := state.ListAt(c.Tmux, c.StateDir)
+	terms, err := state.ListAt(c.Mux, c.StateDir)
 	if err != nil {
-		return c.tmuxErr(err)
+		return c.muxErr(err)
 	}
 	if len(terms) == 0 {
 		return c.emit(output.Envelope{Status: "ok", Next: []string{"pairmux new"}})
@@ -1036,7 +1064,7 @@ func (c *Ctx) cmdLs(args []string) int {
 // lockHolderPID reports the pid actually holding a terminal's write lock, 0
 // when it is free. journal.LockHolder alone is not enough: the recorded pid
 // stays in write.lock after release, so heldness is probed with a non-blocking
-// shared flock on a read-only descriptor (nothing is written; an instant
+// shared lock on a read-only descriptor (nothing is written; an instant
 // success is released immediately).
 func lockHolderPID(dir string) int {
 	f, err := os.Open(filepath.Join(dir, "write.lock"))
@@ -1044,8 +1072,8 @@ func lockHolderPID(dir string) int {
 		return 0 // never locked (or unreadable): free as far as we can tell
 	}
 	defer f.Close()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err == nil {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	if err := flock.TryLock(f, false); err == nil {
+		_ = flock.Unlock(f)
 		return 0
 	}
 	if pid, ok := journal.LockHolder(dir); ok {
@@ -1078,19 +1106,19 @@ func (c *Ctx) cmdKill(args []string) int {
 	if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
 		return rc
 	}
-	term, err := state.ResolveAt(c.Tmux, c.StateDir, name)
+	term, err := state.ResolveAt(c.Mux, c.StateDir, name)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return c.noTerminal(name)
 		}
-		return c.tmuxErr(err)
+		return c.muxErr(err)
 	}
 	// Descend before killing the pane: once the window is gone the terminal is
 	// unresolvable, and its layer would be orphaned with nothing left pointing
 	// at it.
-	layers := c.killLayers(c.Tmux.Socket, name, 0)
+	layers := c.killLayers(c.Mux.SocketName(), name, 0)
 	if term.Alive && term.PaneID != "" {
-		_ = c.Tmux.KillWindowOf(term.PaneID) // ignore: pane may already be gone
+		_ = c.Mux.KillWindowOf(term.PaneID) // ignore: pane may already be gone
 	}
 	if j, err := journal.Open(term.Dir); err == nil {
 		_ = j.AppendEvent(core.Event{Type: core.EvNote, Text: "killed"})
@@ -1108,10 +1136,10 @@ func (c *Ctx) cmdKill(args []string) int {
 
 // killAll kills every managed window on the socket and lists the names killed.
 func (c *Ctx) killAll() int {
-	panes, err := c.Tmux.ListManaged()
+	panes, err := c.Mux.ListManaged()
 	if err != nil {
 		if !state.IsNoServer(err) {
-			return c.tmuxErr(err)
+			return c.muxErr(err)
 		}
 		panes = nil
 	}
@@ -1119,12 +1147,12 @@ func (c *Ctx) killAll() int {
 	var layers []string
 	for _, p := range panes {
 		if state.ValidName(p.Name) {
-			layers = append(layers, c.killLayers(c.Tmux.Socket, p.Name, 0)...)
+			layers = append(layers, c.killLayers(c.Mux.SocketName(), p.Name, 0)...)
 		}
-		_ = c.Tmux.KillWindowOf(p.PaneID) // ignore: pane may already be gone
+		_ = c.Mux.KillWindowOf(p.PaneID) // ignore: pane may already be gone
 		if state.ValidName(p.Name) {
 			dir := c.terminalDir(p.Name)
-			if term, err := state.ResolveAt(c.Tmux, c.StateDir, p.Name); err == nil {
+			if term, err := state.ResolveAt(c.Mux, c.StateDir, p.Name); err == nil {
 				dir = term.Dir
 			}
 			if j, err := journal.Open(dir); err == nil {
@@ -1164,12 +1192,12 @@ func (c *Ctx) cmdNote(args []string) int {
 	}
 	text := strings.Join(pos[1:], " ")
 
-	term, err := state.ResolveAt(c.Tmux, c.StateDir, name)
+	term, err := state.ResolveAt(c.Mux, c.StateDir, name)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return c.noTerminal(name)
 		}
-		return c.tmuxErr(err)
+		return c.muxErr(err)
 	}
 	j, err := journal.Open(term.Dir)
 	if err != nil {
@@ -1313,7 +1341,7 @@ func (c *Ctx) cmdVersion() int {
 // existingNamesScoped is the socket-aware variant used while allocating an
 // automatic name. The older Ctx helper remains for generic error hints.
 func (c *Ctx) existingNamesScoped() []string {
-	terms, err := state.ListAt(c.Tmux, c.StateDir)
+	terms, err := state.ListAt(c.Mux, c.StateDir)
 	if err != nil {
 		return nil
 	}
@@ -1325,35 +1353,60 @@ func (c *Ctx) existingNamesScoped() []string {
 }
 
 // findPane returns the managed pane for name, tolerating tmux's no-server state.
-func (c *Ctx) findPane(name string) (tmux.PaneInfo, bool, error) {
-	panes, err := c.Tmux.ListManaged()
+func (c *Ctx) findPane(name string) (mux.PaneInfo, bool, error) {
+	panes, err := c.Mux.ListManaged()
 	if err != nil {
 		if state.IsNoServer(err) {
-			return tmux.PaneInfo{}, false, nil
+			return mux.PaneInfo{}, false, nil
 		}
-		return tmux.PaneInfo{}, false, err
+		return mux.PaneInfo{}, false, err
 	}
 	for _, p := range panes {
 		if p.Name == name {
 			return p, true, nil
 		}
 	}
-	return tmux.PaneInfo{}, false, nil
+	return mux.PaneInfo{}, false, nil
 }
 
 // scanCompletion does one read-only scan for the completion mark of a command
-// sent at offset from, returning the mark's start offset if present.
-func scanCompletion(j *journal.Journal, from int64, mode core.Mode) (start int64, ok bool) {
-	res, err := detect.WaitCompletion(j, from, mode, 0, 0)
+// sent at offset from, returning the mark's start offset if present. bounded is
+// as for waitDone.
+func scanCompletion(j *journal.Journal, from int64, mode core.Mode, bounded bool) (start int64, ok bool) {
+	res, err := detect.WaitCompletion(j, from, mode, bounded, 0, 0)
 	if err != nil || res.Outcome != detect.OutcomeDone {
 		return 0, false
 	}
 	return res.MarkStart, true
 }
 
-// shellName is $SHELL, defaulting to bash when unset. Preserve the configured
-// path so shells with native integration (notably fish) launch the same binary.
+// shellName is the shell a new terminal runs: $PAIRMUX_SHELL when set, else
+// $SHELL, defaulting to bash when unset. Preserve the configured path so shells
+// with native integration (notably fish) launch the same binary.
+//
+// On Windows $SHELL is honoured only when it names a real file — Git Bash
+// exports a POSIX path such as /usr/bin/bash that Windows cannot start — and
+// the default is PowerShell 7 (pwsh), then Windows PowerShell, then cmd.exe.
 func shellName() string {
+	if sh := os.Getenv("PAIRMUX_SHELL"); sh != "" {
+		return sh
+	}
+	if runtime.GOOS == "windows" {
+		if sh := os.Getenv("SHELL"); sh != "" {
+			if fi, err := os.Stat(sh); err == nil && !fi.IsDir() {
+				return sh
+			}
+		}
+		for _, name := range []string{"pwsh.exe", "powershell.exe"} {
+			if p, err := exec.LookPath(name); err == nil {
+				return p
+			}
+		}
+		if c := os.Getenv("COMSPEC"); c != "" {
+			return c
+		}
+		return "cmd.exe"
+	}
 	sh := os.Getenv("SHELL")
 	if sh == "" {
 		return "bash"

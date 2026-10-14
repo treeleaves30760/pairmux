@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/treeleaves30760/pairmux/internal/core"
 )
 
 func TestCollapseCR(t *testing.T) {
@@ -20,6 +22,11 @@ func TestCollapseCR(t *testing.T) {
 		{"cr at end of line clears it", "junk\r", ""},
 		{"cr only affects its own line", "keep\nover\rwrite\n", "keep\nwrite\n"},
 		{"mixed crlf and bare cr", "a\r\nb0\rb1\r\n", "a\nb1\n"},
+		// Escape sequences occupy no column, so they are not content after a \r:
+		// ConPTY may put a cursor-show between the \r and \n of a line end.
+		{"escape between cr and lf is a line end", "a\r\x1b[?25h\nb", "a\nb"},
+		{"genuine overwrite", "47%\r100%\n", "100%\n"},
+		{"overwrite after an erase", "47%\r\x1b[K100%\n", "100%\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -74,6 +81,16 @@ func TestCollapseCRPromptSP(t *testing.T) {
 				t.Fatalf("CollapseCR(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestRenderConPTYScrollLineEnd is the Windows PowerShell repro: at the run
+// where the screen first scrolls, ConPTY emits the cursor-show between the \r
+// and \n ending the output line. Read as an overwrite, it left the line empty.
+func TestRenderConPTYScrollLineEnd(t *testing.T) {
+	raw := []byte("\x1b[?25l\x1b[93mecho \x1b[37miter-25\x1b[m\r\niter-25\r\x1b[?25h\n")
+	if got, _ := Render(raw, "echo iter-25", 50, 200); got != "iter-25" {
+		t.Fatalf("Render = %q, want %q", got, "iter-25")
 	}
 }
 
@@ -441,6 +458,30 @@ func TestRenderTruncationCounts(t *testing.T) {
 	}
 	if lines[51] != "line-801" || lines[250] != "line-1000" {
 		t.Fatalf("tail lines wrong: first=%q last=%q", lines[51], lines[250])
+	}
+}
+
+// TestSentinelBoundaryStripped: the boundary the Windows sentinels print after
+// their OSC is pairmux's own marker and never reaches an agent, neither in a
+// rendered run nor in a screen capture.
+func TestSentinelBoundaryStripped(t *testing.T) {
+	b := core.SentinelBoundary
+	if got := string(StripANSI([]byte("a" + b + "b\n" + b))); got != "ab\n" {
+		t.Fatalf("StripANSI = %q, want %q", got, "ab\n")
+	}
+	if got := string(StripANSI([]byte("one\u200btwo"))); got != "one\u200btwo" {
+		t.Fatalf("StripANSI dropped a lone ZERO WIDTH SPACE: %q", got)
+	}
+	if got := StripBoundary("D:\\x>" + b + "\nnext"); got != "D:\\x>\nnext" {
+		t.Fatalf("StripBoundary = %q", got)
+	}
+
+	// A cmd.exe run region as ConPTY renders it: the echo, the hoisted
+	// sentinel OSC, the output, and the region ends at the boundary.
+	sent := `echo hi & <nul set /p "=%PAIRMUX_ESC%]7779;p;!ERRORLEVEL!%PAIRMUX_BEL%%PAIRMUX_EOC%" & (call )`
+	raw := sent + "\x1b]7779;p;0\x07\x1b[?25l\r\nhi\r\n"
+	if got, _ := Render([]byte(raw), sent, 50, 200); got != "hi" {
+		t.Fatalf("Render = %q, want %q", got, "hi")
 	}
 }
 

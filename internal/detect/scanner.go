@@ -7,6 +7,8 @@ package detect
 import (
 	"strconv"
 	"strings"
+
+	"github.com/treeleaves30760/pairmux/internal/core"
 )
 
 // MarkKind identifies a recognized OSC mark.
@@ -18,6 +20,7 @@ const (
 	MarkC                        // OSC 133;C — command output start
 	MarkD                        // OSC 133;D[;exit] — command finished
 	MarkSentinel                 // OSC 7779;p;exit — pairmux run sentinel
+	MarkBoundary                 // core.SentinelBoundary text — where a sentinel's output ends
 )
 
 func (k MarkKind) String() string {
@@ -32,14 +35,17 @@ func (k MarkKind) String() string {
 		return "D"
 	case MarkSentinel:
 		return "sentinel"
+	case MarkBoundary:
+		return "boundary"
 	default:
 		return "unknown"
 	}
 }
 
 // Mark is a recognized sequence located in the stream. Start and End are
-// absolute stream offsets: Start is the offset of the leading ESC, End is the
-// offset one past the terminator's last byte. ExitCode is -1 when absent.
+// absolute stream offsets: Start is the offset of the leading ESC (for a
+// boundary, of its first byte), End is the offset one past the sequence's last
+// byte. ExitCode is -1 when absent.
 type Mark struct {
 	Kind     MarkKind
 	ExitCode int
@@ -74,6 +80,7 @@ type Scanner struct {
 	pos       int64  // absolute offset of the next byte to consume
 	markStart int64  // offset of the ESC that began the current OSC
 	payload   []byte // OSC payload bytes collected so far (excludes ESC ] and terminator)
+	bnd       int    // bytes of core.SentinelBoundary matched so far in ground state
 }
 
 // NewScanner returns a Scanner whose first fed byte sits at absolute offset base.
@@ -95,6 +102,10 @@ func (s *Scanner) Feed(chunk []byte) []Mark {
 			if b == esc {
 				s.state = stEsc
 				s.markStart = off
+				s.bnd = 0
+			} else if s.matchBoundary(b) {
+				start := s.pos - int64(len(core.SentinelBoundary))
+				marks = append(marks, Mark{Kind: MarkBoundary, ExitCode: -1, Start: start, End: s.pos})
 			}
 
 		case stEsc:
@@ -155,6 +166,32 @@ func (s *Scanner) Feed(chunk []byte) []Mark {
 		}
 	}
 	return marks
+}
+
+// matchBoundary advances the match of core.SentinelBoundary by one ground-state
+// byte and reports whether that byte completed it. The match lives in the
+// Scanner, so a boundary split across Feed calls is still found. On a mismatch
+// it falls back to the longest boundary prefix that ends the bytes seen, since
+// a repeated character can restart a match inside a partial one.
+func (s *Scanner) matchBoundary(b byte) bool {
+	const pat = core.SentinelBoundary
+	if pat[s.bnd] == b {
+		s.bnd++
+	} else if s.bnd > 0 {
+		seen := pat[:s.bnd] + string([]byte{b})
+		s.bnd = 0
+		for n := len(seen) - 1; n > 0; n-- {
+			if strings.HasPrefix(pat, seen[len(seen)-n:]) {
+				s.bnd = n
+				break
+			}
+		}
+	}
+	if s.bnd == len(pat) {
+		s.bnd = 0
+		return true
+	}
+	return false
 }
 
 // finish parses the collected payload into a Mark ending at absolute offset end

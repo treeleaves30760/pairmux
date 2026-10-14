@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -39,6 +40,9 @@ func TestPrepareTerminalJournal(t *testing.T) {
 		info, err := os.Stat(check.path)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if runtime.GOOS == "windows" {
+			continue // Windows has ACLs, not Unix permission bits
 		}
 		if got := info.Mode().Perm(); got != check.mode {
 			t.Errorf("mode %s = %o, want %o", check.path, got, check.mode)

@@ -56,6 +56,15 @@ negative: the terminal just stays `running`. If a command you know needs credent
 `PAIRMUX_SECRET_PROMPT_RE` environment variable adds your own RE2 pattern on top of the builtin
 recognition (it never replaces it); `pairmux doctor` reports whether the pattern compiles.
 
+### Prompts on Windows
+
+On macOS and Linux, pairmux also reads the pane's terminal: echo suppressed while a line is being
+read is what `getpass()` does, so such a prompt is classified as secret whatever its wording. Windows
+has no tty line discipline to read, so there classification uses the prompt's wording only. A
+PowerShell `Read-Host -AsSecureString -Prompt Password` shows `Password: ` and is recognized by its
+wording; a credential prompt phrased differently needs `PAIRMUX_SECRET_PROMPT_RE`, or the
+`peek --screen` then `wait --human --notify` fallback above.
+
 ## The never-guess-secrets rule
 
 When a recognized prompt is secret-shaped — a **password, passphrase, passcode, PIN, one-time or
@@ -70,7 +79,9 @@ secret. Its `next` field deliberately omits a `send` command and points at human
 This is an agent rule, not an input firewall: the CLI cannot prevent someone from manually invoking
 `send`. An agent must not invent a secret, recover one from output, put one in a CLI argument or note,
 or send it into the pane. Hand off with `pairmux wait <name> --human --notify`, which unblocks on a
-human note or on the handoff resolving by itself. The full flow is in
+human note or on the handoff resolving by itself. The human answers through `pairmux attach <name>`
+and detaches with `Ctrl-b d` (on the tmux backend, tmux's configured binding; on the built-in
+backend always `Ctrl-b d`, with `Ctrl-b Ctrl-b` for a literal `Ctrl-b`). The full flow is in
 [human collaboration](./human-collaboration.md).
 :::
 
@@ -82,8 +93,8 @@ verify that the prompt hides input before entering a real credential.
 
 `send` applies its parts in order — text, then keys, then a trailing Enter:
 
-- `--text S` sends literal text through tmux's `send-keys -l`; pairmux performs no further shell or
-  key-name interpretation. The shell that launches pairmux still expands its own arguments, so use
+- `--text S` sends literal text (through tmux's `send-keys -l` on the tmux backend); pairmux performs
+  no further shell or key-name interpretation. The shell that launches pairmux still expands its own arguments, so use
   shell quoting when needed: `--text '$HOME'` sends the five literal characters `$HOME`.
 - `--key K` sends a named key. Repeatable. Valid keys: `Enter Escape Tab Space Up Down Left Right Home End PPage NPage BSpace DC`, `F1`–`F12`, `C-a`..`C-z`, `M-a`..`M-z`.
 - `--enter` appends a final Enter.
@@ -122,6 +133,9 @@ pairmux --json peek repl                         # now the journal contains "4"
 pairmux --json send repl --text "exit()" --enter
 pairmux --json wait repl --timeout 10s           # observe the program exit
 ```
+
+On Windows the interpreter is usually `python` or `py` rather than `python3`, and `--cmd` runs
+through the terminal's shell (PowerShell `-EncodedCommand` by default).
 
 Known REPL, TUI, and persistent-server entrypoints should use `new --cmd`, then
 `send` → `wait` → `peek`; an immediate `peek` can race the program's response. A `--cmd` terminal

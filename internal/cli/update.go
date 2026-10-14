@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"unicode"
@@ -44,6 +45,10 @@ type updateRunResult struct {
 	stdoutTruncated, stderrTruncated bool
 }
 
+// updateGOOS is runtime.GOOS, a variable so tests can exercise the Windows
+// refusal on any platform.
+var updateGOOS = runtime.GOOS
+
 func (c *Ctx) cmdUpdate(args []string) int {
 	return c.cmdUpdateWith(args, version.Version, updateOps{
 		executable: os.Executable,
@@ -58,6 +63,14 @@ func (c *Ctx) cmdUpdateWith(args []string, current string, ops updateOps) int {
 	}
 	if len(args) != 0 {
 		return c.usage("pairmux update", "update accepts no arguments or command-specific flags; add global --json for JSON output")
+	}
+	if updateGOOS == "windows" {
+		// uv installs Windows tools as copied .exe files rather than the
+		// symlinked layout this updater verifies ownership through, and
+		// Windows cannot replace an executable while it runs — which this one
+		// is. Refuse before touching anything and name the manual route.
+		return c.fail(output.CodeUpdate, "pairmux update is not supported on Windows",
+			"Close pairmux, then run: uv tool install --upgrade pairmux (or pip install -U pairmux in the environment that has it).")
 	}
 	old, err := parseUpdateVersion(current)
 	if err != nil {

@@ -157,6 +157,8 @@ if [ -s "$PM_TEST_LOG" ] || [ -e "$PAIRMUX_INSTALL_DIR" ]; then fail 'dry-run si
 grep -q 'pairmux==1.2.3' "$CASE_DIR/output"
 run_installer --help
 [ ! -s "$PM_TEST_LOG" ] || fail 'help side effects'
+grep -q 'tmux is optional' "$CASE_DIR/output" || fail 'help still describes tmux as required'
+grep -q 'on Windows use install.ps1' "$CASE_DIR/output" || fail 'help omits the Windows installer'
 
 new_case invalid-pin
 if run_installer --version '1.2.3 --index evil'; then fail 'accepted injected version'; fi
@@ -246,7 +248,8 @@ grep -q 'expected 1.2.3' "$CASE_DIR/errors"
 new_case tmux-old
 export PM_TEST_TMUX=2.9
 run_installer --version v1.2.3
-grep -q 'older than the required' "$CASE_DIR/errors"
+grep -q 'older than the required 3.2 for the tmux backend' "$CASE_DIR/errors"
+grep -q 'PAIRMUX_BACKEND=builtin' "$CASE_DIR/errors"
 
 # An explicit shadow executable must not be used for install verification.
 new_case shadow
@@ -277,7 +280,9 @@ run_bootstrap --version v1.2.3
 [ -x "$HOME/.local/bin/uv" ] || fail 'uv bootstrap path'
 [ "$("$PAIRMUX_INSTALL_DIR/pairmux" version)" = 1.2.3 ] || fail 'bootstrap tool install'
 grep -q bootstrap "$PM_TEST_LOG"
-grep -q 'tmux is not installed' "$CASE_DIR/errors"
+# Missing tmux is a note, not a warning: the built-in backend takes over.
+grep -q '^note: tmux is not installed; pairmux will use its built-in terminal backend' "$CASE_DIR/errors"
+if grep -q 'warning: tmux' "$CASE_DIR/errors"; then fail 'missing optional tmux reported as a warning'; fi
 [ -z "$(find "$TMPDIR" -mindepth 1 -print -quit)" ] || fail 'bootstrap temp leak'
 if [ -e "$HOME/.bashrc" ] || [ -e "$HOME/.zshrc" ]; then fail 'modified shell profile'; fi
 
@@ -294,8 +299,16 @@ if run_bootstrap; then fail 'ignored bootstrap failure'; fi
 [ -z "$(find "$TMPDIR" -mindepth 1 -print -quit)" ] || fail 'failed bootstrap temp leak'
 
 new_case unsupported-platform
-export PM_TEST_OS=Windows_NT
-if run_installer --dry-run; then fail 'accepted Windows native'; fi
+for os_name in Windows_NT MINGW64_NT-10.0-22631 MSYS_NT-10.0 CYGWIN_NT-10.0; do
+    export PM_TEST_OS=$os_name
+    if run_installer --dry-run; then fail "accepted $os_name in the POSIX installer"; fi
+    grep -q 'native PowerShell installer: irm https://pairmux.treeleaves30760.com/install.ps1 | iex' \
+        "$CASE_DIR/errors" || fail "no Windows installer hint for $os_name"
+    if grep -q WSL "$CASE_DIR/errors"; then fail "still sends $os_name to WSL"; fi
+done
+export PM_TEST_OS=FreeBSD
+if run_installer --dry-run; then fail 'accepted FreeBSD'; fi
+grep -q 'supports macOS, Linux, and Windows via' "$CASE_DIR/errors" || fail 'unclear unsupported-OS error'
 [ ! -s "$PM_TEST_LOG" ] || fail 'unsupported platform ran uv'
 
 printf '%s\n' 'install.sh PyPI/uv tests passed (offline mocks)'

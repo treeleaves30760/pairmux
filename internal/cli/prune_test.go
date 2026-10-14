@@ -71,7 +71,7 @@ func newPruneCtx(t *testing.T, buf *bytes.Buffer) (*Ctx, string) {
 		t.Skip("tmux binary not on PATH; prune liveness tests need it")
 	}
 	root := t.TempDir()
-	c := &Ctx{Tmux: tmux.New(prTestSocket), JSON: true, StateDir: root, Stdout: buf}
+	c := &Ctx{Mux: tmux.New(prTestSocket), JSON: true, StateDir: root, Stdout: buf}
 	return c, state.SocketDir(root, prTestSocket)
 }
 

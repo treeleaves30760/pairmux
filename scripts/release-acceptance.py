@@ -8,6 +8,7 @@ import io
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tarfile
@@ -23,7 +24,37 @@ PLATFORMS = {
     "darwin-arm64": "macosx_12_0_arm64",
     "linux-amd64": "manylinux_2_17_x86_64.manylinux2014_x86_64",
     "linux-arm64": "manylinux_2_17_aarch64.manylinux2014_aarch64",
+    "windows-amd64": "win_amd64",
+    "windows-arm64": "win_arm64",
 }
+# Published releases come in exactly two shapes, recognised from the actual
+# GitHub asset set (never from the tag number): v0.6.0 and earlier ship four
+# macOS/Linux tarballs, two RPMs and checksums.txt with four wheels; releases
+# with the built-in multiplexer add two Windows zips and two Windows wheels.
+# Anything else, including a mix of the two, fails closed.
+UNIX_TARGETS = ("darwin-amd64", "darwin-arm64", "linux-amd64", "linux-arm64")
+SHAPES = {
+    "macos-linux": UNIX_TARGETS,
+    "macos-linux-windows": UNIX_TARGETS + ("windows-amd64", "windows-arm64"),
+}
+
+
+def archive_name(version: str, target: str) -> str:
+    os_name, arch = target.split("-")
+    return f"pairmux_{version}_{os_name}_{arch}." + ("zip" if os_name == "windows" else "tar.gz")
+
+
+def native_names(version: str, shape: str) -> set[str]:
+    names = {archive_name(version, target) for target in SHAPES[shape]}
+    return names | {f"pairmux_{version}_linux_{arch}.rpm" for arch in ("amd64", "arm64")}
+
+
+def release_shape(version: str, asset_names: set[str]) -> str:
+    matches = [shape for shape in SHAPES if asset_names == native_names(version, shape) | {"checksums.txt"}]
+    if len(matches) != 1:
+        raise ValueError("GitHub release assets match no published release shape: expected four tarballs, "
+                         "two RPMs and checksums.txt, optionally plus exactly two Windows zips")
+    return matches[0]
 
 
 def fetch(url: str) -> bytes:
@@ -71,13 +102,13 @@ def verify(tag: str, out: Path, target: str | None = None, rpm: bool = False) ->
     release = json.loads(fetch(release_url))
     if release.get("tag_name") != tag or release.get("draft") is not False or release.get("prerelease") is not False or not release.get("published_at"):
         raise ValueError("requested GitHub release is not a published, non-draft stable release")
-    names = {f"pairmux_{version}_{os_name}_{arch}.tar.gz"
-             for os_name in ("darwin", "linux") for arch in ("amd64", "arm64")}
-    names |= {f"pairmux_{version}_linux_{arch}.rpm" for arch in ("amd64", "arm64")}
     assets = release.get("assets", [])
     by_name = {asset["name"]: asset for asset in assets}
-    if len(assets) != 7 or len(by_name) != 7 or set(by_name) != names | {"checksums.txt"}:
-        raise ValueError("GitHub release must contain exactly four tarballs, two RPMs, and checksums.txt")
+    if len(assets) != len(by_name):
+        raise ValueError("GitHub release lists a duplicate asset name")
+    shape = release_shape(version, set(by_name))
+    names = native_names(version, shape)
+    targets = SHAPES[shape]
     base = f"https://github.com/{REPO}/releases/download/{tag}/"
     for name, asset in by_name.items():
         if asset.get("state") != "uploaded" or asset.get("browser_download_url") != base + name or asset.get("size", 0) <= 0:
@@ -85,16 +116,18 @@ def verify(tag: str, out: Path, target: str | None = None, rpm: bool = False) ->
     _, checksum_data = download(out, base + "checksums.txt", "checksums.txt")
     checksums = checksum_rows(checksum_data)
     if set(checksums) != names:
-        raise ValueError("checksum inventory does not match the six native assets")
+        raise ValueError(f"checksum inventory does not match the {len(names)} native assets")
 
     pypi = json.loads(fetch(pypi_url))
     if pypi.get("info", {}).get("name") != "pairmux" or pypi["info"].get("version") != version:
         raise ValueError("PyPI project/version does not match the requested release")
     wheels = pypi.get("urls", [])
-    wheel_names = {f"pairmux-{version}-py3-none-{platform}.whl" for platform in PLATFORMS.values()}
+    # PyPI must match the shape GitHub published: a Windows zip without its
+    # wheel (or the reverse) is an incomplete release, not a smaller one.
+    wheel_names = {f"pairmux-{version}-py3-none-{PLATFORMS[target]}.whl" for target in targets}
     by_wheel = {wheel["filename"]: wheel for wheel in wheels}
-    if len(wheels) != 4 or len(by_wheel) != 4 or set(by_wheel) != wheel_names:
-        raise ValueError("PyPI must publish exactly the four platform wheels")
+    if len(wheels) != len(wheel_names) or len(by_wheel) != len(wheel_names) or set(by_wheel) != wheel_names:
+        raise ValueError(f"PyPI must publish exactly the {len(wheel_names)} platform wheels of a {shape} release")
     for name, wheel in by_wheel.items():
         if wheel.get("packagetype") != "bdist_wheel" or wheel.get("yanked") is not False or not wheel.get("url", "").startswith("https://files.pythonhosted.org/") or not re.fullmatch(r"[a-f0-9]{64}", wheel.get("digests", {}).get("sha256", "")):
             raise ValueError("invalid, yanked, or unchecked PyPI wheel " + name)
@@ -115,27 +148,39 @@ def verify(tag: str, out: Path, target: str | None = None, rpm: bool = False) ->
         "sources": {"github": release_url, "pypi": pypi_url, "latest_github": latest_url, "latest_pypi": all_pypi_url},
         "latest_github_tag": latest_tag, "latest_pypi_version": latest_version,
         "tag_is_latest_on_both": latest_tag == tag and latest_version == version,
+        "shape": shape, "targets": list(targets),
         "checksums_sha256": digest(checksum_data), "checksums": checksums,
         "assets": [{"name": n, "url": base + n, "sha256": checksums[n]} for n in sorted(names)],
         "wheels": [{"name": n, "url": by_wheel[n]["url"], "sha256": by_wheel[n]["digests"]["sha256"]} for n in sorted(wheel_names)],
     }
     if target:
-        os_name, arch = target.split("-")
-        archive_name = f"pairmux_{version}_{os_name}_{arch}.tar.gz"
-        archive_path, archive_data = download(out, base + archive_name, archive_name, checksums[archive_name])
-        with tarfile.open(fileobj=io.BytesIO(archive_data), mode="r:gz") as archive:
-            members = [member for member in archive.getmembers() if member.name.removeprefix("./") == "pairmux"]
-            if len(members) != 1 or not members[0].isfile() or not members[0].mode & 0o111:
-                raise ValueError("native archive has no unique regular executable pairmux")
-            stream = archive.extractfile(members[0])
-            if stream is None:
-                raise ValueError("cannot read archived binary")
-            binary_hash = digest(stream.read())
+        if target not in targets:
+            raise ValueError(f"release {tag} has no {target} assets ({shape} release)")
+        name = archive_name(version, target)
+        archive_path, archive_data = download(out, base + name, name, checksums[name])
+        if target.startswith("windows-"):
+            executable = "pairmux.exe"
+            with zipfile.ZipFile(io.BytesIO(archive_data)) as archive:
+                members = [member for member in archive.infolist() if member.filename == executable]
+                if (len(members) != 1 or members[0].is_dir()
+                        or stat.S_IFMT(members[0].external_attr >> 16) not in (0, stat.S_IFREG)):
+                    raise ValueError("native archive has no unique regular pairmux.exe")
+                binary_hash = digest(archive.read(members[0]))
+        else:
+            executable = "pairmux"
+            with tarfile.open(fileobj=io.BytesIO(archive_data), mode="r:gz") as archive:
+                members = [member for member in archive.getmembers() if member.name.removeprefix("./") == executable]
+                if len(members) != 1 or not members[0].isfile() or not members[0].mode & 0o111:
+                    raise ValueError("native archive has no unique regular executable pairmux")
+                stream = archive.extractfile(members[0])
+                if stream is None:
+                    raise ValueError("cannot read archived binary")
+                binary_hash = digest(stream.read())
         wheel_name = f"pairmux-{version}-py3-none-{PLATFORMS[target]}.whl"
         wheel = by_wheel[wheel_name]
         wheel_path, wheel_data = download(out, wheel["url"], wheel_name, wheel["digests"]["sha256"])
         with zipfile.ZipFile(io.BytesIO(wheel_data)) as archive:
-            binary_name = f"pairmux-{version}.data/scripts/pairmux"
+            binary_name = f"pairmux-{version}.data/scripts/{executable}"
             if archive.namelist().count(binary_name) != 1 or digest(archive.read(binary_name)) != binary_hash:
                 raise ValueError("selected public wheel binary differs from the checksummed native archive")
         report["selected"] = {"target": target, "archive": str(archive_path), "wheel": str(wheel_path), "binary_sha256": binary_hash}
@@ -259,14 +304,19 @@ def main() -> int:
         report = verify(os.environ.get("ACCEPTANCE_TAG", ""), args.out_dir, args.target, args.rpm)
         (args.out_dir / "provenance.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         if os.environ.get("GITHUB_OUTPUT"):
-            outputs = {"version": report["version"], "latest_version": report["latest_pypi_version"]}
+            # windows_assets lets the workflow skip the native Windows job only on
+            # an explicit, verified "false"; every other value runs it and fails.
+            outputs = {"version": report["version"], "latest_version": report["latest_pypi_version"],
+                       "shape": report["shape"],
+                       "windows_assets": "true" if "windows-amd64" in report["targets"] else "false"}
             outputs.update(report.get("selected", {}))
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
                 for key, value in outputs.items():
                     if "\n" in str(value) or "\r" in str(value):
                         raise ValueError("invalid output value")
                     stream.write(f"{key}={value}\n")
-        print(f"verified published {report['tag']}: seven GitHub assets and four PyPI wheels; latest public PyPI stable {report['latest_pypi_version']}")
+        print(f"verified published {report['tag']} ({report['shape']}): {len(report['assets']) + 1} GitHub assets and "
+              f"{len(report['wheels'])} PyPI wheels; latest public PyPI stable {report['latest_pypi_version']}")
         return 0
     except (ValueError, OSError, KeyError, tarfile.TarError, zipfile.BadZipFile, subprocess.SubprocessError) as exc:
         print("release acceptance failed: " + str(exc), file=sys.stderr)

@@ -1,4 +1,4 @@
-//go:build integration
+//go:build integration && unix
 
 package integration
 
@@ -17,8 +17,9 @@ import (
 // Its control files belong to the parent test, so premature TempDir removal in
 // the child cannot release the trap or erase evidence of an early cleanup.
 func TestCleanupWaitsForOwnedHistoryWriter(t *testing.T) {
-	if !haveTmux || !isExec(bashShell) {
-		t.Skip("tmux and bash required")
+	requireTmuxBackend(t) // drives its bootstrap endpoint through tmux itself
+	if !isExec(bashShell) {
+		t.Skip("bash required")
 	}
 	for _, killBeforeCleanup := range []bool{false, true} {
 		t.Run(fmt.Sprintf("kill_before_cleanup=%t", killBeforeCleanup), func(t *testing.T) {
@@ -144,8 +145,4 @@ func waitCleanupFile(ctx context.Context, path string) error {
 		case <-ticker.C:
 		}
 	}
-}
-
-func cleanupShellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }

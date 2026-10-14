@@ -71,7 +71,7 @@ func TestWaitCompletionGoroutineWriter(t *testing.T) {
 		appendRaw(t, j, markSeq[4:])
 	}()
 
-	res, err := WaitCompletion(j, from, core.ModeHooks, 5*time.Second, 20*time.Millisecond)
+	res, err := WaitCompletion(j, from, core.ModeHooks, false, 5*time.Second, 20*time.Millisecond)
 	if err != nil {
 		t.Fatalf("WaitCompletion: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestWaitCompletionGoroutineWriter(t *testing.T) {
 func TestWaitCompletionTimeout(t *testing.T) {
 	j := mustOpen(t)
 	writeRawFile(t, j, []byte("$ echo hi\nhi\n")) // no completion mark
-	res, err := WaitCompletion(j, 0, core.ModeHooks, 150*time.Millisecond, 20*time.Millisecond)
+	res, err := WaitCompletion(j, 0, core.ModeHooks, false, 150*time.Millisecond, 20*time.Millisecond)
 	if err != nil {
 		t.Fatalf("WaitCompletion: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestWaitCommandReturnsQuietPromptBeforeTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := time.Now()
-	res, err := WaitCommand(j, 0, core.ModeHooks, 5*time.Second, 20*time.Millisecond, "")
+	res, err := WaitCommand(j, 0, core.ModeHooks, false, 5*time.Second, 20*time.Millisecond, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestWaitCompletionModeSelect(t *testing.T) {
 		j := mustOpen(t)
 		content, dStart, _ := build()
 		writeRawFile(t, j, content)
-		res, err := WaitCompletion(j, 0, core.ModeHooks, 2*time.Second, 20*time.Millisecond)
+		res, err := WaitCompletion(j, 0, core.ModeHooks, false, 2*time.Second, 20*time.Millisecond)
 		if err != nil {
 			t.Fatalf("%v", err)
 		}
@@ -166,7 +166,7 @@ func TestWaitCompletionModeSelect(t *testing.T) {
 		j := mustOpen(t)
 		content, _, sentStart := build()
 		writeRawFile(t, j, content)
-		res, err := WaitCompletion(j, 0, core.ModeSentinel, 2*time.Second, 20*time.Millisecond)
+		res, err := WaitCompletion(j, 0, core.ModeSentinel, false, 2*time.Second, 20*time.Millisecond)
 		if err != nil {
 			t.Fatalf("%v", err)
 		}
@@ -347,5 +347,36 @@ func TestDeriveStatusReadOnly(t *testing.T) {
 	}
 	if len(after) != len(before) {
 		t.Fatalf("DeriveStatus wrote events: before=%d after=%d", len(before), len(after))
+	}
+}
+
+func TestWaitPromptCycle(t *testing.T) {
+	const a, d = "\x1b]133;A\a", "\x1b]133;D;0\a"
+	cases := []struct {
+		name   string
+		stream string
+		late   string // appended by a goroutine shortly after the wait starts
+		want   bool
+	}{
+		{"first prompt only", a + "PS> ", "", false},
+		{"nudge completes later", a + "PS> ", "\r\n" + d + a + "PS> ", true},
+		{"lost first prompt, nudge seen", "\r\n" + d + a + "$ ", "", true},
+		{"fish marks an empty line with A alone", a + "> ", "\r\n" + a + "> ", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			j := mustOpen(t)
+			writeRawFile(t, j, []byte(c.stream))
+			if c.late != "" {
+				go func() {
+					time.Sleep(60 * time.Millisecond)
+					appendRaw(t, j, []byte(c.late))
+				}()
+			}
+			got, err := WaitPromptCycle(j, 400*time.Millisecond)
+			if err != nil || got != c.want {
+				t.Fatalf("WaitPromptCycle = %v, %v; want %v", got, err, c.want)
+			}
+		})
 	}
 }

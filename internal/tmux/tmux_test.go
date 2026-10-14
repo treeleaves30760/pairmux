@@ -3,6 +3,7 @@ package tmux
 import (
 	"errors"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -324,6 +325,9 @@ func TestErrorPropagation(t *testing.T) {
 // execRunner uses a real subprocess (POSIX sh, never tmux) to verify stdout
 // capture and stderr inclusion in errors.
 func TestExecRunnerStdout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX sh")
+	}
 	out, err := execRunner([]string{"/bin/sh", "-c", "printf hello"})
 	if err != nil {
 		t.Fatalf("execRunner: %v", err)
@@ -334,6 +338,9 @@ func TestExecRunnerStdout(t *testing.T) {
 }
 
 func TestExecRunnerStderrInError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX sh")
+	}
 	_, err := execRunner([]string{"/bin/sh", "-c", "echo boom 1>&2; exit 3"})
 	if err == nil {
 		t.Fatal("expected error")
