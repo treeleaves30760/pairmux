@@ -388,9 +388,10 @@ automatic choice is made per endpoint, in this order:
 
 1. Windows → `builtin` (`PAIRMUX_BACKEND=tmux` on Windows is an error).
 2. A built-in server is already running for this socket → `builtin`, so terminals created before
-   you installed tmux stay reachable afterwards.
-3. `tmux` is on PATH → `tmux`. Existing users see no change, and their live tmux terminals stay
-   where they are.
+   you installed tmux stay reachable afterwards — unless a tmux server is running for the same
+   socket too, in which case `tmux` keeps its live terminals visible.
+3. tmux 3.2 or newer is on PATH → `tmux`. Existing users see no change, and their live tmux
+   terminals stay where they are. An older tmux is skipped in favor of `builtin`.
 4. Otherwise → `builtin`.
 
 Every terminal is created with `PAIRMUX_BACKEND` set to its own backend, so a nested pairmux layer
@@ -417,11 +418,11 @@ log in a per-user runtime directory:
 
 | Platform | Directory |
 | --- | --- |
-| macOS/Linux | `$PAIRMUX_TMPDIR`, else `$TMUX_TMPDIR`, else `/tmp`, then `pairmux-<uid>/` — created mode 0700; refused if owned by another uid or accessible by group/others |
-| Windows | `%PAIRMUX_TMPDIR%`, else `%LOCALAPPDATA%\pairmux`, then `run\` |
+| macOS/Linux | `$PAIRMUX_TMPDIR`, else `$TMUX_TMPDIR`, else `/tmp`, then `pairmux-<uid>/` — created mode 0700; refused (by the server and by every client before it connects) if owned by another uid or accessible by group/others |
+| Windows | `%PAIRMUX_TMPDIR%`, else `%LOCALAPPDATA%\pairmux`, then `run\` — created with an ACL admitting only you and SYSTEM; refused if another account owns it |
 
 It holds `<socket>.sock`, `<socket>.lock`, and `<socket>.log` (server diagnostics; look there if the
-server does not start). Socket paths are limited to about 100 bytes: an overly long socket name gets
+server does not start); a server that exits cleanly removes all three. Socket paths are limited to about 100 bytes: an overly long socket name gets
 a digest name, and if the directory itself is too deep the error tells you to set `PAIRMUX_TMPDIR`
 to a short writable directory. On Windows the server runs from a private copy,
 `pairmux-muxd-<hash>.exe`, in that directory, so an upgrade can replace the installed `pairmux.exe`

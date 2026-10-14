@@ -13,8 +13,8 @@ Global flags:
 
 Environment: `PAIRMUX_SOCKET` sets the default endpoint; `PAIRMUX_STATE_DIR` sets the journal root
 (default `~/.local/state/pairmux`). `PAIRMUX_BACKEND` = `tmux` | `builtin` | `auto` (default: Windows
-→ builtin; a built-in server already running for this socket → builtin; tmux on PATH → tmux; else
-builtin). Terminals inherit their backend, so nested layers stay on it. `PAIRMUX_TMPDIR` sets the
+→ builtin; a built-in server already running for this socket → builtin, unless a tmux server runs
+there too; tmux 3.2+ on PATH → tmux; else builtin). Terminals inherit their backend, so nested layers stay on it. `PAIRMUX_TMPDIR` sets the
 built-in server's runtime directory (socket, lock, `<socket>.log`); `PAIRMUX_SHELL` overrides the
 terminal shell (Windows default: pwsh, else Windows PowerShell, else `cmd.exe`). Each endpoint gets
 an isolated hashed directory beneath `<root>/.sockets/`, built-in and tmux endpoints separately, so

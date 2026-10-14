@@ -259,9 +259,8 @@ or
 (the same as unset). The automatic choice is, in order: the built\-in backend on
 Windows; the built\-in backend when a built\-in server is already running for
 this socket, so terminals created without tmux stay reachable after tmux is
-installed; tmux when
-.B tmux
-is on
+installed, unless a tmux server is running for the socket too, which keeps tmux;
+tmux when tmux 3.2 or newer is on
 .BR PATH ,
 so existing tmux terminals keep working unchanged; otherwise the built\-in
 backend. Every terminal is created with
@@ -518,13 +517,16 @@ else
 .IR /tmp ,
 followed by
 .IR pairmux\-<uid>/ ;
-it is created with mode 0700 and refused if another uid owns it or group or
-others can access it. On Windows it is
+it is created with mode 0700, and the server and every client refuse it if
+another uid owns it or group or others can access it. On Windows it is
 .IR %PAIRMUX_TMPDIR% ,
 else
 .IR %LOCALAPPDATA%\(rspairmux ,
 followed by
-.IR run\(rs .
+.IR run\(rs ,
+created with an access list admitting only the user and SYSTEM and refused if
+another account owns it. A server that exits cleanly removes its socket, lock
+and log.
 Socket paths are limited to about 100 bytes: an overly long socket name gets a
 digest name, and a directory that is itself too deep is an error asking for a
 short writable

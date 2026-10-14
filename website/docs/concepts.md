@@ -89,9 +89,10 @@ terminals:
 
 1. Windows → `builtin`. `PAIRMUX_BACKEND=tmux` on Windows is an error.
 2. A built-in server is already running for this socket → `builtin`. Terminals created before tmux
-   was installed stay reachable afterwards.
-3. `tmux` is on PATH → `tmux`. Existing users see no change, and their live tmux terminals stay where
-   they are.
+   was installed stay reachable afterwards — unless a tmux server is running for the same socket
+   too, in which case `tmux` keeps its live terminals visible.
+3. tmux 3.2 or newer is on PATH → `tmux`. Existing users see no change, and their live tmux
+   terminals stay where they are. An older tmux is skipped in favor of `builtin`.
 4. Otherwise → `builtin`.
 
 Every terminal is created with `PAIRMUX_BACKEND` set to its own backend, so a nested pairmux layer
@@ -110,7 +111,11 @@ diagnostic log (`<socket>.log`) in a per-user runtime directory:
 | Windows | `%PAIRMUX_TMPDIR%`, else `%LOCALAPPDATA%\pairmux`, then `run\` |
 
 On Unix the directory is created with mode 0700 and refused if another uid owns it or if group or
-others can access it, because anyone who can reach the socket can type into your terminals. Socket
+others can access it, because anyone who can reach the socket can type into your terminals. Clients
+check it before every connection too, as tmux does: a socket in a directory someone else prepared
+would receive your environment and keystrokes. On Windows the directory is created with an ACL
+admitting only you and SYSTEM (so even a `PAIRMUX_TMPDIR` on a shared drive stays private) and is
+refused if another account owns it. A server that exits cleanly removes its socket, lock and log. Socket
 paths are limited to about 100 bytes: an overly long socket name gets a digest name instead,
 and a directory that is itself too deep fails with a hint to set `PAIRMUX_TMPDIR` to a short writable
 directory. On Windows the server runs from a private copy, `pairmux-muxd-<hash>.exe`, in this

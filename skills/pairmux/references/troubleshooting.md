@@ -113,8 +113,9 @@ length limit.
 **Built-in backend.** Its socket, lock, and log live in a runtime directory: on Unix
 `$PAIRMUX_TMPDIR`, else `$TMUX_TMPDIR`, else `/tmp`, then `pairmux-<uid>/` (must be yours and mode
 0700); on Windows `%PAIRMUX_TMPDIR%`, else `%LOCALAPPDATA%\pairmux`, then `run\`. A "runtime
-directory" / "too deep" / permission error means: set `PAIRMUX_TMPDIR` to a short writable directory
-you own and retry (socket paths are limited to about 100 bytes). If the server "did not start",
+directory" / "too deep" / "unsafe runtime directory" / permission error means: set `PAIRMUX_TMPDIR`
+to a short writable directory you own and retry (socket paths are limited to about 100 bytes; pairmux
+refuses a directory another user owns or can reach). If the server "did not start",
 read `<socket>.log` in that directory (the error names it) and run `pairmux doctor`.
 
 Keep the same `PAIRMUX_BACKEND`, `PAIRMUX_TMPDIR`/`TMUX_TMPDIR`, `PAIRMUX_SOCKET`, and
@@ -124,8 +125,8 @@ Keep the same `PAIRMUX_BACKEND`, `PAIRMUX_TMPDIR`/`TMUX_TMPDIR`, `PAIRMUX_SOCKET
 
 The two backends keep separate terminals and state, and `ls` lists only the selected backend's
 terminals (live or dead). Automatic selection prefers a built-in server already running for the
-socket, then tmux if it is on PATH, so a different environment (another `PAIRMUX_BACKEND`, or
-`PATH` without tmux) can select the other backend. Check `pairmux doctor`'s `backend` line, and use
+socket (unless a tmux server runs there too), then tmux 3.2+ if it is on PATH, so a different
+environment (another `PAIRMUX_BACKEND`, or `PATH` without tmux) can select the other backend. Check `pairmux doctor`'s `backend` line, and use
 the same `PAIRMUX_BACKEND` (`tmux` or `builtin`) as the process that created the terminal. An invalid
 `PAIRMUX_BACKEND` is `E_BAD_ARGS`; `PAIRMUX_BACKEND=tmux` on Windows is an error.
 
