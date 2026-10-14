@@ -11,7 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 pairmux 1.0.0 is the first stable release: the CLI commands and flags, the `pairmux.v1` JSON
 envelope and its error codes, and the MCP tools are now the public interface covered by Semantic
-Versioning.
+Versioning. [Release run 38514717450](https://github.com/treeleaves30760/pairmux/actions/runs/38514717450)
+published nine native assets, six wheels and the Homebrew Cask, and
+[published-release acceptance 38515151767](https://github.com/treeleaves30760/pairmux/actions/runs/38515151767)
+passed all seven jobs, including a native Windows install and built-in-backend round trip.
 
 ### Added
 

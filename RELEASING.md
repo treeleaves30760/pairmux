@@ -110,6 +110,33 @@ This is not WSL2, bare-metal Fedora or ARM64 RPM runtime coverage. The user's
 installed v0.5.2 binary and receipt remain unchanged. No tag or artifact was
 rebuilt or overwritten after PyPI publication.
 
+**v1.0.0 published and accepted (2026-10-14).** The annotated tag is fixed to
+merged-main commit `88106b4f3f80b3ed461b5a5fab01b4274999d9b9`, whose
+[CI 38514466320](https://github.com/treeleaves30760/pairmux/actions/runs/38514466320)
+passed all fifteen jobs. The previous main head (`33dbb88`) had failed the
+Windows PowerShell scroll test; that was fixed in PR #11 (20 s PowerShell
+readiness wait, Unicode-safe sentinel write) and its Windows integration job
+passed four consecutive runs before merging.
+[Release run 38514717450](https://github.com/treeleaves30760/pairmux/actions/runs/38514717450)
+built once and passed validation, the new `windows-smoke` job, and publishing:
+nine public native assets (including both Windows zips), six PyPI wheels
+(including `win_amd64` and `win_arm64`) and the Homebrew Cask at 1.0.0.
+
+[Published-release acceptance 38515151767](https://github.com/treeleaves30760/pairmux/actions/runs/38515151767)
+passed all seven jobs on its second attempt. In the first attempt, which started
+about a minute after the PyPI upload, `public-uv (ubuntu-24.04)` installed and
+ran 1.0.0 but its v0.5.3 bootstrap-and-upgrade step still resolved 0.6.0 from
+PyPI's cached index ("public stable changed during acceptance"); rerunning only
+that job once the index listed 1.0.0 passed. The jobs cover public uv on Ubuntu
+24.04 x86-64 and macOS 14 ARM64, fresh Homebrew, Fedora 44 RPM, Windows 2025
+WSL1 through the opt-in WSL installer target, and the new native Windows job:
+the public `win_amd64` wheel installed with uv, its `pairmux.exe` identical to
+the checksummed zip, `doctor`, and a built-in-backend `new`/`run`/`kill` round
+trip. A local smoke test of the public wheel on macOS ARM64 also confirmed tmux
+selection with tmux on PATH and the built-in backend (doctor, `new`/`run`/`kill`)
+without it. Windows ARM64 runtime, older Windows 10 builds, WSL2, bare-metal
+Fedora and ARM64 RPM runtime remain unverified.
+
 **v1.0.0: built-in multiplexer and native Windows.** v1.0.0 makes tmux
 optional (a built-in PTY/ConPTY multiplexer is used when tmux is absent, and
 always on Windows) and adds native Windows x86-64 and ARM64 artifacts.
