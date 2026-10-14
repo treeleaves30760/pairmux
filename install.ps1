@@ -394,6 +394,7 @@ function Write-PairmuxPathHint {
 }
 
 function Install-PairmuxNative {
+    param([string]$Version, [string]$InstallDir)
     $arch = $env:PROCESSOR_ARCHITEW6432
     if (-not $arch) { $arch = $env:PROCESSOR_ARCHITECTURE }
     $archName = $null
@@ -483,6 +484,7 @@ function Install-PairmuxNative {
 # so the WSL discovery, argument quoting and base64 transport stay byte-for-byte
 # what scripts/test-install-windows.ps1 and the real WSL1 acceptance verify.
 function Install-PairmuxWsl {
+param([string]$Version, [string]$InstallDir)
 if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
     Write-Fatal "the WSL install target was selected, but WSL was not found" `
         "install it with:  wsl --install     (then reopen this terminal and re-run), or install natively without PAIRMUX_INSTALL_TARGET"
@@ -570,8 +572,10 @@ bash "$work/install.sh" "$@"
 }
 }
 
+# The version pin and install directory are passed explicitly rather than read
+# from script scope, so each target's inputs are visible at its call.
 if ($InstallTarget -eq 'wsl') {
-    Install-PairmuxWsl
+    Install-PairmuxWsl -Version $Version -InstallDir $InstallDir
 } else {
-    Install-PairmuxNative
+    Install-PairmuxNative -Version $Version -InstallDir $InstallDir
 }

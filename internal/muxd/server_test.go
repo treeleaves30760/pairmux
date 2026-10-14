@@ -21,15 +21,7 @@ var testSeq int32
 // are limited to about 100 bytes.
 func startServer(t *testing.T) *Client {
 	t.Helper()
-	root := t.TempDir()
-	if runtime.GOOS != "windows" {
-		var err error
-		if root, err = os.MkdirTemp("/tmp", "pmxd-"); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { os.RemoveAll(root) })
-	}
-	t.Setenv("PAIRMUX_TMPDIR", root)
+	t.Setenv("PAIRMUX_TMPDIR", shortRoot(t))
 	socket := fmt.Sprintf("t%d-%d", os.Getpid(), atomic.AddInt32(&testSeq, 1))
 	done := make(chan error, 1)
 	go func() { done <- Serve(socket) }()
@@ -53,6 +45,23 @@ func startServer(t *testing.T) *Client {
 		}
 	})
 	return c
+}
+
+// shortRoot is a private runtime root short enough for a socket path. Socket
+// paths are limited to about 100 bytes, which t.TempDir (named after the test,
+// and deep on macOS and Windows) can exceed.
+func shortRoot(t *testing.T) string {
+	t.Helper()
+	base := os.TempDir()
+	if runtime.GOOS != "windows" {
+		base = "/tmp"
+	}
+	root, err := os.MkdirTemp(base, "pmxd-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(root) })
+	return root
 }
 
 func scriptArgv(unix, windows string) []string {
@@ -156,12 +165,7 @@ func TestSecondServerYieldsTheEndpoint(t *testing.T) {
 }
 
 func TestNoServerIsReportedAsSuch(t *testing.T) {
-	root := t.TempDir()
-	if runtime.GOOS != "windows" {
-		root, _ = os.MkdirTemp("/tmp", "pmxd-")
-		defer os.RemoveAll(root)
-	}
-	t.Setenv("PAIRMUX_TMPDIR", root)
+	t.Setenv("PAIRMUX_TMPDIR", shortRoot(t))
 	_, err := New("absent").ListManaged()
 	if err == nil || !strings.Contains(err.Error(), "no server running") {
 		t.Fatalf("ListManaged without a server = %v", err)
@@ -245,9 +249,7 @@ func TestRuntimeDirIsPrivate(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("ACL-based on Windows")
 	}
-	root, _ := os.MkdirTemp("/tmp", "pmxd-")
-	defer os.RemoveAll(root)
-	t.Setenv("PAIRMUX_TMPDIR", root)
+	t.Setenv("PAIRMUX_TMPDIR", shortRoot(t))
 	d, err := rundir.Ensure()
 	if err != nil {
 		t.Fatal(err)

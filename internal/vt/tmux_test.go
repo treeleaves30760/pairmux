@@ -74,6 +74,12 @@ func TestDifferentialTmux(t *testing.T) {
 	if err != nil {
 		t.Skip("tmux not on PATH")
 	}
+	// The corpus is calibrated against tmux 3.7: older releases differ in
+	// ways that are tmux history, not emulator bugs (Ubuntu 24.04's 3.4, for
+	// one, keeps the orphaned half of an overwritten wide character).
+	if out, err := exec.Command(tmuxPath, "-V").Output(); err != nil || !tmuxAtLeast(string(out), 3, 7) {
+		t.Skipf("differential corpus is calibrated for tmux >= 3.7; found %q", strings.TrimSpace(string(out)))
+	}
 	sock := fmt.Sprintf("pairmux-vt-%d-%d", os.Getpid(), time.Now().UnixNano()%100000)
 	env := make([]string, 0, len(os.Environ()))
 	for _, kv := range os.Environ() {
@@ -588,4 +594,19 @@ func randomStreamOps(seed, cols, rows int, wide bool) ([]byte, bool, []int) {
 		panic("random stream must be valid UTF-8")
 	}
 	return data, histOK, append(ends[1:], len(data))
+}
+
+// tmuxAtLeast parses `tmux -V` output ("tmux 3.7b", "tmux next-3.8") and
+// reports whether it is at least major.minor.
+func tmuxAtLeast(v string, major, minor int) bool {
+	fields := strings.Fields(v)
+	if len(fields) < 2 {
+		return false
+	}
+	ver := strings.TrimPrefix(fields[1], "next-")
+	var maj, min int
+	if _, err := fmt.Sscanf(ver, "%d.%d", &maj, &min); err != nil {
+		return false
+	}
+	return maj > major || (maj == major && min >= minor)
 }

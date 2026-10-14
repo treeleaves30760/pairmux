@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/treeleaves30760/pairmux/internal/core"
@@ -42,9 +45,38 @@ func TestDeriveTierReportsFallbackEvidence(t *testing.T) {
 }
 
 func TestShellNamePreservesConfiguredPath(t *testing.T) {
-	t.Setenv("SHELL", "/opt/homebrew/bin/fish")
-	if got := shellName(); got != "/opt/homebrew/bin/fish" {
+	t.Setenv("PAIRMUX_SHELL", "")
+	shell := "/opt/homebrew/bin/fish"
+	if runtime.GOOS == "windows" {
+		// Windows honours $SHELL only when it names a real file (Git Bash
+		// exports /usr/bin/bash, which Windows cannot start).
+		shell = filepath.Join(t.TempDir(), "bash.exe")
+		if err := os.WriteFile(shell, nil, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("SHELL", shell)
+	if got := shellName(); got != shell {
 		t.Fatalf("shellName() = %q, want configured path", got)
+	}
+}
+
+func TestPairmuxShellOverridesShell(t *testing.T) {
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("PAIRMUX_SHELL", "/usr/local/bin/fish")
+	if got := shellName(); got != "/usr/local/bin/fish" {
+		t.Fatalf("shellName() = %q, want PAIRMUX_SHELL", got)
+	}
+}
+
+func TestWindowsIgnoresUnstartableShell(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows shell resolution")
+	}
+	t.Setenv("PAIRMUX_SHELL", "")
+	t.Setenv("SHELL", "/usr/bin/bash") // what Git Bash exports
+	if got := shellName(); got == "/usr/bin/bash" {
+		t.Fatal("an unstartable POSIX $SHELL was used on Windows")
 	}
 }
 

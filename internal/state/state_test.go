@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -157,6 +158,7 @@ func TestListUnion(t *testing.T) {
 }
 
 func TestListNoServer(t *testing.T) {
+	skipLegacyLayoutOnWindows(t)
 	dir := t.TempDir()
 	t.Setenv("PAIRMUX_STATE_DIR", dir)
 	writeTerm(t, "onlydir")
@@ -180,6 +182,7 @@ func TestListPropagatesRealError(t *testing.T) {
 }
 
 func TestResolve(t *testing.T) {
+	skipLegacyLayoutOnWindows(t)
 	dir := t.TempDir()
 	t.Setenv("PAIRMUX_STATE_DIR", dir)
 	writeTerm(t, "alive1")
@@ -281,5 +284,15 @@ func TestChildSocketSeparatesNamespaces(t *testing.T) {
 	}
 	if SocketDir(root, "pairmux") == one {
 		t.Fatal("a child layer shares its parent's namespace")
+	}
+}
+
+// skipLegacyLayoutOnWindows skips tests of the unnamespaced default-socket
+// layout. Only Unix tmux installations ever wrote it (it is keyed to
+// /tmp/tmux-<uid>), so on Windows the fallback correctly never applies.
+func skipLegacyLayoutOnWindows(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the legacy tmux state layout never existed on Windows")
 	}
 }

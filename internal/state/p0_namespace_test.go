@@ -64,6 +64,7 @@ func TestSocketDirIsolationAndConfinement(t *testing.T) {
 }
 
 func TestSocketScopedStateAndLegacyFallback(t *testing.T) {
+	skipLegacyLayoutOnWindows(t)
 	root := t.TempDir()
 	t.Setenv("TMUX_TMPDIR", "")
 	writeMetaAt(t, filepath.Join(root, "default-old"), "default-old", core.DefaultSocket)

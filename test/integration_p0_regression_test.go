@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -138,7 +139,12 @@ func TestSameSocketNameInDifferentTmuxRootsIsIsolated(t *testing.T) {
 	sharedState := t.TempDir()
 	socket := "pmx-same"
 	shortTmp := func() string {
-		dir, err := os.MkdirTemp("/tmp", "pmx-root-")
+		// Short, because a socket path must fit in about 100 bytes.
+		base := "/tmp"
+		if runtime.GOOS == "windows" {
+			base = os.TempDir()
+		}
+		dir, err := os.MkdirTemp(base, "pmx-root-")
 		if err != nil {
 			t.Fatal(err)
 		}

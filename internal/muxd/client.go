@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/treeleaves30760/pairmux/internal/core"
@@ -74,7 +75,7 @@ func (c *Client) dial() (net.Conn, error) {
 	}
 	conn, err := net.DialTimeout("unix", path, 5*time.Second)
 	if err != nil {
-		if isAbsent(err) {
+		if isAbsent(path, err) {
 			return nil, fmt.Errorf("built-in multiplexer: %w on %s", ErrNoServer, path)
 		}
 		return nil, fmt.Errorf("built-in multiplexer: error connecting to %s: %w", path, err)
@@ -83,18 +84,33 @@ func (c *Client) dial() (net.Conn, error) {
 }
 
 // isAbsent separates "nobody is listening" (no socket file, or a stale one)
-// from failures that need the user's attention, such as permissions.
-func isAbsent(err error) bool {
-	if errors.Is(err, os.ErrNotExist) {
+// from failures that need the user's attention, such as permissions. The
+// socket file's absence is checked directly because Windows reports dialing a
+// missing AF_UNIX path as WSAENETDOWN ("a socket operation encountered a dead
+// network"), not as a missing file.
+func isAbsent(path string, err error) bool {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED) {
 		return true
+	}
+	if _, serr := os.Lstat(path); errors.Is(serr, os.ErrNotExist) {
+		return true
+	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) && (errno == wsaECONNREFUSED || errno == wsaENETDOWN) {
+		return true // a stale socket file left by a server that died (Windows)
 	}
 	s := strings.ToLower(err.Error())
 	return strings.Contains(s, "no such file") ||
 		strings.Contains(s, "connection refused") ||
-		// Windows reports a stale AF_UNIX socket file this way.
 		strings.Contains(s, "actively refused") ||
 		strings.Contains(s, "cannot find the file")
 }
+
+// Winsock error numbers, spelled out so this file builds on every platform.
+const (
+	wsaENETDOWN     = syscall.Errno(10050)
+	wsaECONNREFUSED = syscall.Errno(10061)
+)
 
 func (c *Client) call(req request) (*response, error) {
 	conn, err := c.dial()
