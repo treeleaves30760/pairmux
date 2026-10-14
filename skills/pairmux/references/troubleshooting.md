@@ -179,6 +179,6 @@ tmux), state-dir writability, the per-shell completion tier (`hooks`, `hooks-no-
 `hooks-degraded->sentinel`, or `sentinel`), and notifier availability. `hooks-no-C` means completion
 works but human-interleave correlation is slightly weaker (e.g. bash 3.2, PowerShell). Fish 4+
 supplies native OSC 133 marks; older/degraded Fish uses its sentinel fallback. pairmux runs natively
-on macOS, Linux, and Windows 10 1809+ (built-in backend; releases after v0.6.0), and inside WSL. On
+on macOS, Linux, and Windows 10 1809+ (built-in backend; from v1.0.0), and inside WSL. On
 Windows the default shell is PowerShell and `cmd.exe` terminals use sentinel mode; secret prompts
 there are recognized by wording only.

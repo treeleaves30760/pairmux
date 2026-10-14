@@ -333,8 +333,8 @@ release; reinstall from the clone instead. Without usable git metadata (a
 source archive, a vendored copy, no `git`) the version is `0.0.0.dev0+unknown`,
 or `0.0.0.dev0+g<sha>` for history without release tags.
 
-`PAIRMUX_VERSION` overrides the version with a canonical SemVer tag (`v0.7.0`,
-`v0.7.0-rc.1`) or a canonical PEP 440 version (`0.7.0.dev3+mybuild`); anything
+`PAIRMUX_VERSION` overrides the version with a canonical SemVer tag (`v1.0.1`,
+`v1.0.1-rc.1`) or a canonical PEP 440 version (`1.0.1.dev3+mybuild`); anything
 else is rejected. A release-shaped override (no `.dev`, no `+`) is honored with
 a warning, because it gives up the distinction above. The installer
 `install.ps1` reads the same variable as a release pin, so clear it before a

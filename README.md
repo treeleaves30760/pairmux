@@ -18,9 +18,8 @@ pairmux drives terminals through **tmux** (3.2 or newer) when tmux is installed,
 through its own **built-in multiplexer** — real PTYs on macOS/Linux, ConPTY on Windows — so tmux is
 optional and Windows runs natively. See [Terminal backends](#terminal-backends).
 
-> **Not yet released.** The built-in multiplexer, native Windows support and Windows artifacts are
-> on `main` and ship in the next release after v0.6.0. v0.6.0 and earlier require tmux ≥ 3.2 and
-> run on Windows only inside WSL.
+> **New in v1.0.0:** the built-in multiplexer, native Windows support and Windows artifacts.
+> v0.6.0 and earlier require tmux ≥ 3.2 and run on Windows only inside WSL.
 
 ## Why pairmux
 
@@ -86,7 +85,7 @@ the installed executable needs neither Python nor a Go toolchain to run.
 | --- | --- | --- |
 | macOS 12+ | x86-64, ARM64 | Python 3.9+ for wheel installation |
 | Linux | x86-64, ARM64/aarch64 | PyPI wheels use `manylinux_2_17` / glibc 2.17+ tags; Python 3.9+ to install |
-| Windows 10 1809+ / 11 | x86-64, ARM64 | Native from the next release after v0.6.0 (`win_amd64`/`win_arm64` wheels, release zips); earlier releases only inside WSL. See [Windows](#windows) |
+| Windows 10 1809+ / 11 | x86-64, ARM64 | Native from v1.0.0 (`win_amd64`/`win_arm64` wheels, release zips); earlier releases only inside WSL. See [Windows](#windows) |
 
 ### Update (v0.6.0+)
 
@@ -145,11 +144,10 @@ Prefer to inspect the script first? Download it successfully before reviewing an
 installer_dir=$(mktemp -d) &&
 curl -fsSL https://pairmux.treeleaves30760.com/install.sh -o "$installer_dir/install.sh" &&
 less "$installer_dir/install.sh" &&
-bash "$installer_dir/install.sh" --version v0.6.0 --dry-run
+bash "$installer_dir/install.sh" --version v1.0.0 --dry-run
 ```
 
-Use the `v0.6.0` pin only after publication; until then choose a published version or omit `--version`
-for the latest stable PyPI release. Remove `--dry-run` only after a successful download and review
+Pin any published version, or omit `--version` for the latest stable PyPI release. Remove `--dry-run` only after a successful download and review
 to perform the installation.
 The downloaded installer's `--dry-run` prints its plan without network access or writes; it does not
 install anything. `PAIRMUX_INSTALL_DIR` selects the uv tool executable directory. The
@@ -194,8 +192,8 @@ python -m pip install pairmux
 
 ### Manual release archives
 
-For installation without Python, download the matching macOS/Linux `.tar.gz` (or, from the next
-release after v0.6.0, the Windows `pairmux_<version>_windows_amd64.zip` / `_windows_arm64.zip`) and
+For installation without Python, download the matching macOS/Linux `.tar.gz` (or, from v1.0.0,
+the Windows `pairmux_<version>_windows_amd64.zip` / `_windows_arm64.zip`) and
 `checksums.txt` from [GitHub Releases](https://github.com/treeleaves30760/pairmux/releases). Verify the
 archive's SHA-256 before extracting and installing the binary; the
 [Getting Started guide](https://pairmux-docs.treeleaves30760.com/#install) has complete commands.
@@ -205,16 +203,14 @@ This manual path remains available, but the website's `install.sh` now uses PyPI
 
 pairmux runs natively on Windows 10 1809 or newer (needed for ConPTY and AF_UNIX sockets), on
 x86-64 and ARM64, using the [built-in multiplexer](#terminal-backends); neither tmux nor
-WSL is needed. **This is new and not yet released**: it ships in the next release after v0.6.0, which
-adds `win_amd64`/`win_arm64` wheels and Windows release zips. It is validated by CI on hosted Windows
-Server 2025 runners and was accepted on real Windows 11 x86-64 hardware (Windows PowerShell 5.1,
-cmd.exe and Git Bash terminals through ConPTY, including a human `attach`); the ARM64 build has not
-been exercised at runtime. Until that release is published, use WSL as described at the end of this
-section.
+WSL is needed. **This is new in v1.0.0**, which adds `win_amd64`/`win_arm64` wheels and Windows
+release zips. It is validated by CI on hosted Windows Server 2025 runners and was accepted on real
+Windows 11 x86-64 hardware (Windows PowerShell 5.1, cmd.exe and Git Bash terminals through ConPTY,
+including a human `attach`); the ARM64 build has not been exercised at runtime.
 
-Once it is published, install it from PowerShell with any PyPI installer (`uv tool install pairmux`,
-`pipx install pairmux`, or `python -m pip install pairmux` in a dedicated environment), or with the
-PowerShell one-liner:
+Install it from PowerShell with any PyPI installer (`uv tool install pairmux`, `pipx install
+pairmux`, or `python -m pip install pairmux` in a dedicated environment), or with the PowerShell
+one-liner:
 
 ```powershell
 irm https://pairmux.treeleaves30760.com/install.ps1 | iex
@@ -225,8 +221,8 @@ The one-liner applies the same policy as `install.sh`: uv installs the pairmux w
 configuration; uv itself is bootstrapped from Astral's official installer if missing. It needs no
 administrator rights and edits neither PATH nor profiles. A piped script takes no arguments, so set
 `PAIRMUX_VERSION` or `PAIRMUX_INSTALL_DIR` in the environment first; `PAIRMUX_DRY_RUN` prints the
-plan without installing. Until a release with Windows wheels is on PyPI, the native default fails
-with a hint to use WSL. Without Python, use a release zip (`pairmux.exe` with LICENSE, README.md
+plan without installing. Pinning a version before v1.0.0 has no Windows wheel, so the native
+install fails with a hint to use WSL. Without Python, use a release zip (`pairmux.exe` with LICENSE, README.md
 and `man/pairmux.1`) and put `pairmux.exe` on PATH; see also
 [Install from a clone](#install-from-a-clone).
 
@@ -258,7 +254,7 @@ through the environment:
 
 ```powershell
 $env:PAIRMUX_INSTALL_TARGET = 'wsl'
-$env:PAIRMUX_VERSION   = 'v0.6.0'   # optional: after v0.6.0 is published
+$env:PAIRMUX_VERSION   = 'v1.0.0'   # optional: pin a published version
 $env:PAIRMUX_WSL_DISTRO = 'Ubuntu'  # optional: a distribution other than the default
 irm https://pairmux.treeleaves30760.com/install.ps1 | iex
 ```
@@ -280,8 +276,8 @@ sudo dnf install ./downloaded-file.rpm
 ```
 
 There is no Yum repository; download a new RPM when upgrading. Up to v0.6.0 the RPM requires
-tmux ≥ 3.2; from the next release it only recommends tmux (a weak dependency), because pairmux runs
-without it.
+tmux ≥ 3.2; from v1.0.0 it only recommends tmux (a weak dependency), because pairmux runs without
+it.
 
 ### Migrating from APT / Debian packages
 
@@ -327,8 +323,7 @@ python -m pip install .      # or: uv tool install --offline .
 Remove-Item Env:PAIRMUX_PREBUILT_BINARY
 ```
 
-Windows zips exist only from the first release built with this packaging (the next release after
-v0.6.0); until then, a Windows install from a clone needs Go. On macOS/Linux, point the variable at
+Windows zips exist from v1.0.0; for older releases, a Windows install from a clone needs Go. On macOS/Linux, point the variable at
 the `pairmux` binary from the matching `.tar.gz`. There is no sdist and no editable install
 (`pip install -e .`); both refuse with an explanation, and `uv build` needs `--wheel`.
 

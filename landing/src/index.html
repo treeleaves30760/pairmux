@@ -98,7 +98,7 @@
             <p class="section-intro">With uv installed, add a persistent <code>pairmux</code> command for everyday use. The native binary is packaged on <a href="https://pypi.org/project/pairmux/">PyPI</a>.</p>
             <div class="command-panel primary-command">
               <div class="command-heading">
-                <h3>macOS, Linux, or a WSL shell</h3>
+                <h3>macOS, Linux, or Windows PowerShell</h3>
                 <button class="copy-button" type="button" data-copy-target="tool-command" data-copy-status="tool-status" aria-label="Copy persistent uv tool install command" hidden>Copy</button>
               </div>
               <pre class="selectable-code" tabindex="0" aria-label="Persistent uv tool install command; select the text to copy manually"><code id="tool-command">uv tool install pairmux</code></pre>
@@ -106,7 +106,7 @@
             </div>
             <p class="manual-note">Ensure uv’s tool-bin directory is on your PATH, then run <code>pairmux version</code> and <code>pairmux doctor</code>.</p>
             <p class="source-note">Manual uv commands honor your normal environment and configuration. The built-in updater and shell installer instead pin pairmux’s source to public PyPI and ignore uv package-source overrides.</p>
-            <p class="requirements"><strong>Separate requirements:</strong> Python 3.9 or newer for the uv tool environment. When tmux is on your PATH, pairmux uses it and needs tmux 3.2 or newer to run terminals. From the next release after v0.6.0, tmux is optional (without it, pairmux uses its own built-in multiplexer) and Windows 10 1809 or newer runs pairmux natively; until then, install tmux with your OS package manager, and use WSL on Windows.</p>
+            <p class="requirements"><strong>Separate requirements:</strong> Python 3.9 or newer for the uv tool environment. tmux is optional: when tmux 3.2 or newer is on your PATH, pairmux uses it; otherwise it uses its own built-in multiplexer. Windows 10 1809 or newer runs pairmux natively from v1.0.0 (v0.6.0 and earlier need tmux, and WSL on Windows).</p>
           </div>
 
           <div class="manual-install" aria-labelledby="manual-title">

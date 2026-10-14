@@ -141,11 +141,16 @@ func captureCleanupWriters(ctx context.Context, e tenv) (bool, error) {
 	}
 	out, err := cleanupTmux(ctx, e, "list-panes", "-a", "-F", "#{pid} #{pane_pid} #{pane_dead}")
 	server := err == nil
+	if err != nil && cleanupNoSession(err, out) {
+		// A concurrent `new` started the server and has not created its
+		// session yet: a live server with no panes to capture.
+		server, err, out = true, nil, ""
+	}
 	if err != nil && !cleanupNoServer(err, out) {
 		return false, fmt.Errorf("list owned panes: %w: %s", err, strings.TrimSpace(out))
 	}
 	captured := make(map[int]bool)
-	if server {
+	if server && strings.TrimSpace(out) != "" {
 		for _, row := range strings.Split(strings.TrimSpace(out), "\n") {
 			fields := strings.Fields(row)
 			if len(fields) != 3 {
@@ -294,6 +299,13 @@ func cleanupTmux(ctx context.Context, e tenv, args ...string) (string, error) {
 	}
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// cleanupNoSession reports tmux's answer while a server is running but has no
+// session (yet): "no current target".
+func cleanupNoSession(err error, out string) bool {
+	exit, ok := err.(*exec.ExitError)
+	return ok && exit.ExitCode() == 1 && strings.TrimSpace(out) == "no current target"
 }
 
 func cleanupNoServer(err error, out string) bool {

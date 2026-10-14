@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-14
+
+pairmux 1.0.0 is the first stable release: the CLI commands and flags, the `pairmux.v1` JSON
+envelope and its error codes, and the MCP tools are now the public interface covered by Semantic
+Versioning.
+
 ### Added
 
 - **pairmux no longer requires tmux.** A built-in multiplexer now owns terminals when tmux is
@@ -76,6 +82,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- PyPI metadata declares `Development Status :: 5 - Production/Stable` instead of Alpha.
+
 - **The built-in and tmux backends keep separate state.** Built-in endpoints have their own hashed
   namespace under `<state root>/.sockets/`, so equal terminal names on the two backends never
   collide, and each backend lists only its own terminals, dead ones included. The legacy
@@ -137,12 +145,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   terminals (it has no console, so this cannot expose it to console events) and children inherit
   the enabled state.
 
-- A command's output line was lost when the terminal put an escape sequence between its ``
+- A command's output line was lost when the terminal put an escape sequence between its `
+`
   and `
 ` — ConPTY does so with its cursor-show sequence at the moment the screen first scrolls, so
   in a PowerShell terminal about every 25th fast `run` came back with no output. Escape sequences
   occupy no column, so output shaping now removes them before resolving carriage-return overwrites
-  instead of treating such a `` as one.
+  instead of treating such a `
+` as one.
 
 - A failing PowerShell installer now throws instead of closing the PowerShell window, so the error
   stays readable when it was run as `irm ... | iex`.
@@ -618,7 +628,8 @@ Codex terminals and fixing what broke.
   `E_TMUX`, `E_INTERNAL`).
 
 [#7]: https://github.com/treeleaves30760/pairmux/issues/7
-[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/treeleaves30760/pairmux/compare/v0.6.0...v1.0.0
 [0.6.0]: https://github.com/treeleaves30760/pairmux/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/treeleaves30760/pairmux/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/treeleaves30760/pairmux/compare/v0.5.1...v0.5.2

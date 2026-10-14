@@ -99,9 +99,9 @@ hostname even when viewing a preview.
 The shell installer isolates the pairmux installation from inherited uv settings
 and configuration, and resolves the platform wheel exclusively from public PyPI.
 uv bootstrap and a Python download, when needed, use official Astral upstream
-sources rather than PyPI. Python 3.9+ is needed for the uv tool environment. From the
-release after v0.6.0, tmux is optional (pairmux falls back to its built-in terminal
-backend) and Windows gets native wheels; `install.ps1` installs natively by default, with
+sources rather than PyPI. Python 3.9+ is needed for the uv tool environment. From v1.0.0,
+tmux is optional (pairmux falls back to its built-in terminal backend) and Windows gets
+native wheels; `install.ps1` installs natively by default, with
 WSL as an opt-in (`PAIRMUX_INSTALL_TARGET=wsl`). v0.6.0 and older still need tmux 3.2+
 and WSL on Windows.
 

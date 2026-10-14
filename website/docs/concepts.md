@@ -13,9 +13,8 @@ built-in server that starts on demand and exits on its own — and pairmux adds 
 captured journal output, model-friendly views, and a per-terminal `run` writer discipline around the
 same live pane. See [Terminal backends](#terminal-backends) for how the two are chosen.
 
-:::info Not yet released
-The built-in backend and native Windows support ship in the next release after v0.6.0. v0.6.0 and
-earlier always use tmux.
+:::info New in v1.0.0
+The built-in backend and native Windows support. v0.6.0 and earlier always use tmux.
 :::
 
 ## Architecture
