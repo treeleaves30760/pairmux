@@ -376,7 +376,7 @@ func probeShell(cl mux.Mux, stateDir string, idx int, shell string) shellTierRes
 		_ = cl.SendKeys(paneID, "Enter") // nudge one prompt so an A mark is guaranteed after capture
 	}
 
-	gotHooks, err := detect.WaitReady(j, mode, 5*time.Second)
+	gotHooks, err := detect.WaitReady(j, mode, shellhooks.ReadyTimeout(shell))
 	if err != nil {
 		res.err = "wait ready: " + err.Error()
 		return res

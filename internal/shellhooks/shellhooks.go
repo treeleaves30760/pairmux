@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 	"unicode/utf16"
 
 	"github.com/treeleaves30760/pairmux/internal/core"
@@ -142,8 +143,27 @@ const fishSentinelSuffix = `; printf '\033]7779;p;%d\007' $status`
 // ConPTY the OSC can be hoisted ahead of the output, so core.SentinelBoundary
 // follows it as text; it is spelled as [char] subexpressions so the typed (and
 // echoed) line holds no boundary of its own.
-var powershellSentinelSuffix = `; $__pmx_ok = $?; [Console]::Write("$([char]27)]7779;p;$(if ($__pmx_ok) {0} elseif ($LASTEXITCODE) {$LASTEXITCODE} else {1})$([char]7)` +
+//
+// It is written with $Host.UI.Write, the console host's Unicode output, not
+// [Console]::Write: Windows PowerShell encodes the latter with
+// [Console]::OutputEncoding, an OEM code page by default, which turns the
+// zero-width boundary into "???" and so hides it.
+var powershellSentinelSuffix = `; $__pmx_ok = $?; $Host.UI.Write("$([char]27)]7779;p;$(if ($__pmx_ok) {0} elseif ($LASTEXITCODE) {$LASTEXITCODE} else {1})$([char]7)` +
 	powershellChars(core.SentinelBoundary) + `")`
+
+// ReadyTimeout is how long `new` waits for a hooks shell's first prompt mark
+// before degrading the terminal to sentinel mode. PowerShell gets longer: its
+// marks come from pairmux's own prompt wrapper, so they are reliable, but a
+// cold Windows PowerShell start (profile, PSReadLine, module analysis) can
+// exceed five seconds — and degrading it costs the in-order OSC 133 marks for
+// the sentinel, which ConPTY may hoist. A fast shell is not slowed: the wait
+// ends at the first mark.
+func ReadyTimeout(shell string) time.Duration {
+	if isPowerShell(Kind(shell)) {
+		return 20 * time.Second
+	}
+	return 5 * time.Second
+}
 
 // cmdSentinelSuffix prints the marker without a newline (set /p) and reads
 // ERRORLEVEL at execution time (!...! under /v:on), after the command ran.
