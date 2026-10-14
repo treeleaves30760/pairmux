@@ -98,7 +98,7 @@ PLATFORM_TAGS = {
 # Trove classifiers — all valid values from the official list, so PyPI accepts
 # the upload the sibling release step performs.
 CLASSIFIERS = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",

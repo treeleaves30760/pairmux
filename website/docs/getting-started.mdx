@@ -24,16 +24,15 @@ when it is installed, otherwise pairmux's own built-in one: blocking calls retur
 completion, a recognized prompt, a requested condition, or timeout; a journal retains raw pane output
 while CLI reads shape it for agents; and `pairmux attach` puts a human in the same live pane.
 
-:::info Not yet released
-The built-in multiplexer (tmux becomes optional) and native Windows support are on `main` and ship
-in the next release after v0.6.0. v0.6.0 and earlier require tmux >= 3.2 and run on Windows only
-inside WSL.
+:::info New in v1.0.0
+The built-in multiplexer (tmux becomes optional) and native Windows support. v0.6.0 and earlier
+require tmux >= 3.2 and run on Windows only inside WSL.
 :::
 
 ## Requirements
 
-- **macOS 12+, Linux, or Windows 10 1809+**, on x86-64 or ARM64. Native Windows is new (next
-  release after v0.6.0); see the Windows tab below.
+- **macOS 12+, Linux, or Windows 10 1809+**, on x86-64 or ARM64. Native Windows is new in
+  v1.0.0; see the Windows tab below.
 - **tmux is optional.** On macOS and Linux, pairmux uses tmux when it is on PATH — the tmux backend
   needs **tmux >= 3.2** (for stable `pipe-pane` and pane user-option behavior) — and its built-in
   multiplexer otherwise. Windows always uses the built-in multiplexer. See
@@ -68,14 +67,14 @@ older first need `uv tool install --upgrade pairmux` to obtain v0.6.0+ when avai
 The [PyPI](https://pypi.org/project/pairmux/) wheels bundle the native Go binary and require Python
 3.9+ to install. uv can obtain managed Python from Astral upstream if needed; the installed binary
 itself does not need Python. Supported wheels target macOS 12+ and `manylinux_2_17` (glibc 2.17+) on
-x86-64 and ARM64, plus `win_amd64` and `win_arm64` from the next release after v0.6.0. You can also use `pipx install pairmux`, or `python -m pip install pairmux` inside a
+x86-64 and ARM64, plus `win_amd64` and `win_arm64` from v1.0.0. You can also use `pipx install pairmux`, or `python -m pip install pairmux` inside a
 dedicated Python 3.9+ virtual environment.
 
-uv and pipx do not install tmux. It is optional from the next release after v0.6.0 (required
+uv and pipx do not install tmux. It is optional from v1.0.0 (required
 through v0.6.0); if you want the tmux backend, use `brew install tmux`, `sudo apt install tmux` on
 Debian/Ubuntu, or your distribution's package manager for **tmux >= 3.2**. Use the alternative
 installer below for its explicit public-PyPI-only wheel source policy. On Windows, the same commands
-work in PowerShell once Windows wheels are published; see the Windows tab.
+work in PowerShell; see the Windows tab.
 
 </TabItem>
 <TabItem value="brew" label="Homebrew">
@@ -114,11 +113,10 @@ For a complete download before execution, inspect the script first:
 installer_dir=$(mktemp -d) &&
 curl -fsSL https://pairmux.treeleaves30760.com/install.sh -o "$installer_dir/install.sh" &&
 less "$installer_dir/install.sh" &&
-bash "$installer_dir/install.sh" --version v0.6.0 --dry-run
+bash "$installer_dir/install.sh" --version v1.0.0 --dry-run
 ```
 
-Use the `v0.6.0` pin only after publication; until then choose a published version or omit `--version`
-for the latest stable PyPI release. Remove `--dry-run` only after a successful download and review
+Pin any published version, or omit `--version` for the latest stable PyPI release. Remove `--dry-run` only after a successful download and review
 to perform the installation.
 The downloaded installer's `--dry-run` does not access the network or write files. The pipe form is
 a convenience, not a complete-download-before-execution check.
@@ -145,7 +143,7 @@ curl -fL "https://github.com/treeleaves30760/pairmux/releases/download/v${PAIRMU
 sudo dnf install "$download_dir/$PAIRMUX_PACKAGE"
 ```
 
-Through v0.6.0 the RPM requires `tmux >= 3.2`; from the next release it only recommends it (a weak
+Through v0.6.0 the RPM requires `tmux >= 3.2`; from v1.0.0 it only recommends it (a weak
 dependency), because pairmux runs without tmux. There is no Yum repository; upgrading requires a new
 RPM download. pairmux no longer provides an APT installation path; Debian/Ubuntu users should use
 PyPI/uv, Homebrew, or a manual archive.
@@ -215,13 +213,13 @@ A plain `go build` does not stamp a release version; `make build` stamps `VERSIO
 pairmux runs natively on **Windows 10 1809 or newer** (needed for ConPTY and AF_UNIX sockets), on
 x86-64 and ARM64, with the built-in multiplexer: neither tmux nor WSL is needed.
 
-:::caution New and not yet released
-Native Windows ships in the next release after v0.6.0, which adds `win_amd64`/`win_arm64` wheels and
+:::note New in v1.0.0
+Native Windows ships from v1.0.0, which adds `win_amd64`/`win_arm64` wheels and
 `pairmux_<version>_windows_amd64.zip` / `_windows_arm64.zip` release archives. It is validated by CI
 on hosted Windows Server 2025 runners and was accepted on real Windows 11 x86-64 hardware (Windows
 PowerShell 5.1, cmd.exe and Git Bash terminals through ConPTY, including a human `attach`); the ARM64
-build has not been exercised at runtime. Until the release is published, the native install
-below fails with a hint to use WSL — use the WSL route at the end of this tab.
+build has not been exercised at runtime. Pinning a version before v1.0.0 has no Windows wheel, so
+the native install then fails with a hint to use WSL.
 :::
 
 Once published, any PyPI installer works from PowerShell: `uv tool install pairmux`,
@@ -293,8 +291,7 @@ python -m pip install .      # or: uv tool install --offline .
 Remove-Item Env:PAIRMUX_PREBUILT_BINARY
 ```
 
-Windows zips exist only from the first release built with this packaging (the next release after
-v0.6.0); until then, a Windows install from a clone needs Go. On macOS/Linux, point the variable at
+Windows zips exist from v1.0.0; for older releases, a Windows install from a clone needs Go. On macOS/Linux, point the variable at
 the `pairmux` binary from the matching `.tar.gz`. There is no sdist and no editable install
 (`pip install -e .`); both refuse with an explanation, and `uv build` needs `--wheel`.
 

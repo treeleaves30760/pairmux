@@ -21,7 +21,7 @@
     installer inside it, downloading that script completely before executing.
 
 .PARAMETER Version
-    Install a specific tagged release, e.g. v0.7.0. Default: the latest stable
+    Install a specific tagged release, e.g. v1.0.0. Default: the latest stable
     release on PyPI.
 
 .PARAMETER InstallDir
@@ -47,7 +47,7 @@
 
 .EXAMPLE
     # A piped script takes no arguments, so configure it through the environment:
-    $env:PAIRMUX_VERSION = 'v0.7.0'
+    $env:PAIRMUX_VERSION = 'v1.0.0'
     irm https://pairmux.treeleaves30760.com/install.ps1 | iex
 
 .EXAMPLE
@@ -56,7 +56,7 @@
     irm https://pairmux.treeleaves30760.com/install.ps1 | iex
 
 .EXAMPLE
-    .\install.ps1 -Target wsl -Version v0.7.0 -Distribution Ubuntu -DryRun
+    .\install.ps1 -Target wsl -Version v1.0.0 -Distribution Ubuntu -DryRun
 #>
 [CmdletBinding()]
 param(

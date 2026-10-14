@@ -50,7 +50,7 @@ interactive, shares a terminal or its state, or may need a human to step in.
 Use the installed CLI: `pairmux version`, then `pairmux doctor` (its first line names the backend:
 tmux or built-in). If missing, recommend `uv tool install pairmux` (Python 3.9+). tmux is optional
 (3.2+ when used; v0.6.0 and earlier require it); without it pairmux uses its built-in multiplexer.
-Windows runs natively (Windows 10 1809+, releases after v0.6.0); WSL is optional.
+Windows runs natively (Windows 10 1809+, from v1.0.0); WSL is optional.
 With explicit user authorization, `pairmux update` (v0.6.0+) updates only the running persistent
 uv installation from public PyPI. Older versions first need `uv tool install --upgrade pairmux`.
 On Windows `update` refuses (`E_UPDATE`); follow its hint. Do not install or self-update

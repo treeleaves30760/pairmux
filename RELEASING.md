@@ -110,10 +110,10 @@ This is not WSL2, bare-metal Fedora or ARM64 RPM runtime coverage. The user's
 installed v0.5.2 binary and receipt remain unchanged. No tag or artifact was
 rebuilt or overwritten after PyPI publication.
 
-**Next release preparation: built-in multiplexer and native Windows (unreleased).**
-The next release after v0.6.0 makes tmux optional (a built-in PTY/ConPTY
-multiplexer is used when tmux is absent, and always on Windows) and adds native
-Windows x86-64 and ARM64 artifacts. Release-shape changes for that tag:
+**v1.0.0: built-in multiplexer and native Windows.** v1.0.0 makes tmux
+optional (a built-in PTY/ConPTY multiplexer is used when tmux is absent, and
+always on Windows) and adds native Windows x86-64 and ARM64 artifacts.
+Release-shape changes from that tag:
 
 - GitHub Releases gain `pairmux_<version>_windows_amd64.zip` and
   `pairmux_<version>_windows_arm64.zip` (each `pairmux.exe`, LICENSE, README.md,
@@ -137,14 +137,12 @@ Windows x86-64 and ARM64 artifacts. Release-shape changes for that tag:
 
 **Release ordering.** Cloudflare deploys the landing site, and therefore the
 root `install.ps1`, from `main`. Until a release with Windows wheels is on PyPI,
-the new native default fails (with a hint to use WSL) for everyone who runs the
-public one-liner. Either merge and release together, or hold the website's
-`install.ps1` deployment until the Windows wheels are public. The README,
-documentation and landing copy mark native Windows and optional tmux as
-"next release after v0.6.0"; replace that wording with the actual version when
-the tag is chosen.
+the native default fails (with a hint to use WSL) for everyone who runs the
+public one-liner, so the branch was merged on 2026-10-14 and v1.0.0 prepared
+for release the same day. For future installer changes, keep that ordering:
+merge and release together, or hold the website's deployment.
 
-**Verified before that release.** Native Windows is validated by CI on hosted
+**Verified before v1.0.0.** Native Windows is validated by CI on hosted
 Windows runners (unit, ConPTY integration with PowerShell, source install and
 installer tests, plus cross-compiled vet for both architectures) and by the
 release smoke job above. Draft PR #10's CI passed all of them on
@@ -169,10 +167,10 @@ not yet run against a published release.
 
 | Channel | Implementation | Release operation |
 | --- | --- | --- |
-| GitHub Releases | GoReleaser builds four macOS/Linux `.tar.gz` archives, two Windows `.zip` archives (`windows_amd64`, `windows_arm64`), two Linux `.rpm` packages, and `checksums.txt`: **nine native assets** from the next release (seven through v0.6.0). | Push a canonical SemVer tag. The existing workflow verifies and stages the exact artifacts before publishing the release. No `.deb` is produced. |
+| GitHub Releases | GoReleaser builds four macOS/Linux `.tar.gz` archives, two Windows `.zip` archives (`windows_amd64`, `windows_arm64`), two Linux `.rpm` packages, and `checksums.txt`: **nine native assets** from v1.0.0 (seven through v0.6.0). | Push a canonical SemVer tag. The existing workflow verifies and stages the exact artifacts before publishing the release. No `.deb` is produced. |
 | PyPI | Six platform wheels (macOS x86-64/ARM64, manylinux x86-64/aarch64, `win_amd64`, `win_arm64`; four through v0.6.0) wrap the same verified Go binaries; wheel installation requires Python >= 3.9. | Configure the `PYPI_TOKEN` repository secret or migrate to Trusted Publishing. The tag workflow uploads only the verified wheels, after the Windows smoke job passes. Smoke-test persistent `uv tool install` and `pairmux update` first, plus optional `uvx` quick runs. |
 | Website installer | Root `install.sh` installs the pairmux wheel from `https://pypi.org/simple` through uv, bootstrapping official Astral uv and a compatible managed Python if needed. `install.ps1` applies the same policy natively on Windows by default; `PAIRMUX_INSTALL_TARGET=wsl` delegates into WSL as before. | Rebuild the landing site whenever either root installer changes; test the public `/install.sh` and `/install.ps1` endpoints. Mind the release ordering above for `install.ps1`. The Bash installer no longer selects GitHub archives or consumes `checksums.txt`. |
-| RPM files | GoReleaser emits installable `.rpm` release assets for Linux x86-64 and ARM64. Through v0.6.0 they require tmux >= 3.2; from the next release they only recommend it (`Recommends: tmux >= 3.2`). | No extra work for direct package downloads. Verify checksums and smoke-test a local RPM; there is no Yum repository. |
+| RPM files | GoReleaser emits installable `.rpm` release assets for Linux x86-64 and ARM64. Through v0.6.0 they require tmux >= 3.2; from v1.0.0 they only recommend it (`Recommends: tmux >= 3.2`). | No extra work for direct package downloads. Verify checksums and smoke-test a local RPM; there is no Yum repository. |
 | Homebrew tap | **Active.** GoReleaser renders the cask (binary + manpage, `depends_on formula: tmux`, quarantine-stripping postflight) during the build; the release workflow pushes `Casks/pairmux.rb` to [`homebrew-pairmux`](https://github.com/treeleaves30760/homebrew-pairmux) after the release goes public. Prereleases are skipped. | Smoke-test `brew install --cask treeleaves30760/pairmux/pairmux` + `pairmux doctor` on a clean machine after each stable release. |
 
 The public entry points are [Home](https://pairmux.treeleaves30760.com),
@@ -221,7 +219,7 @@ issue tracker, release archive, and source of the changelog.
    new updater with an older version stamp: real v0.5.3 has no update command, so
    public bootstrap is a separate post-publication check.
 
-   Use only a fresh build output. From the next release after v0.6.0, verify
+   Use only a fresh build output. From v1.0.0, verify
    **four `.tar.gz` archives + two Windows `.zip` archives + two RPMs + one
    checksum file = nine native assets**, six wheels (including `win_amd64` and
    `win_arm64`), and zero `.deb` files. (v0.6.0 and earlier: seven native
@@ -243,7 +241,7 @@ issue tracker, release archive, and source of the changelog.
 5. Create and push the next annotated SemVer tag from validated `main`.
    Confirm that tag and PyPI version do not already exist. `v0.5.3` is already
    published and must not be recreated or moved.
-6. Watch the tag workflow. From the next release it first runs the Windows
+6. Watch the tag workflow. From v1.0.0 it first runs the Windows
    smoke job on the preserved bytes; it then stages the **nine** verified
    native assets (seven through v0.6.0) in a draft GitHub release, publishes
    the six verified wheels (four through v0.6.0) to PyPI, makes the GitHub
@@ -252,7 +250,7 @@ issue tracker, release archive, and source of the changelog.
 7. On clean or isolated systems, smoke-test persistent `uv tool install pairmux`
    and, from v0.6.0, `pairmux update` followed by `version`/`doctor`. Also test the
    website installer, optional uvx quick runs, a direct RPM, and Homebrew. From
-   the next release, also test a native Windows install (`install.ps1` default
+   v1.0.0, also test a native Windows install (`install.ps1` default
    and `uv tool install pairmux`), where `pairmux update` must refuse with
    `E_UPDATE`, and a macOS/Linux machine without tmux, where `doctor` must
    report the built-in backend.
@@ -294,7 +292,7 @@ isolated terminal command with `done`, exit 0 and one unique marker line.
   as an owned **WSL1** distribution, a non-root default user, production
   `install.ps1`, and Linux runtime/cleanup. Unsupported runner features fail;
   mocks and WSL2 are not substitutes.
-- Native Windows (releases after v0.6.0): Windows 2025 installing the public
+- Native Windows (v1.0.0 and later): Windows 2025 installing the public
   `win_amd64` wheel with uv into an isolated tool directory under the PyPI-only
   policy, requiring the installed `pairmux.exe` to match the checksummed
   `windows_amd64` zip, a healthy `doctor`, and a built-in-backend
@@ -363,7 +361,7 @@ run before anything is published rather than after PyPI.
 ## Homebrew (activated 2026-08-01)
 
 Homebrew installs pairmux and its tmux >= 3.2 dependency in the same command.
-From the next release tmux is optional for pairmux, but the cask still installs
+From v1.0.0 tmux is optional for pairmux, but the cask still installs
 it, so tmux remains the automatically selected backend on Homebrew machines.
 How it is wired:
 
