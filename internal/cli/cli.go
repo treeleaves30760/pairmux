@@ -266,7 +266,8 @@ human commands:
   note   <name> <text...>  leave a message for the agent     e.g. pairmux note build "fixed the token"
   doctor                   probe backend + shell integration e.g. pairmux doctor
   update                   reinstall this uv tool from PyPI  e.g. pairmux update
-  skill install [--target T | all] [--dry-run]  teach your agent pairmux   e.g. pairmux skill install --target all
+  skill install [--target T | all] [--dry-run]  teach your agent pairmux   e.g. pairmux skill install -t all
+                           -t is an alias for --target
   mcp serve                serve typed tools over MCP stdio  e.g. pairmux mcp serve
   version                  print version
 

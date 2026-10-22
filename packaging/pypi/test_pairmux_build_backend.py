@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import struct
@@ -523,6 +524,85 @@ class SourceInstallTest(unittest.TestCase):
         self.requirement(shutil.which("go") is not None, "go is not installed")
         self.requirement(shutil.which("git") is not None, "git is not installed")
 
+    def assert_skill_install(self, executable: Path) -> None:
+        source = backend.REPO_ROOT / "skills" / "pairmux"
+        bundled = {path.relative_to(source): path.read_bytes()
+                   for path in source.rglob("*") if path.is_file()
+                   # go:embed directory traversal excludes dot/underscore entries.
+                   if not any(part.startswith((".", "_"))
+                              for part in path.relative_to(source).parts)}
+        self.assertIn(Path("SKILL.md"), bundled)
+        custom = {
+            Path("local-notes.txt"): b"my root customization\n",
+            Path("references/local-notes.txt"): b"my reference customization\n",
+        }
+        self.assertFalse(bundled.keys() & custom.keys())
+        expected = {**bundled, **custom}
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td) / "home"
+            cwd = Path(td) / "project"
+            home.mkdir()
+            cwd.mkdir()
+            # environment() alone keeps the real home. Go uses HOME on Unix
+            # and USERPROFILE on Windows; cursor also needs an isolated cwd.
+            env = environment(HOME=os.fspath(home), USERPROFILE=os.fspath(home))
+            roots = {
+                "claude-code": home / ".claude",
+                "codex": home / ".agents",
+                "gemini": home / ".gemini",
+                "cursor": cwd / ".cursor",
+                "opencode": home / ".config" / "opencode",
+                "copilot": home / ".copilot",
+                "windsurf": home / ".codeium" / "windsurf",
+                "kiro": home / ".kiro",
+                "amp": home / ".config" / "amp",
+                "cline": home / ".cline",
+                "roo-code": home / ".roo",
+                "kilo-code": home / ".kilo",
+                "droid": home / ".factory",
+                "agents": home / ".agents",
+            }
+            # --target all only installs agents whose config roots exist.
+            for root in roots.values():
+                root.mkdir(parents=True, exist_ok=True)
+            destinations = list(dict.fromkeys(root / "skills" / "pairmux"
+                                              for root in roots.values()))
+            for destination in destinations:
+                for relative, content in expected.items():
+                    path = destination / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b"old bundled skill contents\n"
+                                     if relative in bundled else content)
+
+            for phase in ("upgrade", "reinstall"):
+                with self.subTest(phase=phase):
+                    if phase == "reinstall":
+                        for destination in destinations:
+                            for relative in bundled:
+                                (destination / relative).write_bytes(b"tampered skill contents\n")
+                    installed = subprocess.run(
+                        [os.fspath(executable), "--json", "skill", "install",
+                         "--target" if phase == "upgrade" else "-t", "all"],
+                        cwd=os.fspath(cwd), env=env, stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE, timeout=60,
+                    )
+                    self.assertEqual(installed.returncode, 0,
+                                     installed.stderr.decode(errors="replace") +
+                                     installed.stdout.decode(errors="replace"))
+                    envelope = json.loads(installed.stdout)
+                    self.assertIs(envelope["ok"], True, envelope)
+                    self.assertEqual(envelope["status"], "installed", envelope)
+                    # Output may also contain source/version/hash metadata.
+                    self.assertIn("skipped agents: same destination as codex", envelope["output"])
+                    for destination in destinations:
+                        with self.subTest(destination=os.fspath(destination)):
+                            actual = {path.relative_to(destination): path.read_bytes()
+                                      for path in destination.rglob("*") if path.is_file()}
+                            # Exact keys catch stray files (including atomic
+                            # write leftovers); values compare every byte and
+                            # prove unrelated root/reference files survived.
+                            self.assertEqual(actual, expected, os.fspath(destination))
+
     def test_uv_tool_installs_this_checkout_offline(self) -> None:
         self.require_toolchain()
         requested = os.environ.get("PAIRMUX_TEST_UV", "")
@@ -557,6 +637,7 @@ class SourceInstallTest(unittest.TestCase):
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
             self.assertNotEqual(update.returncode, 0)
             self.assertIn('"code":"E_UPDATE"', update.stdout.decode(errors="replace"))
+            self.assert_skill_install(executable)
 
     def test_pip_installs_this_checkout_offline(self) -> None:
         self.require_toolchain()
@@ -583,6 +664,7 @@ class SourceInstallTest(unittest.TestCase):
             self.assertEqual(reported.stdout.decode().strip(), expected)
             self.assertIn(".dev", expected)
             self.assertIn("+", expected)
+            self.assert_skill_install(executable)
 
 
 if __name__ == "__main__":

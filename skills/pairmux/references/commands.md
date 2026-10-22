@@ -1,9 +1,19 @@
 # pairmux command reference
 
-Every non-interactive command speaks the `pairmux.v1` envelope. Add `--json` (before or after the
-command) for the one-line machine form shown here; without it you get a friendly text block.
-`attach` and `watch` are interactive human interfaces, not envelope-producing agent commands.
-Global flags:
+## Contents
+
+- [Invocation, backend and shell selection](#invocation-backend-and-shell-selection)
+- [The envelope schema](#the-envelope-schema)
+- [Agent commands](#agent-commands)
+- [Human and maintenance commands](#human-and-maintenance-commands)
+- [Completion-detection modes](#completion-detection-modes)
+
+## Invocation, backend and shell selection
+
+Ordinary CLI replies support `--json` (before or after the command) for compact `pairmux.v1`
+envelopes; without it you get friendly text. Exceptions: `help` is plain text even with `--json`,
+`attach`/`watch` are interactive human interfaces, and `mcp serve` speaks MCP JSON-RPC over stdio,
+not CLI envelopes. Global flags:
 
 | flag | meaning |
 |------|---------|
@@ -11,19 +21,38 @@ Global flags:
 | `--socket S` | use endpoint `S` (tmux socket or built-in server name; isolates a set of terminals); overrides `$PAIRMUX_SOCKET` |
 | `--` | end global-flag parsing, for a command that itself contains `--json`/`--socket` |
 
-Environment: `PAIRMUX_SOCKET` sets the default endpoint; `PAIRMUX_STATE_DIR` sets the journal root
-(default `~/.local/state/pairmux`). `PAIRMUX_BACKEND` = `tmux` | `builtin` | `auto` (default: Windows
-→ builtin; a built-in server already running for this socket → builtin, unless a tmux server runs
-there too; tmux 3.2+ on PATH → tmux; else builtin). Terminals inherit their backend, so nested layers stay on it. `PAIRMUX_TMPDIR` sets the
-built-in server's runtime directory (socket, lock, `<socket>.log`); `PAIRMUX_SHELL` overrides the
-terminal shell (Windows default: pwsh, else Windows PowerShell, else `cmd.exe`). Each endpoint gets
-an isolated hashed directory beneath `<root>/.sockets/`, built-in and tmux endpoints separately, so
-equal terminal names on different sockets or backends cannot share metadata; each backend lists only
-its own terminals.
+`PAIRMUX_BACKEND=auto` (or unset), from v1.0:
+
+1. **Windows:** built-in ConPTY backend (Windows 10 1809+); no tmux required.
+2. **Unix endpoint already running built-in:** keep using it, unless tmux is also available and a
+   tmux server is running for that endpoint too; when both run, tmux wins.
+3. **Otherwise:** available tmux 3.2+ → tmux; absent or known-too-old tmux → built-in PTYs.
+
+Explicit `PAIRMUX_BACKEND=tmux` or `builtin` pins the backend; `tmux` on Windows is `E_BAD_ARGS`.
+Terminals inherit the selected backend, keeping nested layers on it. `doctor` shows the choice/reason.
+Each endpoint has an isolated hashed directory beneath `<state root>/.sockets/`, separately per backend;
+equal names cannot share metadata, and `ls` lists only the selected backend's terminals.
+
+**Shell precedence:** `PAIRMUX_SHELL` > `SHELL` > OS fallback. Unix falls back to `bash`.
+Windows honors `SHELL` only when it names a real file (an exported `/usr/bin/bash` often does not);
+its fallback is `pwsh.exe`, then `powershell.exe`, then `COMSPEC`, else `cmd.exe`. Write `run` commands
+in the selected shell's syntax. PowerShell is a fallback, not an unconditional Windows shell.
+
+Other environment variables:
+
+- `PAIRMUX_SOCKET`: default endpoint. **Inside a pane this is its child endpoint**, not the endpoint
+  that owns the pane. To note the enclosing terminal, use the creator-supplied owning `--socket`;
+  see [the team/worker recipe](collaboration.md#notes-from-inside-a-pane-owning-socket-recipe).
+- `PAIRMUX_STATE_DIR`: journal root; otherwise `$XDG_STATE_HOME/pairmux`, then `~/.local/state/pairmux`.
+- `PAIRMUX_TMPDIR`: built-in runtime directory (socket, lock and `<socket>.log`); see troubleshooting.
+- `PAIRMUX_SECRET_PROMPT_RE`: extra secret-prompt wording (RE2), validated by `doctor`.
+- `PAIRMUX_NAME`, `PAIRMUX_STATE_NAMESPACE`, `PAIRMUX_TERMINAL_DIR`: pane identity and canonical state
+  locators supplied by pairmux. They are not a parent-socket API; do not reverse-engineer one.
 
 ## The envelope schema
 
-`schema` and `ok` are always present; everything else is omitted when empty.
+In CLI envelopes, `schema` and `ok` are always present; other fields are contextual (empty optional
+fields are omitted, but zero `exit_code`/`duration_ms` values are meaningful).
 
 | field | type | meaning |
 |-------|------|---------|
@@ -31,22 +60,35 @@ its own terminals.
 | `ok` | bool | `true` on success, `false` on error |
 | `status` | string | result state (see below) |
 | `terminal` | string | the terminal acted on |
-| `mode` | string | completion-detection mode: `hooks` or `sentinel` |
-| `exit_code` | int | the command's exit code (`run`, on `done`) — this is the **command's** code, not pairmux's |
-| `duration_ms` | int | wall-clock duration (`run`, on `done`) |
-| `output` | string | shaped output: CR collapsed, ANSI stripped, echoed command dropped |
+| `mode` | string | `hooks` or `sentinel`; program terminals also report `sentinel`, without shell completion support |
+| `exit_code` | int | shell command's exit code on `done` (`run` / completion wait), not pairmux's process exit code |
+| `duration_ms` | int | command duration when its start is known; can be absent for a subscriber |
+| `output` | string | command-specific text: shaped terminal output, a report, or note text; not always terminal data |
 | `truncated` | object | present when `output` was elided: `{omitted_lines, omitted_bytes?, get_full}` |
 | `terminals` | array | the `ls` listing (one object per terminal) |
-| `notes` | array of string | unseen human messages left via `pairmux note` — read and obey them |
+| `notes` | array of string | unseen messages from a human/agent via `note`; read and follow within task authorization |
 | `next` | array of string | optional ordered hints: prose/safety, placeholders, and applicable commands |
 | `error` | object | present when `ok:false`: `{code, message, hint}` |
 
-**Statuses.** Terminal states: `idle`, `running`, `awaiting-input`, `dead`. Per-command action
-statuses: `created` (`new`), `done`/`running` (`run`), `sent` (`send`), `noted` (`note`), `note` (`wait --note`),
-`killed` (`kill`), `updated`/`refreshed` (`update`, v0.6.0+),
-`ok` (`peek`/`log`/`ls`/`doctor`/`version`), and `wait`'s outcomes
-`idle` / `running` / `done` / `awaiting-input` / `pattern-found` / `human-done` / `dead` / `timeout`
-(which ones can resolve the call depends on the requested wait conditions).
+**Statuses depend on the command, not just the terminal:**
+
+| command / context | statuses |
+|-------------------|----------|
+| `new` shell | `created` |
+| `new --cmd` program | `running` or `dead` (not `created`; inspect with `peek`) |
+| `run` | `done`, `running`, `awaiting-input` |
+| `peek` | derived terminal status: `idle`, `running`, `awaiting-input`, `dead` (not generic `ok`) |
+| `ls` | top-level `ok`; each terminal row has its derived state |
+| `wait` | requested-condition outcomes: `idle`, `awaiting-input`, `done`, `running`, `pattern-found`, `note`, `human-done`, `dead`, `timeout` |
+| `send` / `note` / `kill` | `sent` / `noted` / `killed` |
+| `log` / `version --json` | `ok` |
+| `doctor` | `ok` or `issues`, both with `ok:true`; read the failed checks and fixes |
+| `skill install` | `installed` or `dry-run` |
+| `prune` | `pruned`, `ok` (dry-run/nothing to prune), or `issues` (partial failure) |
+| `update` (v0.6.0+) | `updated` or `refreshed` |
+
+`awaiting-input` can be inferred, especially in raw-mode TUIs: it is not proof of completion or safe
+input. `human-done` means a note arrived, not that the command finished.
 
 **Error codes** (envelope has `ok:false`, `status:"error"`, and an `error` object):
 
@@ -71,8 +113,11 @@ pairmux new [--name N] [--cwd D] [--cmd "..."]
 ```
 - `--name N` — name matching `^[a-z0-9][a-z0-9_-]{0,31}$`; auto-generated if omitted.
 - `--cwd D` — working directory (defaults to the current directory).
-- `--cmd "..."` — launch a program instead of an interactive shell. **Drive such a terminal with
-  `send`/`peek`, not `run`** (it reports `mode:"sentinel"`).
+- `--cmd "..."` — launch a known REPL/TUI/server instead of a shell terminal. Returns `running` or
+  `dead`, not `created`; initial output is read with `peek`/`log`. Drive it with `send`/`peek`, idle
+  waits, future pattern waits, or explicit notes. `run` and `wait --done` reject program terminals
+  with `E_BAD_ARGS`, even though they report `mode:"sentinel"`.
+- Without `--cmd`, `new` creates a shell and returns `created`; sequential `run` calls share its state.
 ```json
 {"schema":"pairmux.v1","ok":true,"status":"created","terminal":"build","mode":"hooks","next":["pairmux run build \"echo hello\""]}
 ```
@@ -84,11 +129,26 @@ pairmux run <name> "<cmd>" [--timeout 60s] [--head 50] [--tail 200]
 - **The command is one quoted argument** (same contract as the MCP tool). Multiple command tokens
   return `E_BAD_ARGS` with a hint showing the correctly quoted form — quoting your shell already
   consumed is never silently re-split.
-- `--timeout` — Go duration (`90s`, `5m`); default `60s`. **On timeout the reply is `status:"running"`,
-  not an error** — it carries the tail and a `next` for continuing to wait.
+- `--timeout` — Go duration (`90s`, `5m`); CLI default `60s` (not a startup recommendation).
+  **On timeout the reply is `status:"running"`, not an error** — it carries the tail and a `next`
+  for further observation. Submit the command, estimate time to its first meaningful signal rather
+  than total runtime, and generally use an initial bounded observation of 30s, shorter for fast tasks
+  (for example `pairmux run build "make -j4" --timeout 30s`). This bounded `run` counts as observation:
+  inspect its returned output/status before adding a wait. If it already supplies enough evidence of
+  completion or healthy startup, do not add a redundant wait.
 - `--head N` / `--tail N` — leading/trailing lines to keep (defaults 50 / 200); the middle is elided
   with a `truncated` pointer.
 - Refuses a command containing a newline (use `send` for interactive input). Takes the writer lock.
+  Shell terminals only: `--cmd` programs reject `run`. Can return `awaiting-input` before timeout;
+  answer safe prompts once or hand off secrets. `running` alone does not prove healthy startup:
+  check returned output/status or a safe `peek` for expected progress/readiness, early errors or a
+  prompt before unrelated work or a long wait. Unknown/silent is not healthy; investigate missing
+  evidence rather than assuming success or automatically increasing the wait.
+- If further observation is needed, prefer `wait <name> --done --idle 800 --timeout 30s` (shorter for
+  fast signals) to race completion against verified idle/prompt detection. Event-aware bounded
+  `run`/`wait` can return early; a brief sleep is only a fallback when no suitable blocking observation
+  is available, followed by a safe check, never repeated blind polling. Credential handoffs are
+  excluded from the 30s startup rule: use `--human --notify` with at least 300s and never read secret spans.
 
 Done, and with a non-zero exit the `output` field may be absent (nothing was printed):
 ```json
@@ -119,23 +179,19 @@ own deadline, none of which can wake the others.
   when the **next** one does if the terminal is idle. Shell terminals only (`E_BAD_ARGS` on a `--cmd`
   terminal, which emits no completion marks). This is how you subscribe to a terminal another agent
   is driving — you do not have to be the one who started the command.
-- `--note` — resolve on the next `note` event, and on nothing else (or on one already waiting —
-  see below). This is the exact turn-boundary signal when the terminal holds a long-lived program:
-  a shell terminal completes commands, but an agent's terminal UI never does, so there is no
-  completion mark to wait for and the screen is only ever a guess. Have whatever runs in the pane
-  call `pairmux note "$PAIRMUX_NAME" "<what happened>"` when its turn ends — a stop hook, a
-  wrapper script, a human — and this wait ends exactly then. Unlike `--human` it arms nothing else,
-  so it cannot return early on a terminal that merely happened to be sitting at a prompt.
-- `--human` — hand off to a human. Resolves on a `note` (or one already waiting), **and** on the
-  human finishing: as soon as the prompt is answered and the terminal is visibly moving again you
-  get `status:"running"` — *execution resumed*, not *the command finished*. Follow the rest with
-  `wait <name> --done`; the reply's `next` says so. A rejected answer that re-prompts keeps the wait
-  blocked. You also get `status:"done"` with the `exit_code` when the command finishes without
-  printing anything after the answer, or had already finished before you got around to waiting —
-  hand off, do other work, then wait, and an unseen completion returns immediately instead of
-  leaving you blocked for a human who has gone. Like notes, a completion is not consumed by reading:
-  a second `wait --human` can return it again until your next `run` or `send` settles it. That is
-  what makes a driving loop terminate: `send` the next instruction, then wait for the next note.
+- `--note` — resolve on the next note (or an unseen note already waiting); unrelated completion or
+  idle does not satisfy it. Use this for an exact turn boundary in a long-lived program. Its
+  hook/wrapper must note the terminal on the **owning endpoint supplied by its creator**; the pane's
+  `PAIRMUX_SOCKET` targets a child layer. See [the concrete recipe](collaboration.md#notes-from-inside-a-pane-owning-socket-recipe).
+- `--human` — composite handoff: note → `human-done`; answered prompt and resumed execution →
+  `running`; shell command completion → `done` plus `exit_code`. A rejected answer that re-prompts
+  stays blocked. An unseen pending completion can return even if it happened before this wait,
+  unlike `--done` at idle. Read-only waits do not consume it: another human wait may return it
+  again until the next `run` settles the pending completion. `send` acknowledges notes but does not
+  settle that completion. After `running`, shell `wait <name> --done --idle 800` is an option only
+  when the whole command span is known safe: it may replay earlier human input. Otherwise use `ls`
+  or a non-sensitive note. Programs use `wait <name> --idle 800`, assessing returned output.
+  `human-done` is only a note: do not blindly start pure `--done` if the shell may already be idle.
 - `--notify` — best-effort desktop notification to summon a human.
 - `--timeout` — overall deadline (default `300s`).
 
@@ -145,13 +201,27 @@ A prompt does **not** end a `--pattern`- or `--done`-only wait, and never ends a
 `--note`, `--human`, and an explicit `--idle` to race requested conditions; the first one satisfied wins. A
 pane that dies while any wait is in flight ends it as `dead`. **A `timeout` is not a failure**: the
 `next` repeats that exact wait — same condition flags — with double the deadline, and never under
-`300s` for a handoff. Run it and keep waiting.
+`300s` for a handoff. For ordinary startup, that longer hint is not automatic escalation: inspect
+returned output/status or a safe `peek`, and choose the next bounded observation based on the expected
+first meaningful signal. Verify healthy startup before unrelated work or a long wait; silence and
+`running` alone are insufficient. Long subscriptions (for example 600s) remain appropriate after
+verified startup or for intentional passive listening, not as a substitute for a startup check.
 
-**`--human` never returns `output`.** You handed off precisely because a human is typing something
-you must not see; the span the command occupied is that span, so it is not quoted back. You get the
-fact and the exit code — `peek` if you need the output.
+A pane dying **during** a wait returns `dead`; an already-dead target fails with `E_DEAD` when arming.
 
-Read-only: records nothing, takes no lock, so a human and an agent can both wait on one terminal.
+**Handoff privacy is outcome-specific.** `--human` suppresses the terminal span for resumed/completed
+handoffs. `human-done` can contain note text in `output`; `notes` can carry messages, and `dead` or
+other explicitly raced conditions can return terminal output. This is not redaction and not a promise
+of journal secrecy: echoed secrets can persist. Never put credentials in notes; do not automatically
+`peek`/`log` the sensitive span just because a `next` hint suggests it. See
+[collaboration.md](collaboration.md#privacy-boundary-not-redaction).
+
+For human handoffs, keep the default 300s or a single valid duration of at least 300s; they are excluded
+from the 30s startup rule. If the shell/tool client interrupts, immediately repeat the same handoff wait.
+On timeout, repeat the same conditions with the longer deadline in `next`, not an action that types the
+secret or reads its span.
+
+Read-only: records nothing, takes no writer lock; concurrent observers can wait on the same terminal.
 ```json
 {"schema":"pairmux.v1","ok":true,"status":"idle","terminal":"build","mode":"hooks","next":["pairmux peek build","pairmux run build \"...\""]}
 ```
@@ -257,7 +327,7 @@ pairmux prune [name] [--older-than 7d] [--dry-run]
 
 ---
 
-## Human commands (you rarely call these; a human does)
+## Human and maintenance commands
 
 - `pairmux attach [name]` — put the human in the live pane; needs interactive stdin/stdout. tmux
   backend: a tmux client focused on `name`, refused inside tmux. Built-in backend: attaches their
@@ -280,8 +350,14 @@ pairmux prune [name] [--older-than 7d] [--dry-run]
   `uv tool install --upgrade pairmux` (which follows normal uv configuration). On Windows it always
   refuses with `E_UPDATE`; the hint is to close pairmux and run `uv tool install --upgrade pairmux`.
 - `pairmux version` — print the build version.
-- `pairmux skill install [--target T|all] [--dry-run]` — install the embedded canonical skill into a
-  supported agent; `all` only touches agent configuration directories that already exist.
+- `pairmux skill install [--target T|all] [--dry-run]` (`-t` aliases `--target`) — offline installation
+  of the five canonical files embedded at build time (SKILL.md + four references). Reports embedded CLI version and bundle
+  SHA-256; it is not a remote-latest fetch. Always replaces managed same-name files, including local
+  edits, and preserves extra files. To get latest content, obtain a fresh executable first, then
+  install again and restart/reload the agent. `all` skips missing configuration roots; `cursor` is
+  relative to the current working directory. `codex`/`agents` write `.agents/skills/`, not the legacy
+  `.codex/skills/` tree. Rebuilding from refreshed source produces a dev build; `update` refuses dev
+  builds under existing policy. See the canonical repo's `install-map.md` for all target paths.
 
 ## Completion-detection modes
 
@@ -291,7 +367,9 @@ pairmux prune [name] [--older-than 7d] [--dry-run]
 | `sentinel` | injected marker carrying `$?` (POSIX-like shells), `$status` (Fish fallback), or `ERRORLEVEL` (`cmd.exe`) |
 
 `hooks` is chosen automatically for supported interactive shells. Fish versions/configurations that
-emit no native marks degrade to a Fish-safe sentinel; unknown shells and `--cmd` programs also use
-`sentinel`. Both modes surface the same statuses; you don't choose the mode. `pairmux doctor` reports
-the finer probe tiers `hooks`, `hooks-no-C` (notably bash 3.2 and PowerShell), `hooks-degraded->sentinel`, and
-`sentinel`; these are diagnostics, not additional envelope `mode` values.
+emit no native marks degrade to a Fish-safe sentinel; unknown shells use a shell-compatible sentinel.
+These are **shell completion modes**, not terminal kinds. A `--cmd` program also reports `sentinel`
+but gets no injected per-command marker and supports neither `run` nor `wait --done`; observe it with
+`peek`, `--idle`, future `--pattern`, or `--note`. `doctor` reports finer probe tiers `hooks`,
+`hooks-no-C` (notably bash 3.2 and PowerShell), `hooks-degraded->sentinel`, and `sentinel` as diagnostics,
+not additional envelope `mode` values.

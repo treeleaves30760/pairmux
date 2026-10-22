@@ -1,121 +1,188 @@
-# Human collaboration
+# Human collaboration and subscriptions
 
-pairmux terminals are real PTYs (tmux panes, or panes on pairmux's built-in server), so a human can
-watch them, take one over, do something you can't or shouldn't (type a password, make a judgement
-call), and hand back — all in the same live session. You find out what the human did through **notes**.
+pairmux terminals are real PTYs/ConPTYs. A human can watch, take over the same session, answer a
+credential prompt or make a judgment call, then hand control back. Notes explain what happened;
+resumed execution and shell completion can also end a handoff without a note.
 
 ## The three human commands
 
-- **`pairmux watch`** — a live dashboard of every terminal: status, lock holder, current command,
-  last activity. `!!` flags awaiting-input, `xx` flags dead. `Ctrl-C` quits.
-- **`pairmux attach [name]`** — put the human in the live pane `name`; they are now typing into the
-  same pane you use. They detach with `Ctrl-b d` on either backend (tmux: its configured binding;
-  built-in: always `Ctrl-b d`, and `Ctrl-b Ctrl-b` types a literal `Ctrl-b`). On tmux it is a tmux
-  client and refuses to nest inside tmux; on the built-in backend it attaches their terminal straight
-  to the pane, works inside tmux, and on detach reminds them to `pairmux note NAME "..."`.
-- **`pairmux note <name> <text>`** — leave a message the agent sees on its next `run`/`peek`/`wait`,
-  and which resolves `wait --human`.
+- **`pairmux watch`**: live dashboard (status, lock holder, command, last activity). `!!` means
+  awaiting-input, `xx` dead; `Ctrl-C` quits. The human operates the dashboard.
+- **`pairmux attach [name]`**: human takes the live pane. Detach with `Ctrl-b d` (tmux's configured
+  binding; fixed on built-in). Built-in `Ctrl-b Ctrl-b` sends a literal `Ctrl-b`. tmux attachment
+  refuses to nest inside tmux; built-in attachment works inside tmux, but not inside its own pane.
+- **`pairmux note <name> "<text>"`**: human/agent side channel, surfaced in `notes` on the next
+  `run`/`peek`/`wait`; resolves `--note` as `note`, or `--human` as `human-done`.
+
+These commands must address the endpoint that **owns** the terminal; pass `--socket` when the
+caller is on another layer. [The team/worker recipe below](#notes-from-inside-a-pane-owning-socket-recipe)
+shows why a bare note from inside a pane can target the wrong endpoint.
 
 ## The handoff loop (secret prompt)
 
-This is the canonical pairing loop: you hit a password you must not guess, summon a human, the human
-answers in the pane, and you resume knowing they helped.
+**1. Recognize the boundary.** Passwords, passphrases, PINs, OTP/MFA codes, API keys, tokens and
+localized credential prompts require a human. Do not guess, extract a secret from the environment,
+or copy one from earlier output. Detection is best-effort: a known credential command that goes
+quiet at `running` can also need handoff (notably on Windows, where detection relies on wording).
 
-**1. You hit a secret prompt.** The reply forbids guessing and points at handoff:
 ```json
-{"schema":"pairmux.v1","ok":true,"status":"awaiting-input","terminal":"dbmigrate","mode":"hooks","output":"\nPassword: ","next":["do NOT guess or type secrets","pairmux wait dbmigrate --human --notify   # hand off to the human"]}
+{"schema":"pairmux.v1","ok":true,"status":"awaiting-input","terminal":"dbmigrate","mode":"hooks","output":"Password: ","next":["do NOT guess or type secrets","pairmux wait dbmigrate --human --notify   # hand off to the human"]}
 ```
 
-**2. You hand off and block**, firing a desktop notification:
+**2. Summon the human and block.**
+
 ```bash
 pairmux wait dbmigrate --human --notify
 ```
-`--notify` pops a desktop notification (`osascript` on macOS, `notify-send` on Linux, Windows
-PowerShell on Windows — best-effort). Your tool call is now parked. If the shell/tool client interrupts before pairmux
-returns, immediately reissue the same `wait --human --notify`; never type the secret or shorten the
-300-second default wait. An explicit handoff timeout must be a single valid Go duration of at least
-`300s`.
 
-**3. The human takes over the same pane and types the secret:**
+`--notify` is best-effort desktop notification (macOS `osascript`, Linux `notify-send`, Windows
+PowerShell). Keep the 300s default, or one valid explicit duration of at least 300s. If your shell/tool
+client interrupts before pairmux returns, immediately reissue the **same** handoff wait; do not
+shorten it or type the secret. If pairmux returns `timeout`, repeat its longer handoff wait, with the
+same conditions. A deadline does not authorize acting on the human's behalf. **Credential handoffs are
+excluded from the 30s startup rule**: never shorten them or inspect secret spans for a startup check.
+
+**3. Give the human the same terminal and endpoint.** They attach, type directly, and optionally leave
+a **non-sensitive** note after detaching:
+
 ```bash
-pairmux attach dbmigrate            # they land in the live pane; they type the password
-pairmux note dbmigrate "entered the db password"   # optional
+pairmux attach dbmigrate
+pairmux note dbmigrate "authentication complete; continue with staging"
 ```
 
-**4. Your `wait` unblocks — two ways, and you must handle both.** A note is the explicit signal:
-```json
-{"schema":"pairmux.v1","ok":true,"status":"human-done","terminal":"dbmigrate","mode":"hooks","output":"entered the db password","next":["pairmux peek dbmigrate"]}
-```
-But a human who answers the prompt and walks away leaves no note at all, so the handoff also ends
-the moment the terminal is moving again. **Treat this exactly like `human-done` — the human is
-finished.** What you are told is that *execution resumed*, not that the command finished:
+Do not write while the human owns the input line. Attachment itself is not a journal event; `send`
+can warn about sharing input, but locks cannot stop a human's keystrokes.
+
+**4. Distinguish handoff outcomes before continuing.**
+
+| outcome | what happened | next action |
+|---------|---------------|-------------|
+| `human-done` | a note arrived (possibly already unseen) | read note text; this is **not command completion** |
+| `running` | the prompt was answered and execution resumed | shell completion wait only if the whole command span is known safe; program uses `--idle 800`, assessing returned output |
+| `done` + `exit_code` | shell command finished | use the exit code; do not wait for another completion |
+| `dead` | pane died | investigate only known-safe output; journal remains |
+| `timeout` | no requested outcome before deadline | repeat the longer handoff wait |
+
+A wrong answer that re-prompts keeps the handoff blocked. An unseen pending shell completion can
+satisfy `--human` even when it landed before the wait; repeated read-only waits can return it again
+until the next `run` settles the pending completion. `send` acknowledges notes but does not settle
+that completion. Do not loop on a handoff that already returned a completed result.
+
+A resumed shell handoff can look like this (no terminal span):
+
 ```json
 {"schema":"pairmux.v1","ok":true,"status":"running","terminal":"dbmigrate","mode":"hooks","next":["pairmux wait dbmigrate --done","pairmux peek dbmigrate"]}
 ```
-That distinction matters. A password answered at second two can be followed by a five-minute
-migration, and you should not be parked for those five minutes; if you do want the result, follow
-the `next` and `wait --done` for it. When the command instead finishes without printing anything
-after the answer — or had already finished before you got around to waiting — you get
-`status: done` with its `exit_code` directly.
 
-A wrong password that re-prompts does **not** end the wait: it is still awaiting input, so you stay
-parked instead of bouncing back to the same handoff hint. And you are not punished for waiting late:
-hand off, go do other work, and a completion that already landed returns from the next
-`wait --human` immediately.
+**Only if the whole command span is known safe**, follow completion or an intervening prompt/idle:
 
-**If it times out, the human simply has not come yet.** That is not a failure and not a reason to
-act on your own — the reply says so and hands you the same wait with a longer deadline:
-```json
-{"schema":"pairmux.v1","ok":true,"status":"timeout","terminal":"dbmigrate","mode":"hooks","next":["the human has not answered yet — do NOT type the secret","pairmux wait dbmigrate --human --notify --timeout 10m0s","pairmux peek dbmigrate"]}
+```bash
+pairmux wait dbmigrate --done --idle 800
 ```
-Run it. Keep waiting.
 
-**5. You resume** with `pairmux peek dbmigrate` and carry on. The password was never seen by,
-echoed to, or logged for you: `--human` deliberately returns no `output`, because the span it would
-quote is the span the human typed into.
+This ordinary wait does not extend handoff privacy. `--done` reads from the pending command's start
+to its completion mark: it may replay earlier human input, not just output produced after handoff.
+Later output being safe is insufficient; the **whole command span** must be known safe. Otherwise
+ask the human to confirm completion with a non-sensitive note, or check state with `pairmux ls`
+instead of reading the credential span.
+
+After `human-done`, do not blindly call pure `--done`: at idle it subscribes to the **next** command,
+not the one the human may already have finished. Check `ls` (no terminal output) first. If idle,
+continue as authorized, without assuming success; if still prompting, coordinate continued human
+input; if running, follow the appropriate wait only when the whole returned span is known safe.
+`--done --idle 800` is an alternative only when
+the whole command span is known safe and either outcome is useful. For a resumed **program** terminal named `repl`, use `pairmux wait repl --idle 800`, never
+`--done`. A prompt there is an observation, not a guaranteed program-turn boundary.
+
+## Privacy boundary: not redaction
+
+- Resumed/completed `--human` outcomes suppress the **terminal span** the human typed into.
+- `human-done` can include **note text** in `output`; messages can also appear in `notes`.
+- `dead` and other explicitly raced outcomes (for example a pattern) can include terminal output.
+- This is **not redaction**. It does not guarantee journal secrecy: a program that echoes a secret
+  can leave it in the terminal, screen, retained journal, or another reader's output.
+- **Never put credentials in notes.** Notes are recorded messages, not a secret channel.
+- **Do not automatically `peek`/`log` a sensitive span** after handoff, even if `next` includes a
+  peek hint. Use a status-only `ls`, non-sensitive human confirmation, or an explicitly known-safe
+  later range. Do not claim that a password was never logged or visible.
 
 ## Notes flow both ways
 
-A note is a general side channel, not just for handoffs. A human (or another agent) can leave context
-at any time, and it surfaces in your **next** `run`/`peek`/`wait` in the `notes` field:
+A human or agent can leave task context at any time:
 
 ```bash
-pairmux note build "use the staging token, not prod"
-```
-```json
-{"schema":"pairmux.v1","ok":true,"status":"done","terminal":"build","mode":"hooks","exit_code":0,"duration_ms":101,"output":"resumed","notes":["use the staging token, not prod"]}
+pairmux note build "use staging; do not deploy to production"
 ```
 
-**When you see `notes`, read them and follow them** — they override your earlier assumptions. `ls`
-shows a `[notes:N]` badge so a human can see what is waiting to be picked up. A note stays visible on
-every `peek`/`run`/`wait` (it is not consumed by reading), so you won't miss it.
+Read and follow `notes` within the task's authorization and safety constraints. `ls` shows
+`[notes:N]`. Reading does not consume a note; it stays visible until a subsequent `run`/`send`
+acknowledges it. `--note` and `--human` also return on an already-unseen note, so note-before-wait ordering
+is supported. The returned `note`/`human-done` means a message, not a command result or fresh input
+permission. When building a turn protocol, agree on the note's meaning and send the next instruction
+only after processing it.
 
-## Waiting for the human, not fighting them
+If a handoff note arrived while a credential prompt is still pending, another `--human`/`--note`
+wait can immediately replay that same note. Do not spin or send a dummy key just to acknowledge it:
+the key would reach the credential prompt. Ask the human to finish and give a non-sensitive
+completion confirmation; check status without reading the sensitive span.
 
-While a human is typing in a pane, don't fight them for it. The discipline: **if a human has attached,
-`wait` (don't `run`) until the wait resolves** — a note, or the command they unblocked finishing.
-Notes are recorded in the journal and surface in the next reply; attaching itself is deliberately
-just a live terminal operation and does not create an event. `send` warns you when a human is
-attached.
+## Subscribing without blind polling
 
-`wait --human` also returns immediately if a note is *already* waiting and unseen — so the natural
-"human notes, then the agent waits" ordering never drops a message.
+When launching work, submit the command first, then estimate time to the first meaningful signal,
+not the total runtime. Generally use an initial bounded observation of 30s (shorter for fast tasks),
+preferably the bounded `run` itself or an event-aware `wait`. Inspect returned output/status or a safe
+`peek`; if `run` already supplied completion or healthy-startup evidence, do not add a redundant wait.
+Verify healthy startup before unrelated work or a long wait: look for expected progress/readiness,
+not just `running` or silence. Unknown/silent is not healthy; a timeout is not failure, so investigate
+missing evidence instead of blindly doubling deadlines. A brief sleep is only a fallback when no
+suitable blocking observation is available, followed by a safe check, not repeated blind polling.
+Credential handoffs keep `--human --notify` at ≥300s and do not permit reading secret spans.
 
-## Subscribing to a terminal you are not driving
-
-`wait --done` blocks until the terminal's running command finishes — or until the next one does, if
-it is idle right now — and reports the `exit_code`:
+Long passive subscriptions may use 600s **after verified startup or for intentional passive listening**
+(including future work another agent or a human will drive), not instead of checking newly launched work:
 
 ```bash
 pairmux wait build --done --timeout 600s
-```
-```json
-{"schema":"pairmux.v1","ok":true,"status":"done","terminal":"build","mode":"hooks","exit_code":0,"output":"…\nBUILD SUCCESSFUL","next":["pairmux peek build"]}
+pairmux wait a,b,c --done --timeout 600s   # first terminal to complete wins
 ```
 
-You do not have to be the agent that started the command, and you do not have to register anywhere:
-`wait` records nothing and takes no lock, so any number of agents can hold a `--done` wait on one
-terminal and every one of them wakes on the same completion. That is the whole subscription
-mechanism — the journal is the broadcast. It works for a command a **human** typed into the pane
-too. Shell terminals only: a `--cmd` program terminal emits no completion marks, so use `--pattern`
-or `--idle` there.
+If the shell is idle when armed, `--done` watches a **future completion**, not an old result. It
+intentionally stays blocked at prompts. When driving a command and needing prompts/idle too, add
+`--idle 800`. Reads/waits take no writer lock and do not record events, so many subscribers can
+observe the same completion.
+
+Program terminals (`new --cmd`) reject `--done`: use current output for already-printed readiness,
+future `--pattern` for a later event, `--idle` for a prompt/death observation, or an explicit `--note`
+for an exact turn boundary. Raw-mode inferred `awaiting-input` is not proof that a turn finished.
+
+## Notes from inside a pane: owning-socket recipe
+
+Inside terminal `worker`, pairmux sets `PAIRMUX_NAME=worker` but `PAIRMUX_SOCKET` points to a **child
+endpoint** for terminals created *by* that worker. It does **not** point to the owning endpoint that
+created `worker`. The creator must supply that owning socket and terminal name explicitly to the
+worker's hook/wrapper; do not invent a parent-socket environment variable or parse one from the
+child socket or hashed state paths.
+
+Concrete example: the creator chooses endpoint `team` and terminal `worker`. A stop hook or wrapper
+running inside `worker` must signal this literal destination, supplied by the creator:
+
+```bash
+pairmux --socket team note worker "turn complete"
+```
+
+A runnable REPL demonstration passes the same destination directly to `subprocess` (no shell
+interpolation or assumed environment variable):
+
+```bash
+# Creator's shell; Python is a program terminal, not a shell terminal.
+pairmux --socket team new --name worker --cmd "python3 -q"
+pairmux --socket team peek worker
+pairmux --socket team send worker --text "import subprocess; print(2 + 2); subprocess.run(['pairmux', '--socket', 'team', 'note', 'worker', 'turn complete'], check=True)" --enter
+pairmux --socket team wait worker --note
+```
+
+The calculation emits its note before the wait or while it blocks; both work. `--note` ends on the
+signal without mistaking a quiet REPL/TUI for a finished turn. Real wrappers/hooks should be given
+`team` and `worker` as explicit configuration/arguments by their creator. Keep the same backend,
+state root and runtime-directory settings in both processes; `--socket` selects the endpoint, not
+another backend or state root. Substitute the **actual supplied owner**, not the pane's child endpoint.

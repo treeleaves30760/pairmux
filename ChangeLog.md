@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Teach agents to submit work first, estimate when useful output should appear,
+  and inspect startup after a short bounded wait (usually about 30 seconds)
+  before unrelated work or longer waits. Prefer event-aware waits over blind
+  sleeps; keep credential handoff waits and privacy rules unchanged.
+- `skill install` and `--dry-run` identify the embedded skill's CLI version and
+  deterministic bundle SHA-256. Installation remains offline: it replaces the
+  bundle's filenames, preserves unrelated files, and never downloads a remote
+  "latest" skill. Update the executable and rerun installation to refresh its
+  bundled skill.
+- Refresh the bundled skill's shell-versus-program waiting guidance, nested
+  endpoint note examples, backend and Windows shell selection, and human-handoff
+  privacy boundaries. Remove an unsupported interrupt key from troubleshooting.
+
+### Added
+
+- `skill install -t` as a short alias for `--target`, including `-t all`;
+  Cline (`cline`), Roo Code (`roo-code`), Kilo Code (`kilo-code`), and Factory
+  Droid (`droid`) skill targets, with verified native skill directories.
+- All-target skill refresh regressions covering stale files, repeated installs,
+  exact bundle bytes, custom files, dry runs and shared directory symlinks; real
+  pip/uv source-install tests verify the packaged executable's skill bundle.
+
 ## [1.0.0] - 2026-10-14
 
 pairmux 1.0.0 is the first stable release: the CLI commands and flags, the `pairmux.v1` JSON

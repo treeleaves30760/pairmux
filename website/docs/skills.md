@@ -7,6 +7,9 @@ description: Install the canonical pairmux skill and benchmark it across OpenCod
 
 pairmux embeds one canonical `SKILL.md` package. It teaches agents when to use pairmux, the
 `new -> run -> wait/send/log` loop, secret handoff, and how to interpret `pairmux.v1` envelopes.
+Agents submit work first, estimate when useful output should appear, and inspect startup after a
+short bounded wait (usually about 30 seconds) before unrelated work or a longer wait. Human
+credential handoffs retain their separate, at-least-300-second wait policy.
 It recommends a persistent `uv tool install pairmux` setup and, from v0.6.0, `pairmux update`
 only with explicit user authorization; agents must not install or self-update during terminal
 workflows on their own. See [Getting Started](./getting-started.mdx#install) for CLI installation.
@@ -16,10 +19,28 @@ workflows on their own. See [Getting Started](./getting-started.mdx#install) for
 ```bash
 pairmux skill install --target agents --dry-run
 pairmux skill install --target opencode
-pairmux skill install --target all
+pairmux skill install -t all
 ```
 
+`-t` is a short alias for `--target`. For example, `pairmux skill install -t cline` installs
+Cline's skill even if its configuration directory does not exist yet.
+
 `all` is conservative: it writes only where an agent's configuration directory already exists.
+Cursor is relative to the current working directory, not a global installation.
+
+Installation is offline: it copies the **running executable's embedded bundle**, not the newest
+checkout or a remote skill. Both installation and `--dry-run` identify the CLI version and bundle
+SHA-256. After an authorized CLI update, invoke `pairmux skill install --target all` again using
+the updated executable, then restart or reload the coding agent. A source checkout must be rebuilt
+before its skill edits can be installed; running an old binary can reinstall an old bundle.
+
+Each installation replaces the bundle's filenames, including any local edits to those files.
+Other files are preserved; legacy directories such as `~/.codex/skills/pairmux/` are not migrated
+or deleted. Back up customized bundled files before refreshing.
+
+The digest covers the sorted, slash-separated relative paths and contents: SHA-256 of each
+`path + NUL + SHA-256(file bytes)` entry concatenated in order (the inner hashes are raw bytes).
+This identifies skill-only changes even when the CLI version has not changed.
 
 | target | installation directory |
 |---|---|
@@ -32,6 +53,10 @@ pairmux skill install --target all
 | `windsurf` | `~/.codeium/windsurf/skills/pairmux/` |
 | `kiro` | `~/.kiro/skills/pairmux/` |
 | `amp` | `~/.config/amp/skills/pairmux/` |
+| `cline` | `~/.cline/skills/pairmux/` |
+| `roo-code` | `~/.roo/skills/pairmux/` |
+| `kilo-code` | `~/.kilo/skills/pairmux/` |
+| `droid` (Factory) | `~/.factory/skills/pairmux/` |
 | `agents` | `~/.agents/skills/pairmux/` (compatibility alias for the shared standard) |
 
 `codex` and `agents` intentionally resolve to the same open Agent Skills directory; `all` writes that

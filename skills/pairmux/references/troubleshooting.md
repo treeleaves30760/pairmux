@@ -18,9 +18,9 @@ Fix: `peek` to see what's running, then `wait` for it to finish — or open a **
 ```json
 {"schema":"pairmux.v1","ok":false,"status":"error","error":{"code":"E_BUSY","message":"another writer holds the lock: … held by pid 22018 …","hint":"pairmux peek build"}}
 ```
-`E_BUSY` returns **immediately** — pairmux never queues. You decide: wait a moment and retry, fall
-back to read-only (`peek`/`log`, which never take the lock), or use a different terminal. `ls` shows
-the holder pid inline.
+`E_BUSY` returns **immediately** — pairmux never queues. Inspect `ls`/`peek`/`log`, then use an
+appropriate blocking wait (`--done --idle 800` for the current shell command) or another terminal.
+Do not build a sleep/retry polling loop. `ls` shows the holder pid inline.
 
 ## A hung / stuck command
 
@@ -33,10 +33,15 @@ pairmux send stuck --key C-c                             # interrupt (returns im
 pairmux wait stuck --idle 800                            # wait for it to settle -> status: idle
 pairmux run stuck "echo recovered"                       # -> status: done
 ```
-If you skip the `wait` and run too soon, you'll get `E_BUSY` ("a command is still running") because the
-interrupt hasn't landed yet — just `pairmux wait stuck --idle 500` and retry the `run`. If Ctrl-C
-doesn't free it at all, escalate: `--key C-\\` (SIGQUIT) or, last resort, `pairmux kill stuck` and
-`pairmux new` a fresh one (the journal is retained either way).
+If you skip the `wait` and run too soon, you'll get `E_BUSY` because the interrupt has not landed.
+Wait again and inspect the returned state: `awaiting-input` is not `idle`, and timeout is not recovery.
+Ctrl-C is asynchronous and may be handled/ignored by the program. If it cannot be interrupted, use
+only an authorized program-specific exit or escalate to the human; kill/recreate is a last resort
+when a fresh terminal is explicitly acceptable. Do not offer unsupported control keys: `--key`
+accepts `C-a`..`C-z`, not arbitrary signal shortcuts.
+
+For a `new --cmd` program terminal, Ctrl-C does not turn it into a shell. Continue with `send`/`peek`
+and an idle/event wait, or observe `dead` if the program exits; `run` remains invalid.
 
 ## E_DEAD — the pane is gone
 
@@ -55,6 +60,26 @@ fresh terminal (reuse the name after `kill`, or pick another).
 ```
 The message lists the names that **do** exist — you probably have a typo. `pairmux ls` to confirm.
 
+## Startup is silent, unknown, or returned `running` / `timeout`
+
+Submit the command first, then estimate time to the first meaningful signal, not total runtime.
+Generally make the initial observation bounded to 30s, shorter for fast tasks; `run --timeout 30s`
+can serve as that observation. Inspect returned output/status, or a safe `peek` if needed. If `run`
+already returned enough evidence of completion or healthy startup, do not add a redundant wait.
+
+Before unrelated work or a long wait, verify expected progress/readiness and look for early errors or
+prompts. Unknown/silent is not healthy, and `running` only means the command remains active. A timeout
+is not failure either: investigate the missing signal, rather than treating silence as success or
+blindly following a longer `next` wait. For a shell needing more observation, use a bounded
+`wait --done --idle 800 --timeout 30s` (shorter when appropriate). Programs use bounded `--idle`,
+future `--pattern`, or `--note` waits, never `--done`; read readiness already printed instead.
+
+Prefer event-aware bounded `run`/`wait`. A brief sleep is only a fallback when no suitable blocking
+observation is available, followed by a safe check, not repeated blind polling. Long subscriptions
+such as 600s fit verified healthy work or intentional passive listening, not an unchecked startup.
+**Credential handoffs are excluded from the 30s startup rule**: keep `--human --notify` at ≥300s,
+repeat after interruption/timeout, and never read secret spans to check startup.
+
 ## `wait --pattern` returned `timeout` but the text is right there
 
 `--pattern` matches output produced **after the wait starts** — it does not scan what was already
@@ -62,12 +87,13 @@ printed. A common trap: a dev server prints `Serving HTTP …` during the initia
 `wait --pattern "Serving HTTP"` — which times out, because that line is already in the past.
 
 ```json
-{"schema":"pairmux.v1","ok":true,"status":"timeout","terminal":"api","mode":"hooks","next":["pairmux peek api","pairmux wait api --timeout 16s"]}
+{"schema":"pairmux.v1","ok":true,"status":"timeout","terminal":"api","mode":"hooks","next":["pairmux peek api","pairmux wait api --pattern \"Serving HTTP\" --timeout 16s"]}
 ```
 
 Fixes:
 - If the readiness line **may already be present**, read it instead of waiting: check the `run`
-  output, or `pairmux peek api` / `pairmux log api --grep "Serving HTTP"`.
+  output, or `pairmux peek api` / `pairmux log api --grep "Serving HTTP"`. `new --cmd` returns a
+  status, not startup output; read `peek`/`log` after creating the program.
 - Use `--pattern` only for a line you expect to appear in the **future** (a slow boot, a later log
   event). Start the `wait` before the event, then trigger it.
 
@@ -78,9 +104,10 @@ liveness and status. A command that is sleeping, blocked on I/O, or otherwise st
 `running`; pairmux keeps waiting until the shell is actually idle or the overall timeout expires.
 A prompt returns `awaiting-input`, and a vanished pane returns `dead`.
 
-For a long-lived process where silence is expected, use `peek` to inspect it or `wait --pattern` for a
-future readiness line. Use `run` for finite commands because hooks return precise `done` +
-`exit_code`.
+For finite **shell** commands, use `run`, then `wait --done --idle 800` if needed: exact completion
+races verified idle/prompt detection, without sleeping. For long-lived programs, read already-printed
+readiness or use `wait --pattern` for a future event. Silence in a program terminal does not invent
+shell completion; raw-mode inferred `awaiting-input` is not proof a turn finished or input is safe.
 
 This idle/prompt behavior is armed only when idle is the default condition or `--idle` is explicit.
 `wait --pattern ...` and `wait --done` keep blocking at a prompt until their requested condition,
@@ -90,7 +117,20 @@ pane death, or timeout. Add `--idle MS` when either condition should race idle/p
 *because* of a prompt and then being handed that prompt straight back is a spin, so `--human` waits
 for the prompt to be **answered** — a human `note`, the terminal visibly moving again (`running`),
 or the command completing (`done`). If it times out, the human has not come yet: the `next` repeats
-the same wait with a longer deadline, and following it is the correct move.
+the same wait with a longer deadline, and following it is the correct move. If the tool client
+interrupts, reissue that handoff immediately; keep the 300s default or an explicit duration ≥300s.
+A resumed program uses `--idle 800`, never `--done`. A `human-done` note alone is not completion;
+check state with `ls` before another wait, because pure `--done` at idle subscribes to a future
+command. Do not automatically `peek` a sensitive span: handoff suppression is not redaction or
+journal secrecy. Never put credentials in notes. See [collaboration.md](collaboration.md).
+
+## A note from inside a pane says E_NO_TERMINAL or wakes the wrong waiter
+
+`PAIRMUX_SOCKET` inside the pane is its child endpoint, not its owner. Have the creator supply the
+owning endpoint and terminal name explicitly: a worker owned by `team` calls
+`pairmux --socket team note worker "turn complete"`; its coordinator waits with
+`pairmux --socket team wait worker --note`. Do not parse a parent socket from the child name or
+invent an environment variable. See [the runnable recipe](collaboration.md#notes-from-inside-a-pane-owning-socket-recipe).
 
 ## E_TMUX — the terminal backend failed
 
@@ -162,11 +202,13 @@ shows total retained bytes and the largest terminals.
 
 ## Sentinel mode / `--cmd` terminals
 
-A terminal created with `--cmd`, an unknown interactive shell, or a supported shell whose OSC 133
-probe failed reports `mode:"sentinel"`. Completion detection still works via an injected marker.
-POSIX-like shells carry the prior exit code in `$?`; Fish fallback uses `$status`, so Fish commands
-remain valid. A `--cmd` terminal is a **program you drive with `send`/`peek`, not `run`**; interact
-with it using `send` and observe with `peek`/`wait`/`log`.
+A terminal created with `--cmd` reports `mode:"sentinel"` but is a **program**, not a shell:
+`run` and `wait --done` return `E_BAD_ARGS`. Use `send`/`peek`, `--idle`, future `--pattern`, or explicit
+owning-socket `--note`. Its exit is `dead`, not `done`.
+
+An unknown interactive **shell**, or a shell whose OSC 133 probe failed, can also report `sentinel`.
+There, injected markers still support `run`/`--done`: POSIX-like shells carry `$?`, Fish uses `$status`,
+and `cmd.exe` uses `ERRORLEVEL`. `mode` alone does not identify the terminal kind.
 
 ## Environment check
 
@@ -179,6 +221,7 @@ tmux), state-dir writability, the per-shell completion tier (`hooks`, `hooks-no-
 `hooks-degraded->sentinel`, or `sentinel`), and notifier availability. `hooks-no-C` means completion
 works but human-interleave correlation is slightly weaker (e.g. bash 3.2, PowerShell). Fish 4+
 supplies native OSC 133 marks; older/degraded Fish uses its sentinel fallback. pairmux runs natively
-on macOS, Linux, and Windows 10 1809+ (built-in backend; from v1.0.0), and inside WSL. On
-Windows the default shell is PowerShell and `cmd.exe` terminals use sentinel mode; secret prompts
-there are recognized by wording only.
+on macOS, Linux, and Windows 10 1809+ (built-in backend; from v1.0.0), and inside WSL. Shell
+selection is `PAIRMUX_SHELL` > `SHELL` > OS fallback; on Windows `SHELL` must name a real file, else
+pwsh → Windows PowerShell → COMSPEC/`cmd.exe`. Secret detection there relies on wording only.
+`doctor` can return `ok:true,status:"issues"`; read the report and fixes, not just the success flag.

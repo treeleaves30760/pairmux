@@ -1,14 +1,17 @@
 package cli
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	pairmuxroot "github.com/treeleaves30760/pairmux"
 	"github.com/treeleaves30760/pairmux/internal/output"
+	"github.com/treeleaves30760/pairmux/internal/version"
 )
 
 // skillEmbedRoot is where the canonical skill tree sits inside the embedded FS
@@ -27,6 +30,10 @@ var skillTargetNames = []string{
 	"windsurf",
 	"kiro",
 	"amp",
+	"cline",
+	"roo-code",
+	"kilo-code",
+	"droid",
 	"agents",
 }
 
@@ -58,6 +65,14 @@ func skillTargetDir(target string) (dir string, projectRelative bool, err error)
 		return filepath.Join(home, ".kiro", "skills", "pairmux"), false, nil
 	case "amp":
 		return filepath.Join(home, ".config", "amp", "skills", "pairmux"), false, nil
+	case "cline":
+		return filepath.Join(home, ".cline", "skills", "pairmux"), false, nil
+	case "roo-code":
+		return filepath.Join(home, ".roo", "skills", "pairmux"), false, nil
+	case "kilo-code":
+		return filepath.Join(home, ".kilo", "skills", "pairmux"), false, nil
+	case "droid":
+		return filepath.Join(home, ".factory", "skills", "pairmux"), false, nil
 	case "agents":
 		return filepath.Join(home, ".agents", "skills", "pairmux"), false, nil
 	}
@@ -66,7 +81,7 @@ func skillTargetDir(target string) (dir string, projectRelative bool, err error)
 
 // cmdSkill routes the skill subcommand family (currently only install).
 func (c *Ctx) cmdSkill(args []string) int {
-	const usageLine = "pairmux skill install [--target T|all] [--dry-run]"
+	const usageLine = "pairmux skill install [--target T|all] [--dry-run] (-t is an alias for --target)"
 	if len(args) == 0 {
 		return c.usage(usageLine, "pairmux skill install")
 	}
@@ -80,12 +95,12 @@ func (c *Ctx) cmdSkill(args []string) int {
 // skills directory. It only ever writes our own files — a user's unrelated
 // files in the same directory are never touched or deleted.
 func (c *Ctx) cmdSkillInstall(args []string) int {
-	const usageLine = "pairmux skill install [--target T|all] [--dry-run]"
+	const usageLine = "pairmux skill install [--target T|all] [--dry-run] (-t is an alias for --target)"
 	var target string
 	var dryRun bool
 	pos, err := parseFlags(args, flagSpec{
 		bools: map[string]*bool{"dry-run": &dryRun},
-		vals:  map[string]*string{"target": &target},
+		vals:  map[string]*string{"target": &target, "t": &target},
 	})
 	if err != nil {
 		return c.usage(usageLine, err.Error())
@@ -123,7 +138,10 @@ func (c *Ctx) cmdSkillInstall(args []string) int {
 		skipMissing = true
 	}
 
-	var lines []string
+	lines := []string{
+		fmt.Sprintf("source: embedded in pairmux %s; bundle sha256:%s", version.Version, skillDigest(files)),
+		"installs this executable's bundled files, not a remote latest version; replaces matching files and preserves other files",
+	}
 	installedDirs := make(map[string]string)
 	for _, tgt := range targets {
 		dir, projRel, err := skillTargetDir(tgt)
@@ -214,7 +232,21 @@ type skillFile struct {
 	data []byte
 }
 
-// skillFiles reads the embedded skill tree in stable walk order.
+// skillDigest identifies a bundle independently of the CLI version. skillFiles
+// supplies sorted slash-separated paths; each entry is path + NUL + content's
+// SHA-256 bytes, making both file names and boundaries part of the digest.
+func skillDigest(files []skillFile) string {
+	h := sha256.New()
+	for _, f := range files {
+		_, _ = h.Write([]byte(f.rel))
+		_, _ = h.Write([]byte{0})
+		sum := sha256.Sum256(f.data)
+		_, _ = h.Write(sum[:])
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+// skillFiles reads the embedded skill tree in relative-path order.
 func skillFiles() ([]skillFile, error) {
 	var out []skillFile
 	err := fs.WalkDir(pairmuxroot.SkillFS, skillEmbedRoot, func(path string, d fs.DirEntry, err error) error {
@@ -234,5 +266,6 @@ func skillFiles() ([]skillFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read embedded skill: %w", err)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].rel < out[j].rel })
 	return out, nil
 }
