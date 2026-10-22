@@ -1,8 +1,10 @@
 # Releasing pairmux
 
 This repository owns the pairmux CLI, native binaries, Python wheel wrappers,
-RPM packages, installers, landing page, and documentation site. The companion
-`pairmux-skills` repository owns the canonical Agent Skill.
+RPM packages, the canonical root installers, and the documentation site. The
+homepage lives in the separate `treeleaves30760/pairmux-website` repository (see
+[Websites and installer delivery](#websites-and-installer-delivery)). The
+companion `pairmux-skills` repository owns the canonical Agent Skill.
 
 **v0.5.3 migration.** This release retires pairmux APT / `.deb` distribution
 and makes the website installer use PyPI. Existing tags, published PyPI versions,
@@ -27,6 +29,8 @@ but its GitHub Pages HTTPS certificate was then pending. The operator explicitly
 approved proceeding with v0.5.3 without waiting for it. This historical status
 is superseded by the 2026-10-09 HTTPS confirmation below; the
 [APT migration guide source](./website/docs/migrating-from-apt.md) remains available.
+*2026-10-15: `landing/` removed; the site moved to `treeleaves30760/pairmux-website`.
+Dated check lists below that mention landing tests predate that removal.*
 
 **v0.6.0 preparation.** Persistent `uv tool install pairmux` is the primary install
 path. The new `pairmux update` command is limited to the verified running uv tool
@@ -162,12 +166,14 @@ Release-shape changes from that tag:
   `dist/local-wheel`; `make pypi-test` runs the packaging unit tests, including
   the source-install backend. These are never release artifacts.
 
-**Release ordering.** Cloudflare deploys the landing site, and therefore the
-root `install.ps1`, from `main`. Until a release with Windows wheels is on PyPI,
-the native default fails (with a hint to use WSL) for everyone who runs the
-public one-liner, so the branch was merged on 2026-10-14 and v1.0.0 prepared
-for release the same day. For future installer changes, keep that ordering:
-merge and release together, or hold the website's deployment.
+**Release ordering.** Every build of the website
+(`treeleaves30760/pairmux-website`) fetches the root `install.ps1` from this
+repository's `main` and serves it publicly. Until a release with Windows wheels
+is on PyPI, the native default fails (with a hint to use WSL) for everyone who
+runs the public one-liner, so the branch was merged on 2026-10-14 and v1.0.0
+prepared for release the same day. For future installer changes, keep that
+ordering: merge and release together, or do not rebuild the website until the
+release is public.
 
 **Verified before v1.0.0.** Native Windows is validated by CI on hosted
 Windows runners (unit, ConPTY integration with PowerShell, source install and
@@ -196,7 +202,7 @@ not yet run against a published release.
 | --- | --- | --- |
 | GitHub Releases | GoReleaser builds four macOS/Linux `.tar.gz` archives, two Windows `.zip` archives (`windows_amd64`, `windows_arm64`), two Linux `.rpm` packages, and `checksums.txt`: **nine native assets** from v1.0.0 (seven through v0.6.0). | Push a canonical SemVer tag. The existing workflow verifies and stages the exact artifacts before publishing the release. No `.deb` is produced. |
 | PyPI | Six platform wheels (macOS x86-64/ARM64, manylinux x86-64/aarch64, `win_amd64`, `win_arm64`; four through v0.6.0) wrap the same verified Go binaries; wheel installation requires Python >= 3.9. | Configure the `PYPI_TOKEN` repository secret or migrate to Trusted Publishing. The tag workflow uploads only the verified wheels, after the Windows smoke job passes. Smoke-test persistent `uv tool install` and `pairmux update` first, plus optional `uvx` quick runs. |
-| Website installer | Root `install.sh` installs the pairmux wheel from `https://pypi.org/simple` through uv, bootstrapping official Astral uv and a compatible managed Python if needed. `install.ps1` applies the same policy natively on Windows by default; `PAIRMUX_INSTALL_TARGET=wsl` delegates into WSL as before. | Rebuild the landing site whenever either root installer changes; test the public `/install.sh` and `/install.ps1` endpoints. Mind the release ordering above for `install.ps1`. The Bash installer no longer selects GitHub archives or consumes `checksums.txt`. |
+| Website installer | Root `install.sh` installs the pairmux wheel from `https://pypi.org/simple` through uv, bootstrapping official Astral uv and a compatible managed Python if needed. `install.ps1` applies the same policy natively on Windows by default; `PAIRMUX_INSTALL_TARGET=wsl` delegates into WSL as before. | After either root installer changes on `main`, rebuild the website (re-run the latest `ci` workflow in `treeleaves30760/pairmux-website`, or push a commit there), then test the public `/install.sh` and `/install.ps1` endpoints against `main`; see [Websites and installer delivery](#websites-and-installer-delivery). Mind the release ordering above for `install.ps1`. The Bash installer no longer selects GitHub archives or consumes `checksums.txt`. |
 | RPM files | GoReleaser emits installable `.rpm` release assets for Linux x86-64 and ARM64. Through v0.6.0 they require tmux >= 3.2; from v1.0.0 they only recommend it (`Recommends: tmux >= 3.2`). | No extra work for direct package downloads. Verify checksums and smoke-test a local RPM; there is no Yum repository. |
 | Homebrew tap | **Active.** GoReleaser renders the cask (binary + manpage, `depends_on formula: tmux`, quarantine-stripping postflight) during the build; the release workflow pushes `Casks/pairmux.rb` to [`homebrew-pairmux`](https://github.com/treeleaves30760/homebrew-pairmux) after the release goes public. Prereleases are skipped. | Smoke-test `brew install --cask treeleaves30760/pairmux/pairmux` + `pairmux doctor` on a clean machine after each stable release. |
 
@@ -232,7 +238,6 @@ issue tracker, release archive, and source of the changelog.
    npm --prefix website run audit
    npm --prefix website run typecheck
    npm --prefix website run build
-   node landing/build.mjs
    ```
 
    The opt-in `uvintegration` tests require the supplied installed uv/Python and
@@ -261,7 +266,7 @@ issue tracker, release archive, and source of the changelog.
    treat prior successful uploads as historical evidence only. Confirm actual
    publishing authorization from the upload result, and preserve the original
    artifacts for recovery if any wheel is accepted. For the v0.5.3 migration,
-   the landing and migration guide source are available and the former APT
+   the homepage and migration guide source are available and the former APT
    publisher is retired. Documentation HTTPS was deferred during that release
    and confirmed complete on 2026-10-09; do not infer new CLI publication from
    website availability.
@@ -446,20 +451,34 @@ reuse. Consequences, learned on v0.2.0:
 
 The two sites have separate deployment paths:
 
-- **Cloudflare Pages landing:** `https://pairmux.treeleaves30760.com`, using
-  Git integration on `main`, repository-root build command
-  `node landing/build.mjs`, output `landing/dist`. The build copies the root
-  `install.sh` and `install.ps1`; there is no second installer implementation.
-  Build watch paths must include both installers as well as `landing/**`.
+- **Homepage:** `https://pairmux.treeleaves30760.com`, a Vue 3 + vite-ssg site
+  in the private `treeleaves30760/pairmux-website` repository. Its own GitHub
+  Actions `ci` workflow builds it from that repository's `main` and deploys it
+  to the Cloudflare Pages project `pairmux-website`. The build fetches this
+  repository's root `install.sh` and `install.ps1` from `main`
+  (`https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.sh`),
+  so there is no second installer implementation, but an installer change here
+  is not public until the website rebuilds. After changing either installer,
+  re-run that repository's latest `ci` workflow (Actions → ci → Re-run jobs) or
+  push a commit there, then verify that the served scripts match `main`:
+
+  ```sh
+  curl -fsSL https://pairmux.treeleaves30760.com/install.sh | diff - <(curl -fsSL https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.sh)
+  curl -fsSL https://pairmux.treeleaves30760.com/install.ps1 | diff - <(curl -fsSL https://raw.githubusercontent.com/treeleaves30760/pairmux/main/install.ps1)
+  ```
+
+  Until 2026-10-15 the homepage was built from this repository's `landing/`
+  directory by the Git-integrated Cloudflare Pages project `pairmux`; both were
+  retired when the site moved.
 - **GitHub Pages docs:** `https://pairmux-docs.treeleaves30760.com/`, built
   from `website/` by `.github/workflows/docs.yml`. Docusaurus uses `baseUrl: '/'`
   and preserves the existing page slugs and strict broken-link checks.
 
 Follow [website/README.md](./website/README.md#deployment-and-custom-domains)
-for coordinated custom-domain registration, DNS, HTTPS, and deploy verification.
-Cloudflare Pages needs its custom domain registered in the project before a
-CNAME can serve it. GitHub Actions Pages ignores repository `CNAME` files;
-configure the docs custom domain in Pages settings/API instead.
+for the docs site's custom-domain registration, DNS, HTTPS, and deploy
+verification; the homepage's Cloudflare Pages project and custom domain are
+managed with `pairmux-website`. GitHub Actions Pages ignores repository `CNAME`
+files; configure the docs custom domain in Pages settings/API instead.
 
 ## APT / Debian retirement
 

@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exact bundle bytes, custom files, dry runs and shared directory symlinks; real
   pip/uv source-install tests verify the packaged executable's skill bundle.
 
+### Removed
+
+- The in-repository `landing/` static site and its `Landing` workflow. The homepage at
+  `https://pairmux.treeleaves30760.com` now lives in the separate `treeleaves30760/pairmux-website`
+  repository, whose build fetches the root `install.sh` and `install.ps1` from `main`; those
+  installers are unchanged and remain canonical.
+
 ## [1.0.0] - 2026-10-14
 
 pairmux 1.0.0 is the first stable release: the CLI commands and flags, the `pairmux.v1` JSON
