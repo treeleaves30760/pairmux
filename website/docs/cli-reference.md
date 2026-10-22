@@ -642,8 +642,11 @@ installs into agent configuration directories that already exist and reports the
 pairmux skill install [--target T|all] [--dry-run]
 ```
 
+`-t` is an alias for `--target`; for example, `pairmux skill install -t all`.
+
 Targets: `claude-code`, `codex`, `gemini`, `cursor`, `opencode`, `copilot`, `windsurf`, `kiro`,
-`amp`, and the cross-agent `agents` directory. See [Agent Skills](./skills.md) for paths and evals.
+`amp`, `cline`, `roo-code`, `kilo-code`, `droid` (Factory), and the cross-agent `agents` directory.
+See [Agent Skills](./skills.md) for paths and evals.
 
 ### mcp serve
 

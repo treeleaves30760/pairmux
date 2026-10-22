@@ -173,10 +173,12 @@ handoff guidance:
 ```bash
 pairmux skill install --target codex --dry-run
 pairmux skill install --target codex
+pairmux skill install -t all
 ```
 
-Use `--target all` to update only the supported agent configuration directories that already
-exist. See the [Agent Skills guide](https://pairmux-docs.treeleaves30760.com/skills) for all
+`-t` is an alias for `--target`. Use `-t all` to update only the supported agent configuration
+directories that already exist, including Cline, Roo Code, Kilo Code, and Factory Droid.
+See the [Agent Skills guide](https://pairmux-docs.treeleaves30760.com/skills) for all
 targets and install locations.
 
 MCP clients can launch the built-in stdio server and use the core terminal operations as typed

@@ -616,16 +616,26 @@ terminal's journal. `pairmux doctor` reports how much the state root currently r
 ## Teach an AI agent
 
 pairmux embeds its Agent Skill. The skill teaches the `new → run → wait/send/log` loop and the
-safety rules: do not guess timing with `sleep`, do not send secrets, and inspect retained output
-before re-running work.
+safety rules: launch first, inspect startup after a short bounded wait (usually about 30 seconds),
+and confirm healthy progress before doing other work or waiting longer. Prefer event-aware waits
+over blind sleeps, never send secrets, and inspect retained output before re-running work.
 
 Preview or install one target, or update supported agent directories that already exist:
 
 ```bash
 pairmux skill install --target codex --dry-run
 pairmux skill install --target codex
-pairmux skill install --target all
+pairmux skill install -t all
 ```
+
+`-t` is an alias for `--target`. Targets include Cline, Roo Code, Kilo Code, and Factory Droid
+alongside Claude Code, Codex, Gemini CLI, Cursor, OpenCode, Copilot, Windsurf, Kiro, and Amp.
+
+Installation is offline and uses the **running executable's embedded skill**, not the latest
+checkout or a remote download. The output identifies the CLI version and bundle SHA-256.
+After updating pairmux, rerun `skill install --target all` to refresh existing installations.
+Bundled filenames are replaced (including local edits); unrelated files are preserved.
+Restart or reload the agent afterward. Cursor's destination is relative to the current directory.
 
 Supported targets and install paths are documented in the
 [Agent Skills guide](https://pairmux-docs.treeleaves30760.com/skills). The companion

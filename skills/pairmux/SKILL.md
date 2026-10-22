@@ -15,217 +15,190 @@ description: >-
 
 # pairmux — reliable terminals for agents
 
-`pairmux` runs commands inside real terminals — tmux panes, or PTY/ConPTY panes on pairmux's own
-built-in server when tmux is absent or on Windows — with persistent shell state, and gives you a
-**blocking** CLI: `run` returns on completion, input, or timeout; `wait` returns when the
-condition you requested is met, the pane dies, or its timeout expires. Interactive programs become
-drivable, a human can watch or step into the same terminal at any moment, and you never guess how
-long to wait. Add `--json` to any command for a machine-readable `pairmux.v1` envelope.
+`pairmux` gives agents real, persistent terminals and blocking operations instead of timing guesses.
+A human can watch or take over the same terminal. Ordinary CLI replies support `--json` for a
+`pairmux.v1` envelope; `help` is plain text, `attach`/`watch` are interactive, and `mcp serve` uses
+JSON-RPC rather than CLI envelopes.
 
 ## When to use pairmux (and when not to)
 
-Use pairmux when interactivity, a persistent live shell, a human, or longevity matters:
+Use it when a **live terminal** matters:
 
-- **Interactive** programs — REPLs, TUIs, pagers, `[y/N]` prompts, password prompts, `ssh`,
-  `git rebase -i`, `docker exec -it`, `npm init`. An exec-style shell tool has no PTY, so these
-  are impossible there, not merely awkward. This is pairmux's core job.
-- **Human-in-the-loop** — a secret you must not guess, a judgment call mid-command, or a human who
-  wants to watch the pane live, take it over, and hand it back.
-- **Persistent shell state** — `source venv/bin/activate`, `conda activate`, `export`, `nvm use`
-  done once in a live shell, instead of re-composed into every command.
-- **Long-lived** processes — dev servers, `watch`, `tail -f`. Start it, then observe read-only.
-- **Shared observation** — several agents reading one terminal's log at once (reads are lock-free),
-  or a human watching your work as it happens.
-- **Slow commands in that same live terminal** — a build or migration that needs the venv, the ssh
-  session, or a watching human. `run` blocks until done; no `sleep`.
+- **Interactive programs:** REPLs, TUIs, pagers, `[y/N]` prompts, `ssh`, `sudo`, `docker exec -it`,
+  `git rebase -i`. A PTY lets you inspect and answer the program in place.
+- **Human-in-the-loop:** credentials or judgment calls, shared observation, or human takeover.
+- **Persistent shell state:** activate a venv, export variables, or select `nvm` once per workstream.
+- **Long-lived processes:** dev servers, watch tasks, `tail -f`; start once, observe read-only.
+- **Slow commands sharing that terminal:** a build/migration needs its state or a watching human.
 
-**Do NOT use pairmux for one-shot short commands.** `ls`, `cat`, `git status`, `mkdir`, a quick
-`grep` — just use your normal shell tool. And a long but **non-interactive** command that needs no
-live shell state and no human (a plain `make`, a test suite in a fresh env) is often served just as
-well by your harness's own background execution — reach for pairmux when the command is
-interactive, shares a terminal or its state, or may need a human to step in.
+**Do NOT use pairmux for one-shot short commands.** Use your normal shell tool for `ls`, `git status`,
+`mkdir`, quick searches, etc. A long **non-interactive** build/test that needs neither live shell
+state nor a human is often served just as well by your harness's background execution.
 
 ## Before starting
 
-Use the installed CLI: `pairmux version`, then `pairmux doctor` (its first line names the backend:
-tmux or built-in). If missing, recommend `uv tool install pairmux` (Python 3.9+). tmux is optional
-(3.2+ when used; v0.6.0 and earlier require it); without it pairmux uses its built-in multiplexer.
-Windows runs natively (Windows 10 1809+, from v1.0.0); WSL is optional.
-With explicit user authorization, `pairmux update` (v0.6.0+) updates only the running persistent
-uv installation from public PyPI. Older versions first need `uv tool install --upgrade pairmux`.
-On Windows `update` refuses (`E_UPDATE`); follow its hint. Do not install or self-update
-autonomously during a terminal workflow. Keep other installations under their existing package
-manager; uvx quick runs are not persistent update targets.
+Use the installed CLI: `pairmux version`, then `pairmux doctor` (first report line: backend).
+From v1.0, auto uses tmux 3.2+ on Unix when available, otherwise built-in PTYs; an already-running
+built-in endpoint stays built-in unless tmux is running there too. Windows uses built-in ConPTY
+(Windows 10 1809+); WSL is optional. See the backend details in [commands.md](references/commands.md).
 
-**On Windows, the terminal's shell is PowerShell** (pwsh, else Windows PowerShell, else `cmd.exe`;
-`PAIRMUX_SHELL` overrides it), so write `run` commands in that shell's syntax. Secret prompts there
-are recognized by wording only: treat a quiet credential prompt at `running` as a handoff.
+If missing, recommend `uv tool install pairmux` (Python 3.9+). With explicit user authorization,
+`pairmux update` (v0.6.0+) updates only a verified persistent uv installation; older versions need
+`uv tool install --upgrade pairmux`. Windows, uvx, non-uv and dev builds refuse `update` (`E_UPDATE`);
+follow the hint. Do not install or update autonomously during a terminal workflow.
+
+Shell selection is `PAIRMUX_SHELL` > `SHELL` > OS fallback (`bash` on Unix; on Windows, `SHELL`
+must name a real file, otherwise pwsh → Windows PowerShell → COMSPEC/`cmd.exe`). Write commands in
+that shell's syntax; Windows credential detection relies on wording, so a quiet credential command
+may need human handoff even at `running`.
+
+## Choose the terminal kind
+
+| kind | create | drive / wait |
+|------|--------|--------------|
+| **Shell** — sequential commands sharing state | `pairmux new --name build` | `run`; `wait --done` for command completion |
+| **Program** — known REPL/TUI/server | `pairmux new --name repl --cmd "python3"` | `send` + `peek`; `wait --idle`, future `--pattern`, or explicit `--note` |
+
+`run` and `wait --done` are **shell-only**. A `--cmd` terminal reports `mode:"sentinel"` but has no
+shell completion marks; that mode does not grant shell capabilities. Program exit is `dead`, not
+`done`. An idle/prompt observation is not a completed REPL turn.
 
 ## The golden loop
 
+```text
+1. new once per workstream:  pairmux new --name build
+2. Submit the command first: pairmux run build "make -j4" --timeout 30s
+3. Estimate time to first meaningful signal, not total runtime; initial observation generally 30s,
+   shorter for fast tasks. A bounded run counts; no extra wait if it returned enough evidence.
+4. Examine returned output/status, or a safe peek if needed (never a secret span):
+   done            → read output + exit_code, continue; no redundant completion wait
+   running         → look for expected progress/readiness; status alone does not prove health
+   awaiting-input  → inspect prompt, answer ONCE with send; secrets → human handoff
+   idle            → shell is free; inspect prior result/journal, then next command
+   dead            → read known-safe retained output; replace only if a fresh terminal is acceptable
+5. Verify healthy startup before unrelated work or a long wait; unknown/silent is not healthy.
+6. Truncated? Follow truncated.get_full or use pairmux log build --cmd N / --grep RE, only if safe.
+7. Read next in order: obey safety/prose, replace placeholders, run the first applicable command.
 ```
-1. new    → open a terminal once per workstream:   pairmux new --name build
-2. run    → send a command; it BLOCKS until done or --timeout:
-              pairmux run build "make -j4" --timeout 30s
-3. read `status` and act:
-     done            → read output + exit_code, move on
-     running         → not finished — pairmux wait build --idle 800   (NEVER sleep)
-     known hung      → pairmux send build --key C-c; pairmux wait build --idle 800
-                       then `run` the recovery command in that same terminal
-     awaiting-input  → it wants input — pairmux send build --text y --enter
-                       (secret prompt? do NOT guess — hand off, see rules)
-4. truncated?        → pairmux log build --cmd N | --grep RE   (read the journal, don't re-run)
-5. Read `next` in order. Obey safety/information entries, then run the first applicable command.
-```
+
+If more startup evidence is needed, use `pairmux wait build --done --idle 800 --timeout 30s` (shorter
+when appropriate), then inspect its reply; investigate missing progress rather than blindly extending
+waits. `--done --idle 800` races completion against verified idle/prompt detection and handles a command
+already finished before waiting. For a program terminal, submit with `new --cmd`/`send`, then use a safe
+`peek` for existing output or bounded `--idle`/future-pattern/note waits, never `--done`.
 
 ## Iron rules
 
-1. **Never sleep-and-guess.** `run` and `wait` block for you. A timeout is **not** a failure — it
-   returns `status:"running"` (or `"timeout"`) with a `next` telling you how to keep waiting.
-2. **One command per terminal at a time.** A second `run` while one is still going returns
-   `E_BUSY` ("a command is still running"). Open another terminal with `new` for parallel work.
-3. **Answer a prompt once.** Send the answer a single time; do not spam Enter.
-4. **Never type or guess a secret.** On a secret-shaped prompt (password/passphrase/passcode, PIN,
-   OTP/MFA/verification codes, API keys, localized sudo prompts), pairmux says
-   `do NOT guess or type secrets`. Hand off to a human: `pairmux wait <name> --human --notify`.
-   That wait ends on a human `note` **or** on the human being finished — the prompt is answered and
-   the terminal is moving again (`running`; `wait --done` follows the rest), or the command
-   finished outright (`done` + `exit_code`). Treat either as "the human is done", and note that
-   `--human` returns no `output`, so the secret is never quoted back to you. A `timeout` means the
-   human has not come yet: **wait again** with the longer deadline in `next`, never act instead. If
-   the shell/tool client interrupts before pairmux returns, immediately reissue that same wait;
-   never shorten pairmux's 300s default (one valid explicit timeout of at least 300s is
-   equivalent).
-   This is read from the terminal, not the wording: a prompt that hides your typing is a secret
-   whatever language it is in and whichever tool asked. A prompt marked as unrecognized instead
-   (`quiet mid-line, but no prompt was recognised`) is a guess — `peek --screen` before answering,
-   and `wait --done` if it turns out to still be working.
-5. **Subscribe, don't poll.** To follow a terminal another agent (or a human) is driving,
-   `pairmux wait <name> --done` blocks until its command finishes and reports the `exit_code`.
-   Name several terminals (`wait a,b,c`) to block on all of them and return on the first to fire.
-   For a terminal holding a long-lived program — another agent's UI — there is no completion mark:
-   have the pane signal with `pairmux note "$PAIRMUX_NAME" "..."` and block on `wait <name> --note`.
-   `wait` takes no lock, so any number of agents can hold one on the same terminal and all of them
-   wake on the same completion.
-6. **Prefer reading the log over re-running.** The journal already has the full output —
-   `pairmux log` is free and instant; re-running wastes time and can change state.
-7. **Treat `next` as contextual hints, not a script.** Read entries in order and obey safety/prose.
-   Replace placeholders with real values; never execute prose or placeholder text literally. Run the
-   first applicable command. Final replies may omit `next`. Read and obey human `notes`.
-8. **Prefer program terminals for known interactive entrypoints.** Start a REPL, TUI, or persistent
-   server with `pairmux new --name <name> --cmd "<program>"`; then drive that live program with
-   `send`/`peek`. Use `run` when the command needs an existing shell.
-9. **Recover hung commands in place.** When a task requires the same terminal/session, use
-   `pairmux send <name> --key C-c`, then `pairmux wait <name> --idle 800`, then `run` the recovery
-   command on that name. `kill` destroys the terminal; use it only as a last resort when a fresh
-   terminal is explicitly acceptable.
-10. **Pattern waits observe future output only.** If readiness text may have appeared during `run` or
-   `new --cmd`, read that returned output or use `peek`/`log --grep`; never wait for a past line.
-   Use `wait --pattern` only before an event you still expect to happen.
+1. **Prefer event-aware bounded observation.** `run`/`wait` can return early on an outcome; inspect
+   their replies before waiting again. `running` or `timeout` is not failure, nor proof of health.
+   A longer `next` wait is a hint, not automatic escalation. A brief sleep is only a fallback when
+   no suitable blocking observation is available; follow it with a safe check, not repeated blind polling.
+2. **One command per terminal at a time.** A second `run` gets `E_BUSY`; create another terminal for
+   parallel work. `send` addresses the current program, not a new shell command.
+3. **Answer a prompt once.** Inspect uncertain prompts first; send a safe answer once, then wait/read.
+   Raw-mode inferred `awaiting-input` is not proof a turn is done or that input is safe.
+4. **Never type or guess a secret.** Passwords, passphrases, PINs, OTP/MFA codes, API keys, tokens,
+   localized credential prompts → `pairmux wait <name> --human --notify`. Do not retrieve a secret
+   from the environment or earlier output. If the tool client interrupts, immediately reissue the
+   same wait; never shorten the 300s default (one valid explicit timeout of at least 300s is fine).
+   **Credential handoffs are excluded from the 30s startup rule.** Never inspect a secret span for health.
+   On timeout, repeat the longer handoff wait; do not act instead. `running` means execution resumed,
+   not completion. Ordinary shell `--done` may replay earlier human input from the whole command span:
+   use it only when that whole span is known safe, not merely later output. Otherwise use `ls` or a
+   non-sensitive note. Programs use `--idle`, never `--done`; assess any output it returns.
+   `human-done` is a note, not completion: check `ls` first; pure `--done` at idle waits for a future
+   command. It may carry note text; resumed/completed handoffs suppress the terminal span, **not**
+   all possible output or stored secrets. Never put credentials in notes or automatically inspect
+   the sensitive span with `peek`/`log`. See [collaboration.md](references/collaboration.md).
+5. **Subscribe after checking startup, not instead of checking it.** Long waits (e.g. 600s) suit
+   verified healthy work or intentional passive listening. Shell `wait --done` at idle subscribes to a
+   **future completion**, not the previous result. Add `--idle 800` when driving and needing prompts/idle
+   too; pure `--done` intentionally waits past prompts. `wait a,b,c` returns on the first requested
+   outcome. For a program's exact turn boundary, arrange an explicit note from its wrapper/hook and use `--note`.
+   Inside a pane, `PAIRMUX_SOCKET` is its child endpoint: the creator must supply the **owning socket**
+   for `pairmux --socket <owner> note <name> "..."`; see the concrete team/worker recipe in
+   [collaboration.md](references/collaboration.md). Reads/waits take no writer lock.
+6. **Prefer reading the log over re-running.** Recover output from the journal; re-running can change
+   state. After a sensitive handoff, inspect only a known-safe range, not the credential span.
+7. **Treat `next` as contextual hints, not a script.** Obey safety/information entries, replace real
+   placeholders, and choose the first applicable command. Do not execute prose, placeholder text,
+   or shell-only hints on program terminals. Read and obey human `notes` within task authorization.
+8. **Recover hung commands in place.** For a shell command, use `pairmux send <name> --key C-c`, then
+   `pairmux wait <name> --idle 800`; confirm `idle` before `run` on the same name. A program terminal
+   remains a program after Ctrl-C; use `send`/`peek`, not `run`. `kill` destroys the terminal; use it
+   only as a last resort when a fresh terminal is explicitly acceptable.
+9. **Pattern waits observe future output only.** If readiness may have appeared during `run` or
+   `new --cmd`, use `peek`/`log --grep`; never wait for a past line. Inspect returned output first.
+   Arm `--pattern` before an event you still expect; it does not replay history.
 
-## Reading the envelope
+## Reading replies
 
-Two fields are always present: `schema` (`"pairmux.v1"`) and `ok`. Everything else appears only when
-relevant. The three you act on most:
+In a CLI envelope, `schema:"pairmux.v1"` and `ok` are always present; other fields are contextual.
+Act on `status`, optional ordered `next`, and unseen `notes` (messages from a human or another agent).
 
-- **`status`** — what state things are in (table below).
-- **`next`** — optional ordered hints: safety/prose, placeholders, then applicable commands.
-- **`notes`** — unseen messages a human left via `pairmux note`. If present, **read them and follow them.**
+| status | meaning / action |
+|--------|------------------|
+| `created` | new shell terminal; ready for `run` |
+| `done` | shell command completed; read `exit_code` (and output if appropriate) |
+| `running` | still active; `run` may have timed out, or a handoff resumed execution |
+| `awaiting-input` | recognized or inferred prompt; inspect before safe input / handoff |
+| `idle` | shell free, not a REPL turn-completion signal |
+| `dead` | pane gone; journal retained |
+| `pattern-found`, `note`, `human-done` | the requested event fired; not necessarily command completion |
+| `timeout` | wait deadline, not a failed command; inspect safe evidence and choose the next bounded wait |
 
-Terminal statuses (from `run`, `peek`, `wait`, `ls`):
+`peek` returns **derived terminal status**, not generic `ok`; `ls` has `status:"ok"` plus row states.
+`new --cmd` returns `running` or `dead`. `doctor` can return `ok:true,status:"issues"`; read its report.
+Errors have `ok:false` and `error.code` (`E_BUSY`, `E_BAD_ARGS`, `E_DEAD`, etc.); follow `hint`/`next`.
+See [commands.md](references/commands.md) for all statuses, fields, and error codes.
 
-| status | meaning | your move |
-|--------|---------|-----------|
-| `done` | command finished (carries `exit_code`, `duration_ms`) | read `output`, continue |
-| `running` | still executing (or `run` hit its timeout) | `wait` — never `sleep` |
-| `awaiting-input` | quiet, last line looks like a prompt | `send` the answer (or hand off if secret) |
-| `idle` | shell at a prompt, nothing running | send the next command |
-| `dead` | the pane is gone; journal is kept | `new` a fresh terminal |
+## Worked examples
 
-`run` also reports `done`/`running`. `wait` reports `idle`/`awaiting-input` for an idle wait,
-`done` (with `exit_code`) for `--done`, `running` when a `--human` handoff is answered and the
-terminal resumes, `pattern-found`, `human-done`, `dead`, or `timeout`, depending on the requested
-condition. A `timeout` carries a `next` that repeats the same wait with a longer deadline — follow
-it rather than giving up or switching strategy.
-Errors set `ok:false` with a stable `error.code`: `E_NO_TERMINAL`, `E_EXISTS`, `E_BUSY`, `E_DEAD`,
-`E_BAD_ARGS`, `E_TMUX` (the terminal backend — tmux or the built-in server — failed), `E_UPDATE`,
-`E_INTERNAL`. The error's `hint`/`next` tells you how to recover.
-
-## Worked examples (real envelopes)
-
-Fast command finishes inside `run`:
+Slow shell command: inspect the initial reply; only wait further if it still needs observation:
 
 ```bash
-pairmux new --name build
-pairmux run build "echo hello world"
+pairmux run build "make -j4" --timeout 30s
+# If still running, verify expected build progress before unrelated work or a longer wait.
+# If more evidence is needed, take another bounded observation (no wait if already done):
+pairmux wait build --done --idle 800 --timeout 30s
 ```
 ```json
-{"schema":"pairmux.v1","ok":true,"status":"done","terminal":"build","mode":"hooks","exit_code":0,"duration_ms":101,"output":"hello world"}
+{"schema":"pairmux.v1","ok":true,"status":"done","terminal":"build","mode":"hooks","exit_code":0,"output":"BUILD SUCCESSFUL"}
 ```
 
-Slow command outlives its timeout — keep waiting, do not sleep:
+Known non-secret confirmation: read the question and choose the authorized answer, once:
 
-```bash
-pairmux run build "make -j4" --timeout 5s
-```
-```json
-{"schema":"pairmux.v1","ok":true,"status":"running","terminal":"build","mode":"hooks","output":"\ncompiling…","next":["pairmux peek build","pairmux log build --cmd 1"]}
-```
-```bash
-pairmux wait build --idle 800     # returns when the shell is truly idle, not merely quiet
-```
-
-A `[y/N]` prompt surfaces as `awaiting-input`; answer it once:
-
-```bash
-pairmux run deploy "terraform apply"
-```
-```json
-{"schema":"pairmux.v1","ok":true,"status":"awaiting-input","terminal":"deploy","mode":"hooks","output":"\nDo you want to continue? [Y/n] ","next":["pairmux send deploy --text <answer> --enter"]}
-```
 ```bash
 pairmux send deploy --text yes --enter
+pairmux wait deploy --done --idle 800 --timeout 30s
 ```
 
-A **secret** prompt — never guess, hand off to a human:
+Program terminal: send a REPL line; a prompt observation still requires checking the result:
 
-```json
-{"schema":"pairmux.v1","ok":true,"status":"awaiting-input","terminal":"dbmigrate","mode":"hooks","output":"\nPassword: ","next":["do NOT guess or type secrets","pairmux wait dbmigrate --human --notify   # hand off to the human"]}
-```
-
-Truncated output — get the rest from the journal, never re-run:
-
-```json
-{"schema":"pairmux.v1","ok":true,"status":"done","terminal":"build","mode":"hooks","exit_code":0,"output":"1\n2\n…\n300","truncated":{"omitted_lines":50,"get_full":"pairmux log build --cmd 3"}}
-```
 ```bash
-pairmux log build --grep "error|FAIL"     # find the needle without re-running
-```
-
-A human left a note — it rides along in `notes`; obey it:
-
-```json
-{"schema":"pairmux.v1","ok":true,"status":"done","terminal":"build","mode":"hooks","exit_code":0,"output":"resumed","notes":["use the staging token, not prod"]}
+pairmux new --name repl --cmd "python3"
+pairmux peek repl
+pairmux send repl --text "2 + 2" --enter
+pairmux wait repl --idle 800 --timeout 30s
+pairmux peek repl
 ```
 
 ## Command cheat-sheet
 
 | command | purpose |
 |---------|---------|
-| `pairmux new [--name N] [--cwd D] [--cmd "..."]` | open a terminal (`--cmd` is preferred for a known REPL/TUI/server) |
-| `pairmux run <name> "<cmd>" [--timeout 60s] [--head 50] [--tail 200]` | run a command, block until done/timeout |
-| `pairmux wait <name> [--idle MS] [--pattern RE] [--human] [--notify] [--timeout 300s]` | block until a requested condition |
-| `pairmux peek <name> [--screen \| --tail N]` | read recent output + status, no blocking, no lock |
-| `pairmux send <name> [--text S] [--key K ...] [--enter]` | send input to a running program |
-| `pairmux log <name> [--cmd N \| --grep RE \| --range A:B\|A:end]` | read full/filtered history from the journal |
-| `pairmux ls` | list terminals + status | 
-| `pairmux kill <name> \| --all` | kill terminal(s); journals are kept |
-| `pairmux prune [name] [--older-than 7d] [--dry-run]` | reclaim dead terminals' retained journals |
-| `pairmux note <name> "<text>"` · `attach [name]` · `watch` | human side-channel / take-over |
+| `new [--name N] [--cwd D] [--cmd "..."]` | shell, or known program entrypoint |
+| `run <name> "<cmd>" [--timeout 60s] [--head 50] [--tail 200]` | shell command; block until done/input/timeout |
+| `wait <name>[,<name>...] [--done] [--idle MS] [--pattern RE] [--note] [--human] [--notify] [--timeout 300s]` | race only requested conditions |
+| `peek <name> [--screen \| --tail N]` | recent output/current screen + derived state |
+| `send <name> [--text S] [--key K ...] [--enter]` | literal text / named keys to the current program |
+| `log <name> [--cmd N \| --grep RE \| --range A:B\|A:end]` | retained history, not re-execution |
+| `ls` · `kill <name> \| --all` · `prune [name] [--older-than 7d] [--dry-run]` | inventory / destructive lifecycle |
+| `note <name> "<text>"` · `attach [name]` · `watch` | side channel / human takeover / dashboard |
 
 ## Go deeper (references/)
 
-- **[references/commands.md](references/commands.md)** — every command, every flag, the full `pairmux.v1` envelope schema, and all error codes.
-- **[references/interactive.md](references/interactive.md)** — REPLs, pagers, `[y/N]` confirmations, `send` text-vs-keys, and the never-guess-secrets rule.
-- **[references/collaboration.md](references/collaboration.md)** — `attach`/`watch`/`note` and the human handoff loop (`wait --human --notify`).
-- **[references/troubleshooting.md](references/troubleshooting.md)** — `E_BUSY`, dead terminals, `wait --pattern` gotchas, huge journals, sentinel mode, backend selection and `E_TMUX`.
+- [references/commands.md](references/commands.md) — flags, backend/shell selection, envelope and errors.
+- [references/interactive.md](references/interactive.md) — prompt inference, secrets, REPLs, TUIs and keys.
+- [references/collaboration.md](references/collaboration.md) — handoff outcomes, privacy limits, owning-socket notes.
+- [references/troubleshooting.md](references/troubleshooting.md) — busy/dead panes, in-place recovery, waits and backends.
