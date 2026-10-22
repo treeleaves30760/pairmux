@@ -671,7 +671,8 @@ Codex terminals and fixing what broke.
   `E_TMUX`, `E_INTERNAL`).
 
 [#7]: https://github.com/treeleaves30760/pairmux/issues/7
-[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/treeleaves30760/pairmux/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/treeleaves30760/pairmux/compare/v0.6.0...v1.0.0
 [0.6.0]: https://github.com/treeleaves30760/pairmux/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/treeleaves30760/pairmux/compare/v0.5.2...v0.5.3
