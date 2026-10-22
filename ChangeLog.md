@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.1.0] - 2026-10-23
 
+### Security
+
+- Pin fixed documentation dependencies: DOMPurify 3.4.17, follow-redirects 1.16.1,
+  and launch-editor 2.14.2, clearing seven new blocking audit advisories without
+  adding or broadening security exceptions.
+
 ### Changed
 
 - Teach agents to submit work first, estimate when useful output should appear,
