@@ -8,7 +8,6 @@ import (
 
 	"github.com/treeleaves30760/pairmux/internal/core"
 	"github.com/treeleaves30760/pairmux/internal/mux"
-	"github.com/treeleaves30760/pairmux/internal/vt"
 )
 
 // This file draws the TUI. The layout follows btop's lead: every region is a
@@ -40,10 +39,11 @@ func (l tline) width() int {
 	return w
 }
 
+// strWidth is how many cells s takes in this terminal (see tuiCells).
 func strWidth(s string) int {
 	w := 0
 	for _, r := range s {
-		w += max(vt.RuneWidth(r), 0)
+		w += runeCells(r)
 	}
 	return w
 }
@@ -59,14 +59,14 @@ func clip(s string, w int) string {
 	var b strings.Builder
 	used := 0
 	for _, r := range s {
-		rw := max(vt.RuneWidth(r), 0)
+		rw := runeCells(r)
 		if used+rw > w-1 {
 			break
 		}
 		b.WriteRune(r)
 		used += rw
 	}
-	b.WriteString("…")
+	b.WriteString(gl("…", "~"))
 	return b.String()
 }
 
@@ -127,16 +127,17 @@ const (
 	stBoxPopup   = "38;5;250"
 )
 
+// statusLook is a status's one-cell glyph, colour and words.
 func statusLook(s core.Status) (glyph, style, label string) {
 	switch s {
 	case core.StatusRunning:
-		return "●", stRunning, "running"
+		return gl("●", "*"), stRunning, "running"
 	case core.StatusAwaitingInput:
-		return "◆", stAwait, "needs input"
+		return gl("◆", "!"), stAwait, "needs input"
 	case core.StatusIdle:
-		return "○", stIdle, "idle"
+		return gl("○", "o"), stIdle, "idle"
 	case core.StatusDead:
-		return "✕", stDead, "dead"
+		return gl("✕", "x"), stDead, "dead"
 	}
 	return "?", stDim, string(s)
 }
@@ -215,10 +216,11 @@ func (it bItem) segs(open, close, border string) tline {
 // column x0, with items set into it on the left and right. Items that do not
 // fit are dropped from the end, right side first. Buttons become clickable.
 func (a *tuiApp) border(y, x0, w int, top bool, style string, left, right []bItem) string {
-	lc, rc, open, close := "╭", "╮", "┐", "┌"
+	lc, rc, open, close := gl("╭", "+"), gl("╮", "+"), gl("┐", "["), gl("┌", "]")
 	if !top {
-		lc, rc, open, close = "╰", "╯", "┘", "└"
+		lc, rc, open, close = gl("╰", "+"), gl("╯", "+"), gl("┘", "["), gl("└", "]")
 	}
+	hz := gl("─", "-")
 	width := func(items []bItem) int {
 		n := 0
 		for _, it := range items {
@@ -233,7 +235,7 @@ func (a *tuiApp) border(y, x0, w int, top bool, style string, left, right []bIte
 	for len(left) > 0 && width(left) > avail {
 		left = left[:len(left)-1]
 	}
-	l := tline{{lc + "─", style}}
+	l := tline{{lc + hz, style}}
 	x := x0 + 2
 	put := func(items []bItem) {
 		for _, it := range items {
@@ -247,10 +249,10 @@ func (a *tuiApp) border(y, x0, w int, top bool, style string, left, right []bIte
 	}
 	put(left)
 	gap := max(0, avail-width(left)-width(right))
-	l = append(l, seg{strings.Repeat("─", gap), style})
+	l = append(l, seg{strings.Repeat(hz, gap), style})
 	x += gap
 	put(right)
-	l = append(l, seg{"─" + rc, style})
+	l = append(l, seg{hz + rc, style})
 	return a.render(l, w, "")
 }
 
@@ -258,7 +260,7 @@ func (a *tuiApp) border(y, x0, w int, top bool, style string, left, right []bIte
 func (a *tuiApp) box(y0, x0, w, h int, style string, topL, topR, botL, botR []bItem, body []string) []string {
 	out := make([]string, 0, h)
 	out = append(out, a.border(y0, x0, w, true, style, topL, topR))
-	side := a.sty(style, "│")
+	side := a.sty(style, gl("│", "|"))
 	blank := strings.Repeat(" ", max(0, w-2))
 	for i := 0; i < h-2; i++ {
 		row := blank
@@ -334,6 +336,10 @@ func (a *tuiApp) draw() {
 	// clipped rather than written whole: a row past the last one would scroll
 	// the screen and put every click on the wrong row (autowrap is off, see
 	// tuiEnter, so over-wide rows are cut by the terminal itself).
+	//
+	// Each row is erased before it is written, never after: with autowrap off
+	// the cursor stays ON the last column after a full-width row, so an erase
+	// to end of line there would wipe the row's last cell — the right border.
 	rowsOut := h
 	if a.h > 0 && a.h < rowsOut {
 		rowsOut = a.h
@@ -344,8 +350,9 @@ func (a *tuiApp) draw() {
 		if i >= rowsOut {
 			break
 		}
+		b.WriteString("\x1b[2K")
 		b.WriteString(l)
-		b.WriteString("\x1b[0m\x1b[K")
+		b.WriteString("\x1b[0m")
 		if i < rowsOut-1 {
 			b.WriteString("\r\n")
 		}
@@ -433,7 +440,7 @@ func (a *tuiApp) drawList(vis []visRow, y0, x0, w, h int) []string {
 	if a.filter != "" || a.mode == modeFilter {
 		cursor := ""
 		if a.mode == modeFilter {
-			cursor = "█"
+			cursor = gl("█", "_")
 		}
 		filterBtn = bItem{text: tline{{"/", stKey}, {a.filter + cursor, stAwait}}, fn: a.press("rune", '/')}
 	}
@@ -476,9 +483,9 @@ func (a *tuiApp) drawList(vis []visRow, y0, x0, w, h int) []string {
 		g, st, label := statusLook(n.Status)
 		fold := " "
 		if n.Child != "" {
-			fold = "▾"
+			fold = gl("▾", "v")
 			if a.collapsed[n.Path] {
-				fold = "▸"
+				fold = gl("▸", ">")
 			}
 		}
 		name := n.Term.Name
@@ -488,7 +495,7 @@ func (a *tuiApp) drawList(vis []visRow, y0, x0, w, h int) []string {
 		selected := i == a.sel
 		mark := " "
 		if selected {
-			mark = "▌"
+			mark = gl("▌", ">")
 		}
 		age := "-"
 		if !n.LastMod.IsZero() {
@@ -637,11 +644,12 @@ func (a *tuiApp) mouse(k tuiKey) {
 // --- hints, help, overlays --------------------------------------------------------
 
 func (a *tuiApp) hintFor(n treeNode) tline {
+	g, _, _ := statusLook(n.Status)
 	switch n.Status {
 	case core.StatusAwaitingInput:
-		return tline{{" ◆ " + n.Path + " is waiting for input — ⏎ attach to answer it, or i to send a line", stAwait}}
+		return tline{{" " + g + " " + n.Path + " is waiting for input — ⏎ attach to answer it, or i to send a line", stAwait}}
 	case core.StatusDead:
-		return tline{{" ✕ " + n.Path + " is dead — d deletes its journal, x deletes every dead terminal", stDead}}
+		return tline{{" " + g + " " + n.Path + " is dead — d deletes its journal, x deletes every dead terminal", stDead}}
 	}
 	if n.Notes > 0 {
 		return tline{{fmt.Sprintf(" ✉ %s has %d note(s) its agent has not read yet", n.Path, n.Notes), stDim}}
@@ -695,7 +703,7 @@ func (a *tuiApp) overlay(lines []string, w int, title string, body []string, but
 		lines[row] = strings.Repeat(" ", left) + s + strings.Repeat(" ", max(0, w-left-inner-2))
 	}
 	put(top, a.border(top, left, inner+2, true, stBoxPopup, []bItem{{text: tline{{title, stTitle}}}}, nil))
-	side := a.sty(stBoxPopup, "│")
+	side := a.sty(stBoxPopup, gl("│", "|"))
 	for i, b := range body {
 		put(top+1+i, side+a.render(tline{{" " + pad(b, inner-2) + " ", ""}}, inner, "")+side)
 	}
@@ -710,7 +718,7 @@ func (a *tuiApp) overlayForm(lines []string, w int) {
 		cursor := ""
 		marker := "  "
 		if i == f.focus {
-			cursor, marker = "█", "▸ "
+			cursor, marker = gl("█", "_"), gl("▸", ">")+" "
 		}
 		v := fld.value + cursor
 		if fw := inner - 14; strWidth(v) > fw {
@@ -718,7 +726,7 @@ func (a *tuiApp) overlayForm(lines []string, w int) {
 			for strWidth(string(r)) > fw-1 {
 				r = r[1:]
 			}
-			v = "…" + string(r)
+			v = gl("…", "~") + string(r)
 		}
 		body = append(body, marker+pad(fld.label, 10)+" "+v)
 		if i == f.focus && fld.hint != "" {
