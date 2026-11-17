@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"bytes"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/treeleaves30760/pairmux/internal/output"
 )
@@ -44,5 +47,34 @@ func TestParseStatusFilter(t *testing.T) {
 	}
 	if only, canon, ok := parseStatusFilter(""); !ok || canon != "" || len(only) != 0 {
 		t.Fatalf("empty filter: %v %q %v", only, canon, ok)
+	}
+}
+
+// How the reply depends on why events --wait stopped.
+func TestEmitFleetChangesStatus(t *testing.T) {
+	changed := []output.Event{{Type: "changed", Path: "w", Terminal: &output.TerminalRow{Name: "w", Status: "idle"}}}
+	for _, tc := range []struct {
+		reason   string
+		evs      []output.Event
+		status   string
+		nextHas  string
+		nextLack string
+	}{
+		{"timeout", nil, "timeout", "--timeout 20s", ""},
+		{"interrupted", nil, "interrupted", "events --wait --tree", "--timeout"},
+		{"parent-exited", nil, "interrupted", "process that started it exited", "--timeout"},
+		{"interrupted", changed, "changed", "keep watching", "--timeout"},
+		{"max", changed, "changed", "keep watching", "--timeout"},
+	} {
+		var buf bytes.Buffer
+		c := newTestCtx(&buf, true)
+		if rc := c.emitFleetChanges(tc.evs, true, "", 10*time.Second, tc.reason); rc != 0 {
+			t.Fatalf("%s: rc = %d", tc.reason, rc)
+		}
+		e := decode(t, &buf)
+		next := strings.Join(e.Next, "\n")
+		if e.Status != tc.status || !strings.Contains(next, tc.nextHas) || tc.nextLack != "" && strings.Contains(next, tc.nextLack) {
+			t.Errorf("%s with %d events: status %q next %q", tc.reason, len(tc.evs), e.Status, e.Next)
+		}
 	}
 }

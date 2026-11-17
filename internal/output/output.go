@@ -67,7 +67,7 @@ type Event struct {
 	TS     string `json:"ts"`
 	// Type is snapshot (the whole fleet, the stream's first line unless
 	// --no-snapshot), added, removed, changed, or end (the stream's last line
-	// when it stops on --max or --timeout).
+	// when it stops on --max, --timeout or --exit-with-parent).
 	Type string `json:"type"`
 	// Path addresses the terminal from the listing's endpoint; empty for
 	// snapshot and end.
@@ -81,7 +81,8 @@ type Event struct {
 	Changes []string `json:"changes,omitempty"`
 	// From is the previous status, on changed when status is among Changes.
 	From string `json:"from,omitempty"`
-	// Reason says why the stream ended, on end only: max or timeout.
+	// Reason says why the stream ended, on end only: max, timeout, or
+	// parent-exited (--exit-with-parent saw the process that started it exit).
 	Reason string `json:"reason,omitempty"`
 }
 
