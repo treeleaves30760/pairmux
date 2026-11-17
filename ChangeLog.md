@@ -7,11 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-17
+
+### Added
+
+- **`pairmux events`**, the subscription half of an integration API for front ends (desktop apps,
+  dashboards, editor panels) and supervisor agents. It streams the fleet as JSON lines
+  (`pairmux.events.v1`): a `snapshot`, then `added`, `changed` (with the changed fields and the
+  previous status) and `removed` for each terminal, and `end` when `--max` or `--timeout` stops it.
+  `--tree` follows every layer below. Output activity alone is never an event.
+- **`pairmux events --wait`** blocks until the fleet changes, then returns one `pairmux.v1` envelope
+  (new `events` field) with next steps, so an agent that supervises others can "tell me when any of
+  my workers needs me". `--status awaiting-input,dead` keeps only the changes into those states and
+  `--max N` collects several. Also exposed over MCP as **`pairmux_events`**.
+- **The TUI is laid out like btop.** Every region is a rounded box with its name and controls set
+  into its border, each key highlighted, and every control is a **mouse button**: click a row to
+  select it and click it again to attach, click a fold arrow to fold, click a border label to press
+  it, and scroll with the wheel. Dialogs have clickable buttons too. `1` and `2` switch the preview
+  between `screen` and `activity`, and the list has column headers.
+- Documentation: an [Integrations](https://pairmux-docs.treeleaves30760.com/integrations) page (event
+  schema, reference client, stability rules), a [TUI guide](https://pairmux-docs.treeleaves30760.com/guides/tui),
+  and screenshots and a concept diagram in the README and docs, generated reproducibly by
+  `scripts/screenshots/capture.sh`.
+
 ### Changed
 
 - Homebrew instructions add `brew trust --tap treeleaves30760/pairmux`: Homebrew 7 refuses casks
-  from third-party taps until they are trusted. Release acceptance does the same and runs its macOS
-  jobs on `macos-15`, as GitHub has retired the `macos-14` runners.
+  from third-party taps until they are trusted. Release acceptance does the same and now runs its
+  macOS jobs on `macos-15`, because GitHub has retired the `macos-14` runners.
+
+### Fixed
+
+- TUI: typing a filter no longer leaves the previous terminal's screen in the preview.
+- TUI: on a terminal under 10 rows or 40 columns, the frame is clipped instead of scrolling.
+- TUI: esc in the `:` command line, when opened from a reader, returns to that reader.
+- TUI: a crash in a `:` command no longer leaves the terminal in raw mode.
 
 ## [1.2.0] - 2026-11-17
 
@@ -727,7 +757,8 @@ Codex terminals and fixing what broke.
   `E_TMUX`, `E_INTERNAL`).
 
 [#7]: https://github.com/treeleaves30760/pairmux/issues/7
-[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/treeleaves30760/pairmux/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/treeleaves30760/pairmux/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/treeleaves30760/pairmux/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/treeleaves30760/pairmux/compare/v0.6.0...v1.0.0
