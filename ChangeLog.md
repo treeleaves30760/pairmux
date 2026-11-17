@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Homebrew instructions add `brew trust --tap treeleaves30760/pairmux`: Homebrew 7 refuses casks
+  from third-party taps until they are trusted. Release acceptance does the same and runs its macOS
+  jobs on `macos-15`, as GitHub has retired the `macos-14` runners.
+
 ## [1.2.0] - 2026-11-17
 
 ### Security

@@ -407,6 +407,8 @@ How it is wired:
   it to the tap via the GitHub contents API **after** the release goes
   public — never for prerelease tags — then reads it back and byte-compares.
 - After each stable release, smoke-test on a clean machine:
+  `brew tap treeleaves30760/pairmux`, `brew trust --tap treeleaves30760/pairmux`
+  (Homebrew 7+ loads third-party casks only from trusted taps), then
   `brew install --cask treeleaves30760/pairmux/pairmux`, then
   `pairmux version` and `pairmux doctor` (confirms tmux arrived and that no
   Gatekeeper prompt appears; the cask's postflight strips the quarantine
