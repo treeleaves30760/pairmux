@@ -165,6 +165,33 @@ install of the public 1.2.0 wheel also passed `version`, `new`, `run` and
 `list --plain`. No tag or artifact was rebuilt or overwritten after PyPI
 publication.
 
+**v1.3.0 published and accepted (2026-11-17).** The annotated tag is fixed to
+merged-main commit `95c110416e0915503fe0c29094473843b5691c1d` (PR #16), whose
+[CI 44118179519](https://github.com/treeleaves30760/pairmux/actions/runs/44118179519)
+and [Docs deployment 44118179589](https://github.com/treeleaves30760/pairmux/actions/runs/44118179589)
+passed. The [tap credential check 44117682084](https://github.com/treeleaves30760/pairmux/actions/runs/44117682084)
+passed before tagging. The companion skill was released first as
+`pairmux-skills` v0.4.0 (PR #6), byte-identical to `skills/pairmux/`.
+[Release run 44118738177](https://github.com/treeleaves30760/pairmux/actions/runs/44118738177)
+passed `validate`, `windows-smoke` and `publish` on its first attempt: nine
+native assets, six PyPI wheels and the Homebrew Cask at 1.3.0. Independently,
+all eight downloaded assets match `checksums.txt`, the PyPI simple index lists
+the six 1.3.0 wheels, and the tap's Cask has `version "1.3.0"` with four sha256
+values equal to `checksums.txt`. A local isolated uv install of the public wheel
+on macOS ARM64 ran `version` (1.3.0), `doctor` (tmux backend) and
+`events --wait --timeout 1s`; its binary is identical to the `darwin_arm64`
+archive's. The live docs serve `robots.txt`, a 13-URL sitemap (including
+`/integrations` and `/guides/tui`), canonical, `og:image` and JSON-LD on the home
+page, and `http://` redirects (301) to `https://`.
+
+[Published-release acceptance 44119828820](https://github.com/treeleaves30760/pairmux/actions/runs/44119828820)
+passed all seven jobs on its second attempt. In the first, which started about a
+minute after the PyPI upload, `public-uv (ubuntu-24.04)` and `wsl` could not
+resolve `pairmux==1.3.0` from PyPI's cached index although the same jobs'
+inventory check already found the six 1.3.0 wheels (the WSL job's PyPI JSON
+still named 1.2.0 as latest); rerunning only those two jobs passed. No tag
+or artifact was rebuilt or overwritten after PyPI publication.
+
 **v1.0.0: built-in multiplexer and native Windows.** v1.0.0 makes tmux
 optional (a built-in PTY/ConPTY multiplexer is used when tmux is absent, and
 always on Windows) and adds native Windows x86-64 and ARM64 artifacts.
