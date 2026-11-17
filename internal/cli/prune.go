@@ -57,7 +57,7 @@ func (c *Ctx) cmdPrune(args []string) int {
 // its journal and any archive; a live terminal only its archive — pruning the
 // journal under a live pane would break log/peek, so that asks for kill first.
 func (c *Ctx) pruneOne(name string, olderThan time.Duration, dryRun bool) int {
-	if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
+	if rc, rejected := c.resolveTarget(&name); rejected {
 		return rc
 	}
 	term, err := state.ResolveAt(c.Mux, c.StateDir, name)
@@ -77,6 +77,7 @@ func (c *Ctx) pruneOne(name string, olderThan time.Duration, dryRun bool) int {
 	}
 	if !term.Alive && isDir(term.Dir) {
 		cands = append(cands, pruneCandidate{name: name, dir: term.Dir})
+		cands = append(cands, c.orphanLayers(c.Mux.SocketName(), name, name+"/", 0)...)
 	}
 	return c.finishPrune(filterPruneCandidates(cands, olderThan), dryRun)
 }
@@ -104,6 +105,9 @@ func (c *Ctx) pruneSweep(olderThan time.Duration, dryRun bool) int {
 		}
 		if !t.Alive && isDir(t.Dir) {
 			add(t.Name, t.Dir)
+			for _, l := range c.orphanLayers(c.Mux.SocketName(), t.Name, t.Name+"/", 0) {
+				add(l.name, l.dir)
+			}
 		}
 	}
 	if ents, err := os.ReadDir(c.namespaceDir()); err == nil {
@@ -114,6 +118,27 @@ func (c *Ctx) pruneSweep(olderThan time.Duration, dryRun bool) int {
 		}
 	}
 	return c.finishPrune(filterPruneCandidates(cands, olderThan), dryRun)
+}
+
+// orphanLayers returns the retained state of the layers a dead terminal used
+// to drive, deepest first: once their servers are gone (kill tears them down)
+// nothing lists them any more, so without this their journals would outlive
+// every view that could reclaim them. A layer whose server is still running is
+// left alone — its sub-agents are alive, and only kill may end them.
+func (c *Ctx) orphanLayers(socket, name, prefix string, depth int) []pruneCandidate {
+	if depth >= maxLayerDepth {
+		return nil
+	}
+	child := state.ChildSocket(socket, name)
+	dir := state.SocketDirFor(c.StateDir, c.Mux.Backend(), child)
+	if !isDir(dir) || c.layer(child).HasSession() {
+		return nil
+	}
+	var out []pruneCandidate
+	for _, n := range state.LayerNames(c.StateDir, c.Mux.Backend(), child) {
+		out = append(out, c.orphanLayers(child, n, prefix+n+"/", depth+1)...)
+	}
+	return append(out, pruneCandidate{name: prefix + "* (layer " + child + ")", dir: dir})
 }
 
 // pruneCandidate is one directory prune considered. A non-empty skip is the

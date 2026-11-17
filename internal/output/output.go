@@ -27,6 +27,9 @@ const (
 	CodeTmux       = "E_TMUX"
 	CodeUpdate     = "E_UPDATE"
 	CodeInternal   = "E_INTERNAL"
+	// CodeScope: the caller runs inside a pairmux terminal and addressed an
+	// endpoint above or beside its own layer (see PAIRMUX_SCOPE).
+	CodeScope = "E_SCOPE"
 )
 
 // TruncInfo describes an output that Render truncated and how to fetch the rest.
@@ -47,6 +50,9 @@ type TerminalRow struct {
 	Notes        int    `json:"notes,omitempty"`         // count of unseen human notes
 	LastActivity string `json:"last_activity,omitempty"` // RFC3339 or ""
 	ChildSocket  string `json:"child_socket,omitempty"`  // endpoint of this terminal's own nested layer, when it has one
+	// Path addresses the terminal from the listing's endpoint ("worker/tests");
+	// set by ls --tree, where rows from several layers share one listing.
+	Path string `json:"path,omitempty"`
 }
 
 // ErrInfo is the error detail for a failed command.
@@ -231,9 +237,15 @@ const truncEllipsis = "…"
 // writeTerminals renders the ls listing as a left-aligned table with a header.
 func writeTerminals(b *strings.Builder, rows []TerminalRow) {
 	nameW, statusW, modeW := len("NAME"), len("STATUS"), len("MODE")
+	label := func(r TerminalRow) string {
+		if r.Path != "" {
+			return r.Path
+		}
+		return r.Name
+	}
 	for _, r := range rows {
-		if len(r.Name) > nameW {
-			nameW = len(r.Name)
+		if len(label(r)) > nameW {
+			nameW = len(label(r))
 		}
 		if len(r.Status) > statusW {
 			statusW = len(r.Status)
@@ -260,6 +272,6 @@ func writeTerminals(b *strings.Builder, rows []TerminalRow) {
 		if r.LastActivity != "" {
 			cmd = cmd + "  (" + r.LastActivity + ")"
 		}
-		fmt.Fprintf(b, "  %-*s  %-*s  %-*s  %s\n", nameW, r.Name, statusW, r.Status, modeW, r.Mode, cmd)
+		fmt.Fprintf(b, "  %-*s  %-*s  %-*s  %s\n", nameW, label(r), statusW, r.Status, modeW, r.Mode, cmd)
 	}
 }

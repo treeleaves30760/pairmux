@@ -55,7 +55,7 @@ func (c *Ctx) cmdNew(args []string) int {
 			break
 		}
 	} else {
-		if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
+		if rc, rejected := c.resolveTarget(&name); rejected {
 			return rc
 		}
 		releaseName, err = state.AcquireNameReservation(c.namespaceDir(), name)
@@ -132,6 +132,10 @@ func (c *Ctx) cmdNew(args []string) int {
 		"PAIRMUX_STATE_NAMESPACE": c.namespaceDir(),
 		"PAIRMUX_TERMINAL_DIR":    dir,
 		"PAIRMUX_SOCKET":          state.ChildSocket(c.Mux.SocketName(), name),
+		// The scope confines whatever runs here to that child layer and below,
+		// and the owner is where report finds this terminal (see hierarchy.go).
+		ScopeEnv:       state.ChildSocket(c.Mux.SocketName(), name),
+		OwnerSocketEnv: c.Mux.SocketName(),
 		// A nested pairmux stays on this backend, whatever auto-selection
 		// would pick from inside the pane.
 		backend.Env: c.Mux.Backend(),
@@ -308,7 +312,7 @@ func (c *Ctx) cmdRun(args []string) int {
 		return rc
 	}
 	name := pos[0]
-	if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
+	if rc, rejected := c.resolveTarget(&name); rejected {
 		return rc
 	}
 	// The command is a single argument, matching the MCP tool contract. Joining
@@ -602,7 +606,7 @@ func (c *Ctx) cmdPeek(args []string) int {
 		return rc
 	}
 	name := pos[0]
-	if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
+	if rc, rejected := c.resolveTarget(&name); rejected {
 		return rc
 	}
 	tailN := 60
@@ -744,7 +748,7 @@ func (c *Ctx) cmdSend(args []string) int {
 		return rc
 	}
 	name := pos[0]
-	if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
+	if rc, rejected := c.resolveTarget(&name); rejected {
 		return rc
 	}
 	if !seen["text"] && !seen["key"] && !seen["enter"] {
@@ -841,7 +845,7 @@ func (c *Ctx) cmdLog(args []string) int {
 		return rc
 	}
 	name := pos[0]
-	if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
+	if rc, rejected := c.resolveTarget(&name); rejected {
 		return rc
 	}
 	selected := 0
@@ -1017,45 +1021,43 @@ func (c *Ctx) logCmd(name string, j *journal.Journal, mode core.Mode, bounded bo
 	})
 }
 
-// cmdLs lists every terminal with its derived status.
+// cmdLs lists every terminal with its derived status. --tree descends into
+// the layers terminals are driving, so a coordinator sees its whole fleet —
+// workers, their sub-agents, and theirs — in one call, each row addressable by
+// the path it shows.
 func (c *Ctx) cmdLs(args []string) int {
-	if _, err := parseFlags(args, flagSpec{}); err != nil {
-		return c.usage("pairmux ls", err.Error())
+	var tree, plain bool
+	if _, err := parseFlags(args, flagSpec{bools: map[string]*bool{"tree": &tree, "r": &tree, "plain": &plain}}); err != nil {
+		return c.usage("pairmux ls [--tree] [--plain]", err.Error())
+	}
+	// A person typing a bare ls at their own terminal wants to manage the
+	// sessions, not read a table: hand them the session manager. Any flag,
+	// --json, a pipe, or a caller inside a terminal or an agent's tool shell
+	// keeps the listing (see humanAtTerminal).
+	if len(args) == 0 && c.humanAtTerminal() {
+		return c.cmdTUI(nil)
 	}
 	if rc, rejected := c.rejectInvalidSocket(); rejected {
 		return rc
 	}
-	terms, err := state.ListAt(c.Mux, c.StateDir)
+	nodes, err := c.walkTree(tree)
 	if err != nil {
 		return c.muxErr(err)
 	}
-	if len(terms) == 0 {
+	if len(nodes) == 0 {
 		return c.emit(output.Envelope{Status: "ok", Next: []string{"pairmux new"}})
 	}
-	rows := make([]output.TerminalRow, 0, len(terms))
-	for _, t := range terms {
-		j := &journal.Journal{Dir: t.Dir}
-		status := deriveTerminalStatus(j, t.Alive, t.Mode, t.Meta.Shell == "")
-		status, _ = detect.Refine(j, status, t.Mode)
-		row := output.TerminalRow{Name: t.Name, Status: string(status), Mode: string(t.Mode)}
-		if status == core.StatusRunning || status == core.StatusAwaitingInput {
-			if pending, ok, err := j.PendingCmd(); err == nil && ok {
-				row.CurrentCmd = pending.Text
-			}
-		}
-		row.LockHolder = lockHolderPID(t.Dir)
-		row.Notes = len(readUnseenNotes(j))
-		if mt, ok := j.LastModified(); ok {
-			row.LastActivity = mt.UTC().Format(time.RFC3339)
-		}
-		row.ChildSocket = c.liveChildLayer(t.Name)
-		rows = append(rows, row)
+	rows := make([]output.TerminalRow, 0, len(nodes))
+	for _, n := range nodes {
+		rows = append(rows, n.row(tree))
 	}
 	var next []string
-	for _, r := range rows {
-		if r.ChildSocket != "" {
-			next = append(next, "pairmux --socket "+r.ChildSocket+" ls   # the terminals "+r.Name+" is driving")
-			break
+	if !tree {
+		for _, r := range rows {
+			if r.ChildSocket != "" {
+				next = append(next, "pairmux ls --tree   # include the terminals "+r.Name+" is driving (address them as "+r.Name+"/<name>)")
+				break
+			}
 		}
 	}
 	return c.emit(output.Envelope{Status: "ok", Terminals: rows, Next: next})
@@ -1103,7 +1105,7 @@ func (c *Ctx) cmdKill(args []string) int {
 		return c.usage("pairmux kill <name> | --all", "pairmux ls")
 	}
 	name := pos[0]
-	if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
+	if rc, rejected := c.resolveTarget(&name); rejected {
 		return rc
 	}
 	term, err := state.ResolveAt(c.Mux, c.StateDir, name)
@@ -1187,7 +1189,7 @@ func (c *Ctx) cmdNote(args []string) int {
 		return rc
 	}
 	name := pos[0]
-	if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
+	if rc, rejected := c.resolveTarget(&name); rejected {
 		return rc
 	}
 	text := strings.Join(pos[1:], " ")

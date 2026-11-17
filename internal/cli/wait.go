@@ -109,8 +109,8 @@ func (c *Ctx) cmdWait(args []string) int {
 	if rc, rejected := c.rejectInvalidSocket(); rejected {
 		return rc
 	}
-	for _, name := range names {
-		if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
+	for i := range names {
+		if rc, rejected := c.resolveTarget(&names[i]); rejected {
 			return rc
 		}
 	}

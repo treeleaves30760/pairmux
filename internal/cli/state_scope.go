@@ -66,14 +66,19 @@ func (c *Ctx) terminalDir(name string) string {
 // is what distinguishes a layer still running from the directory left behind by
 // one that has been killed.
 func (c *Ctx) liveChildLayer(name string) string {
-	socket := state.ChildSocket(c.Mux.SocketName(), name)
-	if !isDir(state.SocketDirFor(c.StateDir, c.Mux.Backend(), socket)) {
+	return c.liveChildLayerOf(c.Mux.SocketName(), name)
+}
+
+// liveChildLayerOf is liveChildLayer for a terminal on any endpoint.
+func (c *Ctx) liveChildLayerOf(socket, name string) string {
+	child := state.ChildSocket(socket, name)
+	if !isDir(state.SocketDirFor(c.StateDir, c.Mux.Backend(), child)) {
 		return ""
 	}
-	if !c.layer(socket).HasSession() {
+	if !c.layer(child).HasSession() {
 		return ""
 	}
-	return socket
+	return child
 }
 
 // maxLayerDepth bounds how far killLayers will descend. Endpoint names strictly

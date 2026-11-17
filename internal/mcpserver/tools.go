@@ -30,6 +30,10 @@ type tool struct {
 
 type arguments map[string]json.RawMessage
 
+// terminalRef describes a terminal argument: a name in the configured layer,
+// or a path into a layer below it.
+const terminalRef = "Existing pairmux terminal name, or a path such as worker/tests for terminal tests in the layer worker drives."
+
 func tools() []tool {
 	stringProperty := func(description string) map[string]any {
 		return map[string]any{"type": "string", "description": description}
@@ -48,7 +52,7 @@ func tools() []tool {
 				Title:       "Create pairmux terminal",
 				Description: "Create a tmux-backed pairmux terminal. The optional command starts a program immediately and may have arbitrary side effects; obtain user approval when appropriate.",
 				InputSchema: objectSchema(map[string]any{
-					"name":    stringProperty("Terminal name; omit to auto-generate one."),
+					"name":    stringProperty("Terminal name; omit to auto-generate one. A path such as worker/tests creates it in the layer worker drives."),
 					"cwd":     stringProperty("Initial working directory."),
 					"command": stringProperty("Program command for a program terminal instead of an interactive shell."),
 				}),
@@ -62,7 +66,7 @@ func tools() []tool {
 				Title:       "Run command in terminal",
 				Description: "Run a shell command in an existing pairmux terminal and block until it completes, needs input, or reaches the timeout. Commands can modify files, invoke networks, or perform other arbitrary side effects; obtain user approval when appropriate.",
 				InputSchema: objectSchema(map[string]any{
-					"terminal": stringProperty("Existing pairmux terminal name."),
+					"terminal": stringProperty(terminalRef),
 					"command":  stringProperty("Shell command string to run in the terminal."),
 					"timeout":  stringProperty("Maximum blocking duration as a Go duration, for example 30s or 5m."),
 					"head":     integerProperty("Leading output lines to retain.", 0),
@@ -78,7 +82,7 @@ func tools() []tool {
 				Title:       "Inspect terminal",
 				Description: "Read recent output and derived status from a pairmux terminal without blocking or taking its writer lock.",
 				InputSchema: objectSchema(map[string]any{
-					"terminal": stringProperty("Existing pairmux terminal name."),
+					"terminal": stringProperty(terminalRef),
 					"screen":   booleanProperty("Capture the live tmux viewport instead of the journal tail."),
 					"tail":     integerProperty("Number of journal-tail lines to return.", 1),
 				}, "terminal"),
@@ -92,7 +96,7 @@ func tools() []tool {
 				Title:       "Wait for terminal condition",
 				Description: "Block until the configured completion, idle, output-pattern, note, or human-handoff condition is met, a terminal dies, or the timeout expires. Give several terminals to wait on all of them at once: the first to satisfy a condition ends the wait and the result names it. Default and explicit idle waits also return when the program needs input. Any number of agents may wait on one terminal at once, so done is a broadcast every subscriber wakes on. Setting notify may send a desktop notification.",
 				InputSchema: objectSchema(map[string]any{
-					"terminal": stringProperty("Existing pairmux terminal name. Several may be given separated by commas, in which case the wait ends on whichever satisfies a condition first."),
+					"terminal": stringProperty(terminalRef + " Several of one layer may be given separated by commas, in which case the wait ends on whichever satisfies a condition first."),
 					"note":     booleanProperty("Wait for a note event on the terminal and nothing else. This is the signal a program in the pane leaves with `pairmux note` — an agent's own stop hook, or a human — so it is the way to wait for another agent's turn to end without guessing from the screen."),
 					"idle_ms":  integerProperty("Required output-quiescence interval in milliseconds.", 1),
 					"pattern":  stringProperty("RE2 regular expression matched against new shaped output."),
@@ -111,7 +115,7 @@ func tools() []tool {
 				Title:       "Send terminal input",
 				Description: "Send literal text, named tmux keys, and/or Enter to a live program. Input can confirm destructive actions or expose secrets; never guess or send credentials.",
 				InputSchema: objectSchema(map[string]any{
-					"terminal": stringProperty("Existing pairmux terminal name."),
+					"terminal": stringProperty(terminalRef),
 					"text":     stringProperty("Literal text to send without shell expansion."),
 					"keys": map[string]any{
 						"type":        "array",
@@ -131,7 +135,7 @@ func tools() []tool {
 				Title:       "Read terminal journal",
 				Description: "Read the shaped pairmux journal tail, one recorded command, regex matches, or a 1-based inclusive line range.",
 				InputSchema: objectSchema(map[string]any{
-					"terminal":   stringProperty("Existing pairmux terminal name."),
+					"terminal":   stringProperty(terminalRef),
 					"command_id": integerProperty("Recorded command number to read.", 1),
 					"grep":       stringProperty("RE2 regular expression used to filter journal lines."),
 					"range": map[string]any{
@@ -148,11 +152,13 @@ func tools() []tool {
 			definition: toolDefinition{
 				Name:        "pairmux_ls",
 				Title:       "List pairmux terminals",
-				Description: "List terminals on the configured pairmux socket with status, mode, command, notes, lock holder, and last activity.",
-				InputSchema: objectSchema(nil),
+				Description: "List terminals on the configured pairmux socket with status, mode, command, notes, lock holder, and last activity. With tree, also list every layer below — the sub-agents your terminals drive, and theirs — each row carrying the path that addresses it.",
+				InputSchema: objectSchema(map[string]any{
+					"tree": booleanProperty("Include the terminals of every layer below, with their paths."),
+				}),
 				Annotations: annotations{ReadOnlyHint: true, IdempotentHint: true},
 			},
-			build: buildNoArgs("ls"),
+			build: buildLs,
 		},
 		{
 			definition: toolDefinition{
@@ -173,12 +179,24 @@ func tools() []tool {
 				Title:       "Leave human note",
 				Description: "Append a human-visible coordination note to a pairmux terminal journal.",
 				InputSchema: objectSchema(map[string]any{
-					"terminal": stringProperty("Existing pairmux terminal name."),
+					"terminal": stringProperty(terminalRef),
 					"text":     stringProperty("Note text."),
 				}, "terminal", "text"),
 				Annotations: annotations{},
 			},
 			build: buildNote,
+		},
+		{
+			definition: toolDefinition{
+				Name:        "pairmux_report",
+				Title:       "Report to your owner",
+				Description: "From inside a pairmux terminal, leave a note on that terminal in the layer that owns it — how a sub-agent tells the agent that created it a turn is done. It is the only way to address anything above your own layer; the owner reads it in its next reply or wakes on it with wait note=true.",
+				InputSchema: objectSchema(map[string]any{
+					"text": stringProperty("What to tell the owner. Never include secrets."),
+				}, "text"),
+				Annotations: annotations{},
+			},
+			build: buildReport,
 		},
 		{
 			definition: toolDefinition{
@@ -417,6 +435,31 @@ func buildNote(a arguments) ([]string, error) {
 		return nil, err
 	}
 	return []string{"note", terminal, "--", text}, nil
+}
+
+func buildLs(a arguments) ([]string, error) {
+	if err := a.allow("tree"); err != nil {
+		return nil, err
+	}
+	tree, _, err := a.optionalBool("tree")
+	if err != nil {
+		return nil, err
+	}
+	if tree {
+		return []string{"ls", "--tree"}, nil
+	}
+	return []string{"ls"}, nil
+}
+
+func buildReport(a arguments) ([]string, error) {
+	if err := a.allow("text"); err != nil {
+		return nil, err
+	}
+	text, err := a.requiredString("text")
+	if err != nil {
+		return nil, err
+	}
+	return []string{"report", "--", text}, nil
 }
 
 func buildNoArgs(command string) func(arguments) ([]string, error) {

@@ -28,6 +28,15 @@ type Ctx struct {
 	JSON     bool
 	StateDir string
 	Stdout   io.Writer
+
+	// aliases maps a path's leaf to the path the caller wrote, so replies
+	// produced on a deeper layer still address it the caller's way (see
+	// resolveTarget). origSocket is the endpoint before a path moved Mux.
+	aliases    map[string]string
+	origSocket string
+	// reporting marks a note sent upward by report, whose reply is for the
+	// reporter rather than the owner.
+	reporting bool
 }
 
 // Main is the process entry point behind cmd/pairmux. It resolves global flags
@@ -61,6 +70,9 @@ func Main(args []string) int {
 		}
 	}
 	c.Mux, c.Choice = m, choice
+	if rc, refused := c.enforceScope(rest); refused {
+		return rc
+	}
 	return c.dispatch(rest)
 }
 
@@ -96,7 +108,7 @@ func (c *Ctx) dispatch(rest []string) int {
 		return c.cmdSend(args)
 	case "log":
 		return c.cmdLog(args)
-	case "ls":
+	case "ls", "list":
 		return c.cmdLs(args)
 	case "kill":
 		return c.cmdKill(args)
@@ -108,6 +120,10 @@ func (c *Ctx) dispatch(rest []string) int {
 		return c.cmdWatch(args)
 	case "note":
 		return c.cmdNote(args)
+	case "report":
+		return c.cmdReport(args)
+	case "tui", "ui":
+		return c.cmdTUI(args)
 	case "doctor":
 		return c.cmdDoctor(args)
 	case "update":
@@ -129,13 +145,26 @@ func (c *Ctx) dispatch(rest []string) int {
 // emit writes a success envelope and returns exit code 0.
 func (c *Ctx) emit(e output.Envelope) int {
 	e.OK = true
+	c.rewriteAliases(&e)
+	if c.reporting {
+		e.Status, e.Terminal, e.Next = "reported", "", nil
+	}
 	output.Emit(c.Stdout, c.JSON, e)
 	return 0
 }
 
 // fail writes an E_* error envelope and returns exit code 1.
 func (c *Ctx) fail(code, msg, hint string) int {
-	return output.Fail(c.Stdout, c.JSON, code, msg, hint)
+	if len(c.aliases) == 0 {
+		return output.Fail(c.Stdout, c.JSON, code, msg, hint)
+	}
+	e := output.Envelope{Status: "error", Error: &output.ErrInfo{Code: code, Message: msg, Hint: hint}}
+	c.rewriteAliases(&e)
+	if e.Error.Hint != "" {
+		e.Next = []string{e.Error.Hint}
+	}
+	output.Emit(c.Stdout, c.JSON, e)
+	return 1
 }
 
 // usage reports a structural CLI misuse: a one-line usage string plus a hint,
@@ -256,11 +285,15 @@ agent commands:
   wait  <name> [--idle MS] [--pattern RE] [--done] [--human] [--notify] [--timeout D]  e.g. pairmux wait build --done
   send  <name> [--text S] [--key K] [--enter]      send input to a program      e.g. pairmux send build --text y --enter
   log   <name> [--cmd N|--grep RE|--range A:B|A:end] bounded tail or selection  e.g. pairmux log build --cmd 2
-  ls                                               list terminals + status      e.g. pairmux ls
+  ls    [--tree] [--plain]                         list terminals + status      e.g. pairmux ls --tree
+                           (list is an alias; at a human's terminal a bare ls opens the tui)
   kill  <name> | --all                             kill terminal(s), keep logs  e.g. pairmux kill build
   prune [name] [--older-than D] [--dry-run]        reclaim dead terminals' logs e.g. pairmux prune --older-than 7d
+  report <text...>                                 inside a terminal: note to its owner  e.g. pairmux report "tests pass"
 
 human commands:
+  tui                      session manager: tree, preview, attach/new/kill/prune  e.g. pairmux ls
+                           (also what a bare ls / list opens at an interactive terminal)
   attach [name]            take over a terminal (Ctrl-b d)   e.g. pairmux attach build
   watch  [--interval 2s]   live dashboard (Ctrl-C quits)     e.g. pairmux watch
   note   <name> <text...>  leave a message for the agent     e.g. pairmux note build "fixed the token"
@@ -273,6 +306,10 @@ human commands:
 
 terminals run on tmux when it is installed, else on pairmux's built-in
 multiplexer (always on Windows); PAIRMUX_BACKEND=tmux|builtin chooses explicitly.
+agents form a tree: a terminal's own pairmux opens terminals one layer down.
+name one by path from where you stand — worker/tests is terminal tests in the
+layer worker drives. inside a terminal you may drive its layer and below only;
+upward, report is the one channel. the top belongs to the human.
 add --json anywhere for machine-readable envelopes from ordinary CLI commands
 (attach/watch are interactive, help is plain text, and mcp serve uses JSON-RPC).
 put -- before a command that itself contains --json or --socket.

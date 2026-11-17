@@ -92,3 +92,40 @@ func (u *unixTerminal) restore() { _ = termios(u.fd, ioctlSetTermios, &u.saved) 
 
 // EnableVT is a no-op on Unix, where terminals interpret escape sequences.
 func EnableVT() (restore func()) { return func() {} }
+
+// RawPoll switches stdin to raw mode for an interactive UI (pairmux tui) and
+// returns the function that restores it. Unlike attach's raw mode, reads are
+// polled: VMIN=0, VTIME=1 makes a read return after at most 100ms with no
+// input, so the UI's reader can be parked between reads and the terminal
+// handed whole to a child process — an attach — without the reader stealing
+// its keystrokes. Output processing is kept on so "\n" still returns the
+// carriage, and signals are off so Ctrl-C reaches the UI as a key.
+func RawPoll() (restore func(), err error) {
+	fd := os.Stdin.Fd()
+	var saved syscall.Termios
+	if err := termios(fd, ioctlGetTermios, &saved); err != nil {
+		return nil, err
+	}
+	t := saved
+	t.Iflag &^= syscall.IGNBRK | syscall.BRKINT | syscall.PARMRK | syscall.ISTRIP |
+		syscall.INLCR | syscall.IGNCR | syscall.ICRNL | syscall.IXON
+	t.Lflag &^= syscall.ECHO | syscall.ECHONL | syscall.ICANON | syscall.ISIG | syscall.IEXTEN
+	t.Cflag &^= syscall.CSIZE | syscall.PARENB
+	t.Cflag |= syscall.CS8
+	t.Cc[syscall.VMIN] = 0
+	t.Cc[syscall.VTIME] = 1
+	if err := termios(fd, ioctlSetTermios, &t); err != nil {
+		return nil, err
+	}
+	return func() { _ = termios(fd, ioctlSetTermios, &saved) }, nil
+}
+
+// TermSize reports the size of the terminal on stdout (else stdin), or 80x24.
+func TermSize() (cols, rows int) {
+	return (&unixTerminal{fd: os.Stdin.Fd()}).size()
+}
+
+// WatchResize calls fn whenever the terminal is resized, until stop is called.
+func WatchResize(fn func()) (stop func()) {
+	return (&unixTerminal{fd: os.Stdin.Fd()}).watchResize(func(int, int) { fn() })
+}
