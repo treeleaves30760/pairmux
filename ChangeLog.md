@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.2.0] - 2026-11-17
 
+### Security
+
+- Pin fixed documentation dependencies: body-parser 1.20.9, fast-uri 3.1.9, follow-redirects
+  1.16.2, joi 17.13.9 and qs 6.16.1, clearing six new blocking audit advisories, and drop the
+  braces exception now that its advisory is no longer reported. No exception was added.
+
 ### Added
 
 - **`pairmux tui`**, an interactive session manager for humans: the whole layer tree with live
