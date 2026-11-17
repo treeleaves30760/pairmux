@@ -17,6 +17,7 @@ const sidebars: SidebarsConfig = {
         'guides/interactive-programs',
         'guides/human-collaboration',
         'guides/multi-agent-sharing',
+        'guides/agent-hierarchy',
       ],
     },
     'changelog',

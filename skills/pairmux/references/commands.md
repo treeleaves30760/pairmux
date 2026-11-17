@@ -40,14 +40,18 @@ in the selected shell's syntax. PowerShell is a fallback, not an unconditional W
 
 Other environment variables:
 
-- `PAIRMUX_SOCKET`: default endpoint. **Inside a pane this is its child endpoint**, not the endpoint
-  that owns the pane. To note the enclosing terminal, use the creator-supplied owning `--socket`;
-  see [the team/worker recipe](collaboration.md#notes-from-inside-a-pane-owning-socket-recipe).
+- `PAIRMUX_SOCKET`: default endpoint. **Inside a pane this is its child layer**, not the layer
+  that owns the pane; report to the owner with `pairmux report` (see
+  [collaboration](collaboration.md#reporting-from-inside-a-pane)).
+- `PAIRMUX_SCOPE` (set inside every pane): the highest layer its processes may address — its own
+  child layer. Anything above or beside it is `E_SCOPE`. `PAIRMUX_OWNER_SOCKET`: the owner's layer,
+  where `report` writes. See [hierarchy.md](hierarchy.md).
+- `PAIRMUX_NO_TUI`: non-empty keeps a bare `ls` a listing even at an interactive terminal.
 - `PAIRMUX_STATE_DIR`: journal root; otherwise `$XDG_STATE_HOME/pairmux`, then `~/.local/state/pairmux`.
 - `PAIRMUX_TMPDIR`: built-in runtime directory (socket, lock and `<socket>.log`); see troubleshooting.
 - `PAIRMUX_SECRET_PROMPT_RE`: extra secret-prompt wording (RE2), validated by `doctor`.
 - `PAIRMUX_NAME`, `PAIRMUX_STATE_NAMESPACE`, `PAIRMUX_TERMINAL_DIR`: pane identity and canonical state
-  locators supplied by pairmux. They are not a parent-socket API; do not reverse-engineer one.
+  locators supplied by pairmux; do not derive other endpoints from them.
 
 ## The envelope schema
 
@@ -80,7 +84,7 @@ fields are omitted, but zero `exit_code`/`duration_ms` values are meaningful).
 | `peek` | derived terminal status: `idle`, `running`, `awaiting-input`, `dead` (not generic `ok`) |
 | `ls` | top-level `ok`; each terminal row has its derived state |
 | `wait` | requested-condition outcomes: `idle`, `awaiting-input`, `done`, `running`, `pattern-found`, `note`, `human-done`, `dead`, `timeout` |
-| `send` / `note` / `kill` | `sent` / `noted` / `killed` |
+| `send` / `note` / `report` / `kill` | `sent` / `noted` / `reported` / `killed` |
 | `log` / `version --json` | `ok` |
 | `doctor` | `ok` or `issues`, both with `ok:true`; read the failed checks and fixes |
 | `skill install` | `installed` or `dry-run` |
@@ -101,6 +105,7 @@ input. `human-done` means a note arrived, not that the command finished.
 | `E_BAD_ARGS` | usage/flag error (invalid name/key, bad regex, wrong terminal kind, invalid `PAIRMUX_BACKEND`) |
 | `E_TMUX` | the terminal backend failed — tmux or the built-in server (historical name); see troubleshooting |
 | `E_UPDATE` | unsupported/unverified installation, uv failure, post-update verification failure, or Windows |
+| `E_SCOPE` | from inside a pane, a layer above or beside your scope was addressed; see [hierarchy.md](hierarchy.md) |
 | `E_INTERNAL` | an unexpected internal error |
 
 ---
@@ -180,9 +185,8 @@ own deadline, none of which can wake the others.
   terminal, which emits no completion marks). This is how you subscribe to a terminal another agent
   is driving — you do not have to be the one who started the command.
 - `--note` — resolve on the next note (or an unseen note already waiting); unrelated completion or
-  idle does not satisfy it. Use this for an exact turn boundary in a long-lived program. Its
-  hook/wrapper must note the terminal on the **owning endpoint supplied by its creator**; the pane's
-  `PAIRMUX_SOCKET` targets a child layer. See [the concrete recipe](collaboration.md#notes-from-inside-a-pane-owning-socket-recipe).
+  idle does not satisfy it. Use this for an exact turn boundary in a long-lived program: its
+  hook/wrapper runs `pairmux report "..."` inside the pane. See [the recipe](collaboration.md#reporting-from-inside-a-pane).
 - `--human` — composite handoff: note → `human-done`; answered prompt and resumed execution →
   `running`; shell command completion → `done` plus `exit_code`. A rejected answer that re-prompts
   stays blocked. An unseen pending completion can return even if it happened before this wait,
@@ -297,12 +301,36 @@ journal is large.
 ```
 
 ### ls — list terminals + status
+```text
+pairmux ls [--tree] [--plain]          # list is an alias
+```
 ```json
 {"schema":"pairmux.v1","ok":true,"status":"ok","terminals":[{"name":"build","status":"idle","mode":"hooks","last_activity":"2026-07-18T15:13:38Z"}]}
 ```
 Text form is a table; a lock holder pid, pending command, and `[notes:N]` / `[layer:SOCKET]` badges
 show inline. `[layer:…]` means that terminal is itself driving a nested pairmux layer — an agent
-running agents. Reach it with `pairmux --socket SOCKET ls`, which the reply's `next` spells out.
+running agents. `ls --tree` (`-r`) lists those layers too, each row with a `path` such as
+`worker/tests`.
+
+For a person, a bare `ls`/`list` at an interactive terminal opens `pairmux tui` instead. It prints
+whenever any flag or `--json` is given, output is captured or piped, or the caller runs inside a pane
+or an agent CLI's tool shell (`PAIRMUX_SCOPE`/`PAIRMUX_NAME`, `CLAUDECODE`, `CODEX_SANDBOX`, …). If
+your shell has a pty and a bare `ls` ever shows a full-screen UI, use `ls --plain` or `--json` (or
+set `PAIRMUX_NO_TUI=1`).
+
+### Terminal paths
+
+Every command taking a terminal name accepts a path from where you stand: `worker/tests` is terminal
+`tests` in the layer `worker` drives (any depth). Replies keep the path in `terminal` and `next`.
+`new --name worker/lint` creates in that layer. A multi-terminal `wait` names terminals of one layer.
+
+### report — tell your owner (inside a pane only)
+```text
+pairmux report <text...>
+```
+Leaves a note on your own terminal in the layer that owns it (`status:"reported"`); the owner sees it
+in `notes`, or wakes on it with `wait <name> --note`. The only command a pane may aim above its own
+layer. See [hierarchy.md](hierarchy.md).
 
 ### kill — end terminal(s); journals are kept
 ```text
@@ -333,6 +361,11 @@ pairmux prune [name] [--older-than 7d] [--dry-run]
   backend: a tmux client focused on `name`, refused inside tmux. Built-in backend: attaches their
   terminal straight to the pane (works inside tmux, not on its own pane; no name → the only live
   terminal, several → `E_BAD_ARGS`). Detach with `Ctrl-b d` on both.
+- `pairmux tui [--interval 1s]` (what a person's bare `ls` opens) — interactive manager for the
+  whole layer tree: live status, a Screen/Activity preview (commands, exit codes, notes), full-screen
+  output history, attach and return, create (top or under a terminal), kill, delete stale, note,
+  send, and a `:` line that runs any pairmux command and shows its readable output. Human-only; not
+  on Windows yet.
 - `pairmux watch [--interval 2s]` — a self-refreshing dashboard until `Ctrl-C`. `!!` flags
   awaiting-input, `xx` flags dead.
 - `pairmux note <name> <text...>` — record a message for the agent; surfaces in the agent's next
@@ -351,7 +384,7 @@ pairmux prune [name] [--older-than 7d] [--dry-run]
   refuses with `E_UPDATE`; the hint is to close pairmux and run `uv tool install --upgrade pairmux`.
 - `pairmux version` — print the build version.
 - `pairmux skill install [--target T|all] [--dry-run]` (`-t` aliases `--target`) — offline installation
-  of the five canonical files embedded at build time (SKILL.md + four references). Reports embedded CLI version and bundle
+  of the six canonical files embedded at build time (SKILL.md + five references). Reports embedded CLI version and bundle
   SHA-256; it is not a remote-latest fetch. Always replaces managed same-name files, including local
   edits, and preserves extra files. To get latest content, obtain a fresh executable first, then
   install again and restart/reload the agent. `all` skips missing configuration roots; `cursor` is

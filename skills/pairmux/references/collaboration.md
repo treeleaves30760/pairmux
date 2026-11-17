@@ -4,8 +4,12 @@ pairmux terminals are real PTYs/ConPTYs. A human can watch, take over the same s
 credential prompt or make a judgment call, then hand control back. Notes explain what happened;
 resumed execution and shell completion can also end a handoff without a note.
 
-## The three human commands
+## The human commands
 
+- **`pairmux tui`** (also what a bare `pairmux ls` opens at the human's terminal): the human's
+  interactive manager for the whole layer tree — attach (and return), create, kill, delete stale
+  terminals, note, send, read output history and activity, run any command with readable output.
+  Agents never launch it; to point the human at it, say "run `pairmux ls`".
 - **`pairmux watch`**: live dashboard (status, lock holder, command, last activity). `!!` means
   awaiting-input, `xx` dead; `Ctrl-C` quits. The human operates the dashboard.
 - **`pairmux attach [name]`**: human takes the live pane. Detach with `Ctrl-b d` (tmux's configured
@@ -14,9 +18,9 @@ resumed execution and shell completion can also end a handoff without a note.
 - **`pairmux note <name> "<text>"`**: human/agent side channel, surfaced in `notes` on the next
   `run`/`peek`/`wait`; resolves `--note` as `note`, or `--human` as `human-done`.
 
-These commands must address the endpoint that **owns** the terminal; pass `--socket` when the
-caller is on another layer. [The team/worker recipe below](#notes-from-inside-a-pane-owning-socket-recipe)
-shows why a bare note from inside a pane can target the wrong endpoint.
+These commands address the layer that **owns** the terminal; from above, a path such as
+`worker/tests` reaches a terminal in a lower layer. From inside a pane, report to your owner with
+`pairmux report` — see [the recipe below](#reporting-from-inside-a-pane).
 
 ## The handoff loop (secret prompt)
 
@@ -155,34 +159,29 @@ Program terminals (`new --cmd`) reject `--done`: use current output for already-
 future `--pattern` for a later event, `--idle` for a prompt/death observation, or an explicit `--note`
 for an exact turn boundary. Raw-mode inferred `awaiting-input` is not proof that a turn finished.
 
-## Notes from inside a pane: owning-socket recipe
+## Reporting from inside a pane
 
-Inside terminal `worker`, pairmux sets `PAIRMUX_NAME=worker` but `PAIRMUX_SOCKET` points to a **child
-endpoint** for terminals created *by* that worker. It does **not** point to the owning endpoint that
-created `worker`. The creator must supply that owning socket and terminal name explicitly to the
-worker's hook/wrapper; do not invent a parent-socket environment variable or parse one from the
-child socket or hashed state paths.
-
-Concrete example: the creator chooses endpoint `team` and terminal `worker`. A stop hook or wrapper
-running inside `worker` must signal this literal destination, supplied by the creator:
+Inside terminal `worker`, `PAIRMUX_SOCKET` points to the **child layer** for terminals created *by*
+that worker, so a bare `pairmux note worker ...` from inside it looks in the wrong layer. Use
+`report`, which writes to the worker's own row in the layer that owns it:
 
 ```bash
-pairmux --socket team note worker "turn complete"
+pairmux report "turn complete"
 ```
 
-A runnable REPL demonstration passes the same destination directly to `subprocess` (no shell
-interpolation or assumed environment variable):
+A runnable REPL demonstration calls it from the program itself (no shell interpolation):
 
 ```bash
 # Creator's shell; Python is a program terminal, not a shell terminal.
-pairmux --socket team new --name worker --cmd "python3 -q"
-pairmux --socket team peek worker
-pairmux --socket team send worker --text "import subprocess; print(2 + 2); subprocess.run(['pairmux', '--socket', 'team', 'note', 'worker', 'turn complete'], check=True)" --enter
-pairmux --socket team wait worker --note
+pairmux new --name worker --cmd "python3 -q"
+pairmux peek worker
+pairmux send worker --text "import subprocess; print(2 + 2); subprocess.run(['pairmux', 'report', 'turn complete'], check=True)" --enter
+pairmux wait worker --note
 ```
 
 The calculation emits its note before the wait or while it blocks; both work. `--note` ends on the
-signal without mistaking a quiet REPL/TUI for a finished turn. Real wrappers/hooks should be given
-`team` and `worker` as explicit configuration/arguments by their creator. Keep the same backend,
-state root and runtime-directory settings in both processes; `--socket` selects the endpoint, not
-another backend or state root. Substitute the **actual supplied owner**, not the pane's child endpoint.
+signal without mistaking a quiet REPL/TUI for a finished turn. Stop hooks and wrappers inside the
+pane should call `pairmux report "..."` the same way; they need no socket or name configuration.
+The older explicit form, `pairmux --socket <owner> note <own name> "..."`, still works. A pane can
+never note, drive or kill anything else above its own layer (`E_SCOPE`); see
+[hierarchy.md](hierarchy.md).

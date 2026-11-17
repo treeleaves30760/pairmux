@@ -9,7 +9,7 @@ description: Every pairmux command with its flags, representative JSON examples,
 usage: pairmux [--json] [--socket S] <command> [args]
 ```
 
-Ordinary non-interactive CLI commands reply through the **`pairmux.v1` envelope**. Add `--json` for the machine-readable one-line form (shown throughout this page); without it, pairmux prints a friendly text block. `attach` and `watch` are interactive human interfaces, `help` is always plain text, and `mcp serve` reserves stdout for its JSON-RPC stream rather than emitting an envelope. The examples below are representative snapshots: timing, output, and contextual `next` hints vary with terminal state, and an example may omit a contextual hint that is not relevant to the behavior being illustrated.
+Ordinary non-interactive CLI commands reply through the **`pairmux.v1` envelope**. Add `--json` for the machine-readable one-line form (shown throughout this page); without it, pairmux prints a friendly text block. `attach`, `watch` and `tui` are interactive human interfaces, `help` is always plain text, and `mcp serve` reserves stdout for its JSON-RPC stream rather than emitting an envelope. The examples below are representative snapshots: timing, output, and contextual `next` hints vary with terminal state, and an example may omit a contextual hint that is not relevant to the behavior being illustrated.
 
 ## Global flags
 
@@ -30,6 +30,10 @@ Ordinary non-interactive CLI commands reply through the **`pairmux.v1` envelope*
 | `SHELL` | Interactive shell for `new` when `PAIRMUX_SHELL` is unset. On Windows it is honored only if it names an existing file; the default there is `pwsh.exe`, else `powershell.exe`, else `%COMSPEC%`. |
 | `PAIRMUX_STATE_DIR` | Journal root. Otherwise `$XDG_STATE_HOME/pairmux`, then `~/.local/state/pairmux`. |
 | `TMUX_TMPDIR` | tmux's socket root, part of a tmux endpoint's identity; on Unix also the built-in runtime root when `PAIRMUX_TMPDIR` is unset. |
+| `PAIRMUX_SCOPE` | Set by pairmux inside every terminal: the highest layer its processes may address (its own child layer). Commands aimed above or beside it fail with `E_SCOPE`; see [Agent hierarchy](./guides/agent-hierarchy.md). |
+| `PAIRMUX_OWNER_SOCKET` | Set by pairmux inside every terminal: the endpoint that owns it, where `report` writes. |
+| `PAIRMUX_NAME` | Set by pairmux inside every terminal: its own name in the owner's layer. |
+| `PAIRMUX_NO_TUI` | When non-empty, a bare `ls` always prints the listing instead of opening `tui`. |
 | `PAIRMUX_SECRET_PROMPT_RE` | An RE2 pattern that extends (never replaces) secret-prompt recognition. |
 
 Journals live in an isolated hash per endpoint under `<root>/.sockets/`: for tmux, of the canonical `TMUX_TMPDIR`, uid, and socket; built-in endpoints hash a separate identity, so equal terminal names on the two backends never collide, and each backend lists only its own terminals, live or dead. For the conventional default tmux endpoint only, journals from the historical `<root>/<terminal>/` layout remain readable in place; pairmux never migrates them implicitly.
@@ -113,6 +117,7 @@ pairmux --json peek nonexistent
 | `E_BAD_ARGS` | A usage or flag error (invalid name/socket/key, bad regex, wrong terminal kind, invalid `PAIRMUX_BACKEND`). |
 | `E_TMUX` | The terminal backend — tmux or the built-in server — failed. The name is historical; built-in failures carry built-in-specific hints (for example, set `PAIRMUX_TMPDIR`). |
 | `E_UPDATE` | v0.6.0+: persistent uv ownership, supported version, uv execution, or post-update verification failed, or the platform is Windows. Follow the recovery hint. |
+| `E_SCOPE` | The caller runs inside a pairmux terminal and addressed a layer above or beside its own scope. Drive your own layer and below; tell your owner with `report`. |
 | `E_INTERNAL` | An unexpected internal error. |
 
 ---
@@ -384,11 +389,18 @@ pairmux --json log build --grep "hello"
 
 ### ls
 
-List every terminal with its derived status, mode, current command, lock holder, unseen-note count, and last-activity time.
+List every terminal with its derived status, mode, current command, lock holder, unseen-note count, and last-activity time. `--tree` (alias `-r`) also lists every live layer below — the terminals your terminals are driving, and theirs — with a `path` on each row that addresses it (`worker/tests`). A row whose terminal drives a layer carries `child_socket`. `list` is an alias.
 
 ```text
-pairmux ls
+pairmux ls [--tree] [--plain]
 ```
+
+A person who types a bare `pairmux ls` at an interactive terminal gets [`tui`](#tui), the session
+manager, instead of a table. The listing is printed whenever any flag (`--plain` asks for exactly
+that) or `--json` is given, output is piped or captured, or the caller runs inside a pairmux
+terminal (`PAIRMUX_SCOPE`/`PAIRMUX_NAME`) or an agent CLI's tool shell (`CLAUDECODE`,
+`CODEX_SANDBOX`, `GEMINI_CLI`, `OPENCODE`), so agents and scripts keep getting the listing. Set
+`PAIRMUX_NO_TUI=1` to turn the switch off. On Windows `ls` always prints.
 
 ```bash
 pairmux --json ls
@@ -407,6 +419,13 @@ ok
   dbmigrate  awaiting-input  hooks  read -s password  [notes:1]  (2026-07-20T09:14:00Z)
   dev        idle            hooks  -  (2026-07-20T09:13:58Z)
 ```
+
+#### Terminal paths
+
+Every command that takes a terminal name also accepts a **path**: `worker/tests` is terminal `tests`
+in the layer that terminal `worker` drives, at any depth, relative to the current endpoint. Replies
+show the path in `terminal` and in their `next` commands. `new --name worker/lint` creates directly in
+that layer. One `wait` may name several terminals of a single layer.
 
 ### kill
 
@@ -492,12 +511,48 @@ status bar — on the alternate screen, so the human's own scrollback is preserv
 - On detach it prints `[detached from NAME] tell the agent what you did: pairmux note NAME "..."`;
   if the program exits while attached, it prints the exit message instead.
 
+### tui
+
+An interactive session manager for humans, and what a bare `pairmux ls` opens at an interactive
+terminal: the whole layer tree below this endpoint with live status, a preview of the selected
+terminal, and single keys to attach (and come back on detach), create a terminal at the top or under
+the selected one, kill or delete, delete every dead terminal's journal, leave a note, send a line,
+fold subtrees and filter. Destructive actions ask first.
+
+Command output a person needs to read is shown inside it rather than in scrollback: `tab` switches
+the preview between the terminal's **Screen** and its **Activity** (what it is, then every command
+with exit code and duration, notes and whether its agent has seen them); `o` opens either one full
+screen and scrollable — Screen becomes the whole retained output history; `x` shows what prune
+removed; and `:` runs any pairmux command (`{}` stands for the selected path, `↑` recalls the last
+one) in the background and shows its readable output in the same reader. See [Agent hierarchy](./guides/agent-hierarchy.md#watching-and-steering-the-tree-pairmux-tui)
+for the key map. Needs an interactive terminal; not available on Windows yet. `ui` is an alias.
+
+```text
+pairmux tui [--interval 1s]
+```
+
 ### watch
 
 Render a self-refreshing dashboard of every terminal until `Ctrl-C`. Awaiting-input rows are flagged `!!`, dead rows `xx`.
 
 ```text
 pairmux watch [--interval 2s]
+```
+
+### report
+
+From inside a pairmux terminal, leave a note on that terminal in the layer that owns it — how a
+sub-agent tells its creator a turn is done. It is the one command that addresses anything above the
+caller's scope, and it can only talk about the caller. The owner sees it in the `notes` of its next
+`run`/`peek` on that terminal, or wakes on it with `wait <name> --note`. Outside a terminal it fails
+with `E_BAD_ARGS`.
+
+```text
+pairmux report <text...>
+```
+
+```json
+{"schema":"pairmux.v1","ok":true,"status":"reported"}
 ```
 
 ### note
