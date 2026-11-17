@@ -320,12 +320,13 @@ set `PAIRMUX_NO_TUI=1`).
 
 ### events — follow the fleet
 ```text
-pairmux events [--tree] [--wait] [--status S,S] [--max N] [--timeout D] [--interval 1s] [--no-snapshot]
+pairmux events [--tree] [--wait] [--status S,S] [--max N] [--timeout D] [--interval 1s] [--no-snapshot] [--exit-with-parent]
 ```
 Without `--wait` it is an endless JSON-lines stream (`pairmux.events.v1`: `snapshot`, `added`,
 `changed`, `removed`, `end`) for front ends — never run that from an agent tool call. With `--wait`
 it blocks until a terminal appears, disappears or changes state (status, command, lock, unread
-notes, child layer) and returns one envelope: `status` `changed` or `timeout` (default 10m), the
+notes, child layer) and returns one envelope: `status` `changed`, `timeout` (default 10m) or
+`interrupted` (stopped by a signal first; rerun it, do not lengthen the timeout), the
 changes in `events` (`path`, `terminal` row, `changes`, previous status in `from`), and `next`.
 `--status awaiting-input,dead` keeps only terminals that appear in, or whose status changes into,
 those states (removals always pass; the stream's `snapshot` is not filtered). Output alone is never
