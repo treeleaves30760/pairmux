@@ -20,7 +20,9 @@ const frontMatter = [
   '---',
   'title: Changelog',
   'slug: /changelog',
-  'description: Release history for pairmux, in Keep a Changelog format.',
+  // Quoted so the colon cannot break the YAML. Keep it 120-160 characters: it
+  // is the page's meta and Open Graph description.
+  'description: "Find what changed in each pairmux release, from the first version to the latest: additions, changes and fixes, in Keep a Changelog format."',
   '---',
   '',
   '<!-- This page is generated from the repository ChangeLog.md at build time. -->',

@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://pairmux-docs.treeleaves30760.com/sitemap.xml
