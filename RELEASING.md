@@ -141,6 +141,30 @@ selection with tmux on PATH and the built-in backend (doctor, `new`/`run`/`kill`
 without it. Windows ARM64 runtime, older Windows 10 builds, WSL2, bare-metal
 Fedora and ARM64 RPM runtime remain unverified.
 
+**v1.2.0 published and accepted (2026-11-17).** The annotated tag is fixed to
+merged-main commit `721fd2ba1ee72df8ae8c999e4397b2ec913808b4` (PR #13), whose
+[CI 44071051270](https://github.com/treeleaves30760/pairmux/actions/runs/44071051270)
+and Docs deployment passed. Before merging, the Docs audit failed on six new npm
+advisories; they were fixed by pinning patched `body-parser`, `fast-uri`,
+`follow-redirects`, `joi` and `qs` overrides, and the stale `braces` exception was
+removed, leaving no accepted advisories.
+[Release run 44071511049](https://github.com/treeleaves30760/pairmux/actions/runs/44071511049)
+passed on its second attempt: the first failed with a GitHub 502 while staging the
+draft release, before anything reached PyPI, so only the failed job was rerun
+against the same validated artifacts. It published nine native assets, six PyPI
+wheels and the Homebrew Cask at 1.2.0.
+
+[Published-release acceptance 44073428115](https://github.com/treeleaves30760/pairmux/actions/runs/44073428115)
+passed all seven jobs from the fix branch later merged as PR #14. The earlier
+run 44072464940 did not pass, for two reasons: GitHub had retired the `macos-14`
+runner (acceptance now uses `macos-15`), and Homebrew 7 refuses casks from
+untrusted third-party taps, so the old one-line `brew install --cask` no longer
+works. Install instructions and the acceptance job now run
+`brew trust --tap treeleaves30760/pairmux` after `brew tap`. A local isolated uv
+install of the public 1.2.0 wheel also passed `version`, `new`, `run` and
+`list --plain`. No tag or artifact was rebuilt or overwritten after PyPI
+publication.
+
 **v1.0.0: built-in multiplexer and native Windows.** v1.0.0 makes tmux
 optional (a built-in PTY/ConPTY multiplexer is used when tmux is absent, and
 always on Windows) and adds native Windows x86-64 and ARM64 artifacts.
