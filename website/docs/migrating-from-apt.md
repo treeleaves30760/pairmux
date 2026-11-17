@@ -1,7 +1,7 @@
 ---
 title: Migrating from APT
 slug: /migrating-from-apt
-description: Retire the former pairmux APT source safely and check for PATH shadowing.
+description: "Remove the pairmux APT source, pin and keyring (the repository was retired in v0.5.3), install via uv, Homebrew or an archive, and check PATH shadowing."
 ---
 
 # Migrating from APT / Debian packages

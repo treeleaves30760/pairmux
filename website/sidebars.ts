@@ -8,6 +8,7 @@ const sidebars: SidebarsConfig = {
     'cli-reference',
     'concepts',
     'skills',
+    'integrations',
     {
       type: 'category',
       label: 'Guides',
@@ -18,6 +19,7 @@ const sidebars: SidebarsConfig = {
         'guides/human-collaboration',
         'guides/multi-agent-sharing',
         'guides/agent-hierarchy',
+        'guides/tui',
       ],
     },
     'changelog',

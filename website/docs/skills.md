@@ -1,6 +1,6 @@
 ---
 title: Agent Skills
-description: Install the canonical pairmux skill and benchmark it across OpenCode, Claude Code, and Codex.
+description: "Install the pairmux skill into Claude Code, Codex, OpenCode, Cursor, Gemini CLI and other coding agents, then benchmark it with the S01-S10 eval scenarios."
 ---
 
 # Agent Skills

@@ -118,6 +118,8 @@ func (c *Ctx) dispatch(rest []string) int {
 		return c.cmdAttach(args)
 	case "watch":
 		return c.cmdWatch(args)
+	case "events":
+		return c.cmdEvents(args)
 	case "note":
 		return c.cmdNote(args)
 	case "report":
@@ -290,6 +292,7 @@ agent commands:
   kill  <name> | --all                             kill terminal(s), keep logs  e.g. pairmux kill build
   prune [name] [--older-than D] [--dry-run]        reclaim dead terminals' logs e.g. pairmux prune --older-than 7d
   report <text...>                                 inside a terminal: note to its owner  e.g. pairmux report "tests pass"
+  events [--tree] [--wait] [--status S]            fleet changes (stream; --wait: one reply)  e.g. pairmux events --tree --wait
 
 human commands:
   tui                      session manager: tree, preview, attach/new/kill/prune  e.g. pairmux ls

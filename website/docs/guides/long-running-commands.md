@@ -1,6 +1,6 @@
 ---
 title: Long-running commands & timeouts
-description: The run → wait → peek loop for builds, test suites, and anything slow.
+description: "Run builds, tests and other slow commands without sleep loops: the run, wait and peek loop, choosing timeouts, waiting for a pattern and searching large logs."
 ---
 
 # Long-running commands & timeouts

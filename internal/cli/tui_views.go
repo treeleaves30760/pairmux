@@ -23,7 +23,7 @@ const (
 	viewCount
 )
 
-var viewNames = [viewCount]string{"Screen", "Activity"}
+var viewNames = [viewCount]string{"screen", "activity"}
 
 // tuiViewer is the full-screen reader.
 type tuiViewer struct {
@@ -70,9 +70,22 @@ func (a *tuiApp) fillViewer(async bool) {
 	v.busy, v.status = true, "running…"
 	id, load := v.id, v.load
 	go func() {
-		lines, status := load()
+		lines, status := recoverLoad(load)
 		a.results <- tuiResult{id: id, lines: lines, status: status}
 	}()
+}
+
+// recoverLoad runs a reader's load on a background goroutine. A panic there
+// would kill the process past run's deferred restore, leaving the human's
+// terminal raw, on the alternate screen and reporting the mouse; it becomes the
+// reader's content instead.
+func recoverLoad(load func() ([]string, string)) (lines []string, status string) {
+	defer func() {
+		if r := recover(); r != nil {
+			lines, status = []string{fmt.Sprintf("internal error: %v", r)}, "exit 1"
+		}
+	}()
+	return load()
 }
 
 // applyResult files a background command's output into its reader, or, if
@@ -88,7 +101,7 @@ func (a *tuiApp) applyResult(r tuiResult) {
 
 func (a *tuiApp) viewKey(k tuiKey) {
 	v := a.viewer
-	page := max(1, a.bodyHeight()-2)
+	page := max(1, a.bodyHeight()-3)
 	switch k.name {
 	case "esc":
 		a.mode, a.viewer = modeList, nil
@@ -135,16 +148,16 @@ func (a *tuiApp) viewKey(k tuiKey) {
 	}
 }
 
-func (a *tuiApp) drawViewer(w, h int) []string {
+func (a *tuiApp) drawViewer(y0, w, h int) []string {
 	v := a.viewer
-	out := make([]string, 0, h)
+	inner := w - 2
 	var wrapped []string
 	for _, l := range v.lines {
-		wrapped = append(wrapped, hardWrap(strings.ReplaceAll(l, "\t", "    "), w-2)...)
+		wrapped = append(wrapped, hardWrap(strings.ReplaceAll(l, "\t", "    "), inner-1)...)
 	}
-	rows := max(1, h-1)
+	rows := max(1, h-2)
 	v.off = max(0, min(v.off, len(wrapped)-rows))
-	title := tline{{" " + v.title, stTitle}}
+	title := tline{{v.title, stTitle}}
 	if v.status != "" {
 		st := stDim
 		switch {
@@ -155,33 +168,23 @@ func (a *tuiApp) drawViewer(w, h int) []string {
 		}
 		title = append(title, seg{"  " + v.status, st})
 	}
+	var topR []bItem
 	if len(wrapped) > rows {
-		title = append(title, seg{fmt.Sprintf("  lines %d–%d of %d", v.off+1, min(len(wrapped), v.off+rows), len(wrapped)), stDim})
+		topR = append(topR, bItem{text: tline{{fmt.Sprintf("%d–%d of %d", v.off+1, min(len(wrapped), v.off+rows), len(wrapped)), stDim}}})
 	}
-	out = append(out, a.render(title, w, ""))
+	var body []string
 	if len(wrapped) == 0 && !v.busy {
-		out = append(out, a.render(tline{{"  (no output)", stDim}}, w, ""))
+		body = append(body, a.render(tline{{"  (no output)", stDim}}, inner, ""))
 	}
-	for i := v.off; i < len(wrapped) && len(out) < h; i++ {
-		out = append(out, a.render(tline{{" " + wrapped[i], ""}}, w, ""))
+	for i := v.off; i < len(wrapped) && len(body) < rows; i++ {
+		body = append(body, a.render(tline{{" " + wrapped[i], ""}}, inner, ""))
 	}
-	for len(out) < h {
-		out = append(out, strings.Repeat(" ", w))
+	botL := []bItem{a.btn("g", "top"), a.btn("G", "end"), a.btn("b", "page up"), a.btn("f", "page down")}
+	if v.reloadable {
+		botL = append(botL, a.btn("r", "rerun"))
 	}
-	return out
-}
-
-func (a *tuiApp) viewerKeyBar() tline {
-	keys := [][2]string{{"↑↓", "scroll"}, {"PgUp PgDn", "page"}, {"g G", "top/end"}}
-	if a.viewer.reloadable {
-		keys = append(keys, [2]string{"r", "rerun"})
-	}
-	keys = append(keys, [2]string{":", "command"}, [2]string{"esc", "back"})
-	var l tline
-	for _, k := range keys {
-		l = append(l, seg{" " + k[0], stKey}, seg{" " + k[1] + " ", stDim})
-	}
-	return l
+	botL = append(botL, a.btn(":", "command"))
+	return a.box(y0, 0, w, h, stBoxView, []bItem{{text: title}}, topR, botL, []bItem{a.btn("esc", "back")}, body)
 }
 
 // hardWrap cuts s into lines of at most w cells, keeping every character —
@@ -347,6 +350,7 @@ var tuiBlocked = map[string]string{
 	"ui":     "you are in it",
 	"mcp":    "mcp serve runs until its client hangs up; start it from a shell",
 	"update": "quit (q) and run pairmux update from a shell",
+	"events": "it streams until interrupted; this view already shows every change",
 }
 
 // tuiReadOnly commands are safe to rerun with r.
@@ -416,7 +420,7 @@ func (a *tuiApp) runCommand(line, sel string) string {
 	shown := "pairmux " + strings.Join(quoteArgs(args), " ")
 	load := func() ([]string, string) {
 		var buf bytes.Buffer
-		sub := &Ctx{Mux: a.c.layer(socket), Choice: a.c.Choice, JSON: jsonMode, StateDir: a.c.StateDir, Stdout: &buf}
+		sub := a.subCtx(socket, jsonMode, &buf)
 		rc, refused := sub.enforceScope(rest)
 		if !refused {
 			rc = sub.dispatch(rest)

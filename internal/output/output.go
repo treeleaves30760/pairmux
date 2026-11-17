@@ -55,6 +55,36 @@ type TerminalRow struct {
 	Path string `json:"path,omitempty"`
 }
 
+// EventsSchemaID names the line format of `pairmux events`. It is versioned
+// apart from the pairmux.v1 envelope because it is a stream, not a reply.
+const EventsSchemaID = "pairmux.events.v1"
+
+// Event is one fleet change: a line of `pairmux events`, or an entry of an
+// envelope's events (events --wait).
+type Event struct {
+	Schema string `json:"schema,omitempty"`
+	Seq    int    `json:"seq,omitempty"`
+	TS     string `json:"ts"`
+	// Type is snapshot (the whole fleet, the stream's first line unless
+	// --no-snapshot), added, removed, changed, or end (the stream's last line
+	// when it stops on --max or --timeout).
+	Type string `json:"type"`
+	// Path addresses the terminal from the listing's endpoint; empty for
+	// snapshot and end.
+	Path string `json:"path,omitempty"`
+	// Terminal is the row as ls --tree --json shows it (absent for removed).
+	Terminal *TerminalRow `json:"terminal,omitempty"`
+	// Terminals is the full listing, on snapshot only.
+	Terminals []TerminalRow `json:"terminals,omitempty"`
+	// Changes names the fields that changed, on changed only: status,
+	// current_cmd, lock_holder, notes, child_socket, mode.
+	Changes []string `json:"changes,omitempty"`
+	// From is the previous status, on changed when status is among Changes.
+	From string `json:"from,omitempty"`
+	// Reason says why the stream ended, on end only: max or timeout.
+	Reason string `json:"reason,omitempty"`
+}
+
 // ErrInfo is the error detail for a failed command.
 type ErrInfo struct {
 	Code    string `json:"code"`
@@ -76,7 +106,8 @@ type Envelope struct {
 	Output     string        `json:"output,omitempty"`
 	Truncated  *TruncInfo    `json:"truncated,omitempty"`
 	Terminals  []TerminalRow `json:"terminals,omitempty"`
-	Notes      []string      `json:"notes,omitempty"` // human messages (pairmux note) the agent hasn't seen
+	Notes      []string      `json:"notes,omitempty"`  // human messages (pairmux note) the agent hasn't seen
+	Events     []Event       `json:"events,omitempty"` // fleet changes (events --wait)
 	Next       []string      `json:"next,omitempty"`
 	Error      *ErrInfo      `json:"error,omitempty"`
 }
@@ -171,6 +202,23 @@ func human(e Envelope) string {
 	// Terminals table (ls).
 	if len(e.Terminals) > 0 {
 		writeTerminals(&b, e.Terminals)
+	}
+
+	// Fleet changes (events --wait).
+	for _, ev := range e.Events {
+		b.WriteString("  ")
+		b.WriteString(pad(ev.Type, 8))
+		b.WriteString(ev.Path)
+		switch {
+		case ev.From != "" && ev.Terminal != nil:
+			b.WriteString("  " + ev.From + " → " + ev.Terminal.Status)
+		case ev.Terminal != nil:
+			b.WriteString("  " + ev.Terminal.Status)
+		}
+		if len(ev.Changes) > 0 {
+			b.WriteString("  (" + strings.Join(ev.Changes, ", ") + ")")
+		}
+		b.WriteByte('\n')
 	}
 
 	// Output block.
@@ -274,4 +322,11 @@ func writeTerminals(b *strings.Builder, rows []TerminalRow) {
 		}
 		fmt.Fprintf(b, "  %-*s  %-*s  %-*s  %s\n", nameW, label(r), statusW, r.Status, modeW, r.Mode, cmd)
 	}
+}
+
+func pad(s string, w int) string {
+	if n := w - len(s); n > 0 {
+		return s + strings.Repeat(" ", n)
+	}
+	return s + " "
 }

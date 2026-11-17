@@ -141,8 +141,8 @@ anything above or beside it** — such calls fail with `E_SCOPE` by design; neve
 `PAIRMUX_SCOPE` or swap `--socket`/`PAIRMUX_SOCKET` to get around it. The one upward channel is
 `pairmux report "<outcome>"`, a note on your own row your creator reads or waits on with
 `wait <name> --note`. Agent CLIs are program terminals: `new --cmd "codex"`, check startup with `peek`,
-`send` the task (include "run `pairmux report` when done"), then `wait a,b --note`. `kill` ends a
-worker and its whole subtree. Full recipe: [hierarchy.md](references/hierarchy.md).
+`send` the task (include "run `pairmux report` when done"), then `wait a,b --note` — or watch the
+whole subtree with `events --tree --wait` instead of polling. `kill` ends a worker and its subtree.
 
 ## Reading replies
 
@@ -207,6 +207,7 @@ pairmux peek repl
 | `send <name> [--text S] [--key K ...] [--enter]` | literal text / named keys to the current program |
 | `log <name> [--cmd N \| --grep RE \| --range A:B\|A:end]` | retained history, not re-execution |
 | `ls [--tree]` · `kill <name> \| --all` · `prune [name] [--older-than 7d] [--dry-run]` | inventory (with sub-layers) / destructive lifecycle |
+| `events --tree --wait [--status S,S] [--timeout 30m]` | block until any terminal in your subtree changes state |
 | `report "<text>"` | inside a pane: note your own row for your creator (the only upward call) |
 | `note <name> "<text>"` · `attach [name]` · `watch` · `tui` | side channel / human takeover / dashboard / human manager |
 
@@ -215,5 +216,5 @@ pairmux peek repl
 - [references/commands.md](references/commands.md) — flags, backend/shell selection, envelope and errors.
 - [references/interactive.md](references/interactive.md) — prompt inference, secrets, REPLs, TUIs and keys.
 - [references/collaboration.md](references/collaboration.md) — handoff outcomes, privacy limits, reporting from a pane.
-- [references/hierarchy.md](references/hierarchy.md) — sub-agents, paths, scope (`E_SCOPE`), `report`, `ls --tree`.
+- [references/hierarchy.md](references/hierarchy.md) — full recipe: sub-agents, paths, scope (`E_SCOPE`), `report`, `ls --tree`, `events --wait`.
 - [references/troubleshooting.md](references/troubleshooting.md) — busy/dead panes, in-place recovery, waits and backends.

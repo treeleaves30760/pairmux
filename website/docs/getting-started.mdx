@@ -1,7 +1,7 @@
 ---
 title: Getting Started
 slug: /
-description: Install pairmux and run the core loop in 60 seconds.
+description: "Install pairmux with uv, Homebrew, an installer script or an archive on macOS, Linux or Windows, then run the core new, run, wait and attach loop."
 ---
 
 import Tabs from '@theme/Tabs';
@@ -23,6 +23,11 @@ pairmux is an **ACI (Agent-Computer Interface) layer** on top of a terminal mult
 when it is installed, otherwise pairmux's own built-in one: blocking calls return on a command
 completion, a recognized prompt, a requested condition, or timeout; a journal retains raw pane output
 while CLI reads shape it for agents; and `pairmux attach` puts a human in the same live pane.
+
+The same primitives let **agents drive agents**. A lead agent opens workers in pairmux terminals,
+the workers open their own sub-agents, and you watch and steer the whole tree from one screen.
+
+![The pairmux TUI: the agent tree with live status on the left, the selected agent's screen on the right](/img/tui-overview.svg)
 
 :::info New in v1.0.0
 The built-in multiplexer (tmux becomes optional) and native Windows support. v0.6.0 and earlier
@@ -466,9 +471,16 @@ secret itself. See [interactive programs](./guides/interactive-programs.md) and
 ### 5. Humans jump into the same terminal
 
 ```bash
+pairmux ls           # at your own terminal: the session manager (same as pairmux tui)
 pairmux attach build # run from an interactive terminal (outside tmux, on the tmux backend)
 pairmux watch        # live dashboard of every terminal
 ```
+
+`pairmux ls` opens the [TUI](./guides/tui.md). Select `build` and press `⏎` (or double-click it) to
+attach. When an agent reaches a password prompt, it hands off to you and its row shows `needs input`
+in yellow:
+
+![The TUI with a terminal that needs input selected: the preview shows a sudo password prompt and the footer says to attach and answer it](/img/tui-handoff.svg)
 
 Detach with `Ctrl-b d` on either backend (on tmux, your configured tmux binding). `attach` refuses a
 non-interactive terminal. On the tmux backend it also refuses to nest inside tmux: detach to the
@@ -482,3 +494,6 @@ straight to the pane; see [human collaboration](./guides/human-collaboration.md#
 - [Concepts](./concepts.md) — why pairmux is built the way it is: the two terminal backends, endpoint-isolated journals, completion modes, and the idle backstop.
 - [Long-running commands guide](./guides/long-running-commands.md) — the complete run/wait/peek playbook.
 - [Agent Skills](./skills.md) — install targets and the repeatable cross-agent benchmark runner.
+- [Agent hierarchy](./guides/agent-hierarchy.md) — agents that run their own sub-agents, and how to supervise them.
+- [The TUI](./guides/tui.md) — a tour of the console where you watch and steer the agent tree.
+- [Integrations](./integrations.md) — build a desktop app, dashboard or supervisor agent on `pairmux events` and `--json`.

@@ -309,13 +309,10 @@ func listAtFor(c paneLister, root, backend, socket string) ([]Terminal, error) {
 	return out, nil
 }
 
-// stateDirs returns the names of terminal directories under BaseDir: entries
-// that are directories, pass ValidName, and contain a meta.json (which excludes
-// the shim dirs and archived "<name>.prev" directories).
-func stateDirs() []string {
-	return stateDirsAt(BaseDir(), core.DefaultSocket)
-}
-
+// stateDirsAt returns the names of terminal directories under base that belong
+// to socket: entries that are directories, pass ValidName, and contain a
+// meta.json (which excludes the shim dirs and archived "<name>.prev"
+// directories).
 func stateDirsAt(base, socket string) []string {
 	entries, err := os.ReadDir(base)
 	if err != nil {

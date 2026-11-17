@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,15 +11,11 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
-	"github.com/treeleaves30760/pairmux/internal/core"
 	"github.com/treeleaves30760/pairmux/internal/journal"
 	"github.com/treeleaves30760/pairmux/internal/mux"
 	"github.com/treeleaves30760/pairmux/internal/muxd"
 	"github.com/treeleaves30760/pairmux/internal/output"
-	"github.com/treeleaves30760/pairmux/internal/state"
-	"github.com/treeleaves30760/pairmux/internal/vt"
 )
 
 // cmdTUI runs the interactive session manager: the whole layer tree below this
@@ -158,8 +152,13 @@ type tuiApp struct {
 	results   chan tuiResult
 	lastCmd   string
 
-	w, h          int
-	quit          bool
+	w, h int
+	quit bool
+
+	// Mouse targets, rebuilt by every draw.
+	hits          []hit
+	listRect      rect
+	lastClick     time.Time
 	pendingAttach *treeNode
 
 	restoreTTY func()
@@ -170,8 +169,12 @@ type tuiApp struct {
 // --- lifecycle -------------------------------------------------------------
 
 const (
-	tuiEnter = "\x1b[?1049h\x1b[?25l\x1b[H\x1b[2J"
-	tuiLeave = "\x1b[0m\x1b[?25h\x1b[?1049l"
+	// Alternate screen, hidden cursor, SGR mouse reports (1000: clicks and
+	// wheel, 1006: coordinates past column 223), and autowrap off (7l) so a
+	// frame wider than a tiny terminal is cut instead of wrapping into the
+	// rows below.
+	tuiEnter = "\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h\x1b[?7l\x1b[H\x1b[2J"
+	tuiLeave = "\x1b[?7h\x1b[?1006l\x1b[?1000l\x1b[0m\x1b[?25h\x1b[?1049l"
 )
 
 func (a *tuiApp) run() (err error) {
@@ -287,134 +290,11 @@ func withoutEnv(env []string, key string) []string {
 
 // --- input -------------------------------------------------------------
 
-// ttyReader reads stdin on its own goroutine. Reads are polled (RawPoll), so
-// park returns within about 100ms with the reader idle and holding nothing.
-type ttyReader struct {
-	out     chan []byte
-	parkReq chan chan struct{}
-	resumed chan struct{}
-}
-
-func newTTYReader() *ttyReader {
-	return &ttyReader{out: make(chan []byte, 64), parkReq: make(chan chan struct{}), resumed: make(chan struct{})}
-}
-
-func (r *ttyReader) loop() {
-	buf := make([]byte, 512)
-	for {
-		select {
-		case ack := <-r.parkReq:
-			close(ack)
-			<-r.resumed
-			continue
-		default:
-		}
-		n, err := os.Stdin.Read(buf)
-		if n > 0 {
-			b := append([]byte(nil), buf[:n]...)
-			select {
-			case r.out <- b:
-			case ack := <-r.parkReq:
-				close(ack)
-				<-r.resumed
-			}
-		}
-		if err != nil && !errors.Is(err, io.EOF) {
-			time.Sleep(50 * time.Millisecond)
-		}
-	}
-}
-
-func (r *ttyReader) park() {
-	ack := make(chan struct{})
-	r.parkReq <- ack
-	<-ack
-	for len(r.out) > 0 { // keys typed before the attach belong to the TUI, not the pane
-		<-r.out
-	}
-}
-
-func (r *ttyReader) resume() { r.resumed <- struct{}{} }
-
-type tuiKey struct {
-	name string // "rune" for printable input
-	r    rune
-}
-
-// parseKeys decodes one read's worth of terminal input into keys. A read
-// carries whole escape sequences in practice; an ESC with nothing recognisable
-// after it is the Escape key.
-func parseKeys(b []byte) []tuiKey {
-	var keys []tuiKey
-	for len(b) > 0 {
-		if b[0] == 0x1b {
-			if len(b) == 1 {
-				keys = append(keys, tuiKey{name: "esc"})
-				b = b[1:]
-				continue
-			}
-			if b[1] == '[' || b[1] == 'O' {
-				i := 2
-				for i < len(b) && (b[i] >= '0' && b[i] <= '9' || b[i] == ';') {
-					i++
-				}
-				if i < len(b) {
-					seq := string(b[2 : i+1])
-					b = b[i+1:]
-					if name := csiKeys[seq]; name != "" {
-						keys = append(keys, tuiKey{name: name})
-					}
-					continue
-				}
-				b = nil
-				continue
-			}
-			// Alt-<key> or a lone ESC followed by typing: treat as ESC.
-			keys = append(keys, tuiKey{name: "esc"})
-			b = b[1:]
-			continue
-		}
-		switch b[0] {
-		case '\r', '\n':
-			keys = append(keys, tuiKey{name: "enter"})
-		case 0x7f, 0x08:
-			keys = append(keys, tuiKey{name: "backspace"})
-		case '\t':
-			keys = append(keys, tuiKey{name: "tab"})
-		case 0x03:
-			keys = append(keys, tuiKey{name: "ctrl-c"})
-		case 0x15:
-			keys = append(keys, tuiKey{name: "ctrl-u"})
-		default:
-			if b[0] < 0x20 {
-				b = b[1:]
-				continue
-			}
-			r, size := decodeRune(b)
-			keys = append(keys, tuiKey{name: "rune", r: r})
-			b = b[size:]
-			continue
-		}
-		b = b[1:]
-	}
-	return keys
-}
-
-var csiKeys = map[string]string{
-	"A": "up", "B": "down", "C": "right", "D": "left", "H": "home", "F": "end",
-	"1~": "home", "4~": "end", "7~": "home", "8~": "end",
-	"5~": "pgup", "6~": "pgdn", "3~": "delete", "Z": "backtab",
-}
-
-func decodeRune(b []byte) (rune, int) {
-	r, size := utf8.DecodeRune(b)
-	if size == 0 {
-		size = 1
-	}
-	return r, size
-}
-
 func (a *tuiApp) handleKey(k tuiKey) {
+	if k.name == "mouse" {
+		a.mouse(k)
+		return
+	}
 	switch a.mode {
 	case modeHelp:
 		a.mode = modeList
@@ -454,7 +334,7 @@ func (a *tuiApp) handleKey(k tuiKey) {
 		case "rune":
 			a.filter += string(k.r)
 		}
-		a.clampSel()
+		a.refilter()
 		return
 	}
 
@@ -498,7 +378,7 @@ func (a *tuiApp) handleKey(k tuiKey) {
 	case "esc":
 		if a.filter != "" {
 			a.filter = ""
-			a.clampSel()
+			a.refilter()
 		}
 	case "ctrl-c":
 		a.quit = true
@@ -536,6 +416,9 @@ func (a *tuiApp) handleKey(k tuiKey) {
 			a.openFull(cur)
 		case ':':
 			a.openCommand(cur)
+		case '1', '2':
+			a.view = int(k.r - '1')
+			a.loadPreview()
 		case 'r':
 			a.refresh()
 			a.setFlash('i', "refreshed")
@@ -552,7 +435,7 @@ func (a *tuiApp) formKey(k tuiKey) {
 	fld := &f.fields[f.focus]
 	switch k.name {
 	case "esc", "ctrl-c":
-		a.mode, a.form = modeList, nil
+		a.mode, a.form = a.formReturnMode(), nil
 		a.setFlash('i', "cancelled")
 	case "tab", "down":
 		f.focus = (f.focus + 1) % len(f.fields)
@@ -573,7 +456,7 @@ func (a *tuiApp) formKey(k tuiKey) {
 		for i := range f.fields {
 			vals[i] = strings.TrimSpace(f.fields[i].value)
 		}
-		a.mode, a.form = modeList, nil
+		a.mode, a.form = a.formReturnMode(), nil
 		if msg := f.submit(vals); msg != "" {
 			f.err = msg
 			a.mode, a.form = modeForm, f
@@ -583,292 +466,15 @@ func (a *tuiApp) formKey(k tuiKey) {
 	}
 }
 
-// --- actions -----------------------------------------------------------
-
-// exec runs one pairmux subcommand in-process against socket and returns its
-// envelope.
-func (a *tuiApp) exec(socket string, args ...string) output.Envelope {
-	var buf bytes.Buffer
-	sub := &Ctx{Mux: a.c.layer(socket), Choice: a.c.Choice, JSON: true, StateDir: a.c.StateDir, Stdout: &buf}
-	sub.dispatch(args)
-	var e output.Envelope
-	line := bytes.TrimSpace(buf.Bytes())
-	if i := bytes.LastIndexByte(line, '\n'); i >= 0 {
-		line = line[i+1:]
+// formReturnMode is where closing a form lands: back in the reader the command
+// line was opened from (: in a reader), else the tree. Landing in the tree with
+// the reader still set would leave it drawn behind the next command form and
+// swallow its pending result.
+func (a *tuiApp) formReturnMode() tuiMode {
+	if a.viewer != nil {
+		return modeView
 	}
-	if err := json.Unmarshal(line, &e); err != nil {
-		e = output.Envelope{Error: &output.ErrInfo{Code: output.CodeInternal, Message: strings.TrimSpace(buf.String())}}
-	}
-	return e
-}
-
-func envErr(e output.Envelope) string {
-	if e.Error == nil {
-		return ""
-	}
-	msg := e.Error.Message
-	if e.Error.Hint != "" {
-		msg += " — " + e.Error.Hint
-	}
-	return msg
-}
-
-func (a *tuiApp) doAttach(n *treeNode) {
-	if n == nil {
-		a.setFlash('i', "nothing to attach to — press n to create a terminal")
-		return
-	}
-	if !n.Term.Alive {
-		a.setFlash('e', n.Path+" is dead — d deletes its journal, x deletes every dead one")
-		return
-	}
-	a.pendingAttach = n
-}
-
-// layerSocket maps a layer path ("" for this endpoint, "worker/sub" for the
-// layer sub drives) to its endpoint.
-func (a *tuiApp) layerSocket(path string) (string, error) {
-	socket := a.c.Mux.SocketName()
-	if path == "" {
-		return socket, nil
-	}
-	for _, seg := range strings.Split(strings.Trim(path, "/"), "/") {
-		if !state.ValidName(seg) {
-			return "", fmt.Errorf("invalid layer path %q", path)
-		}
-		socket = state.ChildSocket(socket, seg)
-	}
-	return socket, nil
-}
-
-// openNew asks for a new terminal. In the top layer by default; with child
-// set, in the layer the selected terminal drives — a sub-agent of it.
-func (a *tuiApp) openNew(cur *treeNode, child bool) {
-	layer := ""
-	if child {
-		if cur == nil {
-			a.setFlash('e', "select the terminal that should own the new one")
-			return
-		}
-		layer = cur.Path
-	}
-	wd, _ := os.Getwd()
-	title := "New terminal"
-	if layer != "" {
-		title = "New terminal under " + layer
-	}
-	a.form = &tuiForm{
-		title: title,
-		fields: []tuiField{
-			{label: "Name", hint: "blank = auto (t1, t2, …)"},
-			{label: "Command", hint: "blank = interactive shell; e.g. claude, codex, python3"},
-			{label: "Directory", value: wd},
-			{label: "Layer", value: layer, hint: "path of the owning terminal; blank = top"},
-		},
-		submit: func(v []string) string {
-			socket, err := a.layerSocket(v[3])
-			if err != nil {
-				return err.Error()
-			}
-			args := []string{"new"}
-			if v[0] != "" {
-				args = append(args, "--name", v[0])
-			}
-			if v[1] != "" {
-				args = append(args, "--cmd", v[1])
-			}
-			if v[2] != "" {
-				args = append(args, "--cwd", v[2])
-			}
-			a.setFlash('i', "creating…")
-			a.draw()
-			e := a.exec(socket, args...)
-			if msg := envErr(e); msg != "" {
-				a.flash = ""
-				return msg
-			}
-			path := e.Terminal
-			if v[3] != "" {
-				path = strings.Trim(v[3], "/") + "/" + e.Terminal
-				// make the new row visible
-				for p := strings.Trim(v[3], "/"); p != ""; {
-					delete(a.collapsed, p)
-					i := strings.LastIndex(p, "/")
-					if i < 0 {
-						break
-					}
-					p = p[:i]
-				}
-			}
-			a.refresh()
-			a.selectPath(path)
-			a.setFlash('o', "created "+path+" — ⏎ to attach")
-			return ""
-		},
-	}
-	a.mode = modeForm
-}
-
-func (a *tuiApp) descendants(n treeNode) int {
-	count := 0
-	for _, o := range a.nodes {
-		if strings.HasPrefix(o.Path, n.Path+"/") {
-			count++
-		}
-	}
-	return count
-}
-
-// doDelete kills a live terminal (keeping its journal) or deletes a dead
-// one's retained journal. Both ask first.
-func (a *tuiApp) doDelete(n *treeNode) {
-	if n == nil {
-		return
-	}
-	node := *n
-	below := a.descendants(node)
-	if node.Term.Alive {
-		msg := fmt.Sprintf("Kill %s?", node.Path)
-		if below > 0 {
-			msg = fmt.Sprintf("Kill %s and the %d terminal(s) below it?", node.Path, below)
-		}
-		if node.Status == core.StatusRunning || node.Status == core.StatusAwaitingInput {
-			msg += " It is " + string(node.Status) + "; unsaved work in it is lost."
-		}
-		a.ask("Kill terminal", msg+" The journal is kept (x deletes it later).", func() {
-			e := a.exec(node.Socket, "kill", node.Term.Name)
-			if m := envErr(e); m != "" {
-				a.setFlash('e', "kill: "+m)
-			} else {
-				a.setFlash('o', "killed "+node.Path)
-			}
-			a.refresh()
-		})
-		return
-	}
-	msg := fmt.Sprintf("Delete the retained journal of dead terminal %s? Its history cannot be recovered.", node.Path)
-	if node.Child != "" {
-		msg = fmt.Sprintf("%s is dead but still drives %d terminal(s). Tear them down and delete its journal?", node.Path, below)
-	}
-	a.ask("Delete terminal", msg, func() {
-		if node.Child != "" {
-			if m := envErr(a.exec(node.Socket, "kill", node.Term.Name)); m != "" {
-				a.setFlash('e', "kill: "+m)
-				a.refresh()
-				return
-			}
-		}
-		e := a.exec(node.Socket, "prune", node.Term.Name)
-		if m := envErr(e); m != "" {
-			a.setFlash('e', "delete: "+m)
-		} else {
-			a.setFlash('o', "deleted "+node.Path)
-		}
-		a.refresh()
-	})
-}
-
-// doPruneDead deletes the retained journals of every dead terminal in the
-// tree, one prune sweep per layer that has any.
-func (a *tuiApp) doPruneDead() {
-	var sockets []string
-	seen := map[string]bool{}
-	dead := 0
-	for _, n := range a.nodes {
-		if n.Status == core.StatusDead {
-			dead++
-			if !seen[n.Socket] {
-				seen[n.Socket] = true
-				sockets = append(sockets, n.Socket)
-			}
-		}
-	}
-	if dead == 0 {
-		a.setFlash('i', "no dead terminals to delete")
-		return
-	}
-	a.ask("Delete stale terminals",
-		fmt.Sprintf("Delete the retained journals of %d dead terminal(s) across %d layer(s)? Live terminals are not touched.", dead, len(sockets)),
-		func() {
-			var errs, report []string
-			for _, s := range sockets {
-				e := a.exec(s, "prune")
-				if m := envErr(e); m != "" {
-					errs = append(errs, m)
-					report = append(report, "layer "+s+": "+m, "")
-					continue
-				}
-				report = append(report, "layer "+s+":")
-				for _, l := range strings.Split(e.Output, "\n") {
-					report = append(report, "  "+l)
-				}
-				report = append(report, "")
-			}
-			a.refresh()
-			status := "exit 0"
-			if len(errs) > 0 {
-				status = "exit 1"
-				a.setFlash('e', "prune: "+strings.Join(errs, "; "))
-			} else {
-				a.setFlash('o', fmt.Sprintf("deleted %d dead terminal(s)", dead))
-			}
-			a.openViewer(&tuiViewer{title: "Prune dead terminals",
-				load: func() ([]string, string) { return report, status }}, false)
-		})
-}
-
-func (a *tuiApp) openNote(n *treeNode) {
-	if n == nil {
-		return
-	}
-	node := *n
-	a.form = &tuiForm{
-		title:  "Note for the agent driving " + node.Path,
-		fields: []tuiField{{label: "Message", hint: "the agent sees it in its next reply; never put secrets here"}},
-		submit: func(v []string) string {
-			if v[0] == "" {
-				a.setFlash('i', "empty note not sent")
-				return ""
-			}
-			if m := envErr(a.exec(node.Socket, "note", node.Term.Name, v[0])); m != "" {
-				return m
-			}
-			a.setFlash('o', "note left on "+node.Path)
-			a.refresh()
-			return ""
-		},
-	}
-	a.mode = modeForm
-}
-
-func (a *tuiApp) openSend(n *treeNode) {
-	if n == nil || !n.Term.Alive {
-		a.setFlash('e', "select a live terminal to send input to")
-		return
-	}
-	node := *n
-	a.form = &tuiForm{
-		title:  "Send a line to " + node.Path,
-		fields: []tuiField{{label: "Text", hint: "typed into the program, then Enter; for secrets attach instead (⏎)"}},
-		submit: func(v []string) string {
-			if m := envErr(a.exec(node.Socket, "send", node.Term.Name, "--text", v[0], "--enter")); m != "" {
-				return m
-			}
-			a.setFlash('o', "sent to "+node.Path)
-			a.refresh()
-			return ""
-		},
-	}
-	a.mode = modeForm
-}
-
-func (a *tuiApp) ask(title, msg string, yes func()) {
-	a.confirm = &tuiConfirm{title: title, msg: msg, yes: yes}
-	a.mode = modeConfirm
-}
-
-func (a *tuiApp) setFlash(kind byte, msg string) {
-	a.flash, a.flashKind, a.flashAt = msg, kind, time.Now()
+	return modeList
 }
 
 // --- model -------------------------------------------------------------
@@ -951,6 +557,15 @@ func (a *tuiApp) clampSel() {
 	}
 }
 
+// refilter reselects after the filter changed. The selection can land on
+// another terminal, or on nothing, so the preview is recaptured: otherwise it
+// would show the old terminal's screen under the new one's path until the next
+// refresh tick.
+func (a *tuiApp) refilter() {
+	a.clampSel()
+	a.loadPreview()
+}
+
 func (a *tuiApp) move(d int) {
 	vis := a.visible()
 	if len(vis) == 0 {
@@ -1013,491 +628,4 @@ func (a *tuiApp) loadPreview() {
 	if text != "" {
 		a.preview = strings.Split(text, "\n")
 	}
-}
-
-// --- drawing -----------------------------------------------------------
-
-type seg struct {
-	text  string
-	style string // SGR parameters, "" for plain
-}
-
-type tline []seg
-
-func (l tline) width() int {
-	w := 0
-	for _, s := range l {
-		w += strWidth(s.text)
-	}
-	return w
-}
-
-func strWidth(s string) int {
-	w := 0
-	for _, r := range s {
-		w += max(vt.RuneWidth(r), 0)
-	}
-	return w
-}
-
-// clip cuts s to at most w cells, ending in … when it had to cut.
-func clip(s string, w int) string {
-	if w <= 0 {
-		return ""
-	}
-	if strWidth(s) <= w {
-		return s
-	}
-	var b strings.Builder
-	used := 0
-	for _, r := range s {
-		rw := max(vt.RuneWidth(r), 0)
-		if used+rw > w-1 {
-			break
-		}
-		b.WriteRune(r)
-		used += rw
-	}
-	b.WriteString("…")
-	return b.String()
-}
-
-func pad(s string, w int) string {
-	s = clip(s, w)
-	if n := w - strWidth(s); n > 0 {
-		s += strings.Repeat(" ", n)
-	}
-	return s
-}
-
-// render writes l into exactly w cells, with fill as the style of padding.
-func (a *tuiApp) render(l tline, w int, fill string) string {
-	var b strings.Builder
-	used := 0
-	for _, s := range l {
-		if used >= w {
-			break
-		}
-		t := clip(s.text, w-used)
-		used += strWidth(t)
-		b.WriteString(a.sty(s.style, t))
-	}
-	if used < w {
-		b.WriteString(a.sty(fill, strings.Repeat(" ", w-used)))
-	}
-	return b.String()
-}
-
-func (a *tuiApp) sty(style, s string) string {
-	if a.noColor || style == "" || s == "" {
-		return s
-	}
-	return "\x1b[" + style + "m" + s + "\x1b[0m"
-}
-
-const (
-	stAccent  = "1;38;5;16;48;5;79"
-	stTitle   = "1"
-	stDim     = "38;5;245"
-	stSel     = "1;48;5;237"
-	stRunning = "38;5;78"
-	stAwait   = "1;38;5;220"
-	stIdle    = "38;5;111"
-	stDead    = "38;5;203"
-	stBorder  = "38;5;240"
-	stKey     = "1;38;5;79"
-	stOK      = "38;5;78"
-	stErr     = "1;38;5;203"
-	stTab     = "1;38;5;16;48;5;250"
-)
-
-func statusLook(s core.Status) (glyph, style, label string) {
-	switch s {
-	case core.StatusRunning:
-		return "●", stRunning, "running"
-	case core.StatusAwaitingInput:
-		return "◆", stAwait, "needs input"
-	case core.StatusIdle:
-		return "○", stIdle, "idle"
-	case core.StatusDead:
-		return "✕", stDead, "dead"
-	}
-	return "?", stDim, string(s)
-}
-
-func (a *tuiApp) listHeight() int { return max(1, a.bodyHeight()-1) }
-
-func (a *tuiApp) bodyHeight() int {
-	h := a.h - 3
-	if a.w < 110 {
-		h = (a.h - 3) * 55 / 100
-	}
-	return max(3, h)
-}
-
-func (a *tuiApp) draw() {
-	w, h := max(a.w, 40), max(a.h, 10)
-	lines := make([]string, 0, h)
-
-	// Header.
-	counts := map[core.Status]int{}
-	for _, n := range a.nodes {
-		counts[n.Status]++
-	}
-	hdr := tline{{" pairmux ", stAccent}, {"  " + a.c.Mux.SocketName() + " · " + a.c.Mux.Backend(), stDim}, {"   ", ""}}
-	for _, s := range []core.Status{core.StatusRunning, core.StatusAwaitingInput, core.StatusIdle, core.StatusDead} {
-		if counts[s] > 0 {
-			g, st, label := statusLook(s)
-			hdr = append(hdr, seg{g + " ", st}, seg{fmt.Sprintf("%d %s   ", counts[s], label), ""})
-		}
-	}
-	clock := time.Now().Format("15:04:05")
-	if gap := w - hdr.width() - strWidth(clock) - 1; gap > 0 {
-		hdr = append(hdr, seg{strings.Repeat(" ", gap), ""})
-	}
-	hdr = append(hdr, seg{clock + " ", stDim})
-	lines = append(lines, a.render(hdr, w, ""))
-
-	vis := a.visible()
-	wide := w >= 110
-	listW := w
-	if wide {
-		listW = w * 52 / 100
-	}
-	bodyH := h - 3
-	listH := bodyH
-	if !wide {
-		listH = bodyH * 55 / 100
-	}
-	if a.viewer != nil && (a.mode == modeView || a.mode == modeForm && a.form != nil && a.form.title == commandTitle) {
-		lines = append(lines, a.drawViewer(w, bodyH)...)
-	} else if listLines := a.drawList(vis, listW, listH); wide {
-		prevLines := a.drawPreview(w-listW-1, bodyH)
-		for i := 0; i < bodyH; i++ {
-			lines = append(lines, listLines[i]+a.sty(stBorder, "│")+prevLines[i])
-		}
-	} else {
-		lines = append(lines, listLines...)
-		lines = append(lines, a.drawPreview(w, bodyH-listH)...)
-	}
-
-	// Footer: flash or contextual hint, then keys.
-	var foot tline
-	if a.flash != "" && time.Since(a.flashAt) < 6*time.Second {
-		st := stDim
-		switch a.flashKind {
-		case 'o':
-			st = stOK
-		case 'e':
-			st = stErr
-		}
-		foot = tline{{" " + a.flash, st}}
-	} else if a.listErr != nil {
-		foot = tline{{" error listing terminals: " + a.listErr.Error(), stErr}}
-	} else if a.mode == modeView {
-		foot = tline{{" " + viewerHint(a.viewer), stDim}}
-	} else if a.sel < len(vis) && len(vis) > 0 {
-		foot = a.hintFor(vis[a.sel].node)
-	}
-	lines = append(lines, a.render(foot, w, ""))
-	if a.mode == modeView {
-		lines = append(lines, a.render(a.viewerKeyBar(), w, ""))
-	} else {
-		lines = append(lines, a.render(a.keyBar(), w, ""))
-	}
-
-	// Overlays.
-	switch a.mode {
-	case modeHelp:
-		a.overlay(lines, w, "Keys", helpLines())
-	case modeConfirm:
-		body := wrap(a.confirm.msg, min(64, w-8))
-		body = append(body, "", "y  yes        n / esc  no")
-		a.overlay(lines, w, a.confirm.title, body)
-	case modeForm:
-		a.overlayForm(lines, w)
-	}
-
-	var b strings.Builder
-	b.WriteString("\x1b[H")
-	for i, l := range lines {
-		if i >= h {
-			break
-		}
-		b.WriteString(l)
-		b.WriteString("\x1b[0m\x1b[K")
-		if i < h-1 {
-			b.WriteString("\r\n")
-		}
-	}
-	io.WriteString(a.out, b.String())
-}
-
-func (a *tuiApp) drawList(vis []visRow, w, h int) []string {
-	out := make([]string, 0, h)
-	title := " Terminals"
-	if a.filter != "" || a.mode == modeFilter {
-		cursor := ""
-		if a.mode == modeFilter {
-			cursor = "█"
-		}
-		title = " Filter: " + a.filter + cursor
-	}
-	out = append(out, a.render(tline{{title, stTitle}, {fmt.Sprintf("  %d", len(vis)), stDim}}, w, ""))
-	rows := h - 1
-	if a.sel < a.offset {
-		a.offset = a.sel
-	}
-	if a.sel >= a.offset+rows {
-		a.offset = a.sel - rows + 1
-	}
-	a.offset = max(0, min(a.offset, max(0, len(vis)-rows)))
-
-	if len(vis) == 0 {
-		msg := "  no terminals yet — press n to create one"
-		if a.filter != "" {
-			msg = "  nothing matches the filter (esc clears it)"
-		}
-		out = append(out, a.render(tline{{msg, stDim}}, w, ""))
-	}
-	nameW := 12
-	for _, r := range vis {
-		shown := r.node.Term.Name
-		if a.filter != "" {
-			shown = r.node.Path
-		}
-		nameW = max(nameW, strWidth(r.prefix)+4+strWidth(shown))
-	}
-	nameW = min(nameW, max(16, w/2))
-	for i := a.offset; i < len(vis) && len(out) < h; i++ {
-		r := vis[i]
-		n := r.node
-		g, st, label := statusLook(n.Status)
-		fold := " "
-		if n.Child != "" {
-			fold = "▾"
-			if a.collapsed[n.Path] {
-				fold = "▸"
-			}
-		}
-		name := n.Term.Name
-		if a.filter != "" {
-			name = n.Path
-		}
-		selected := i == a.sel && len(vis) > 0
-		mark := " "
-		if selected {
-			mark = "▌"
-		}
-		age := "-"
-		if !n.LastMod.IsZero() {
-			age = humanizeAge(time.Since(n.LastMod))
-		}
-		detail := n.Pending
-		var badges []string
-		if n.Notes > 0 {
-			badges = append(badges, fmt.Sprintf("note:%d", n.Notes))
-		}
-		if n.Child != "" && a.collapsed[n.Path] {
-			badges = append(badges, fmt.Sprintf("+%d", a.descendants(n)))
-		}
-		l := tline{
-			{mark, stKey},
-			{r.prefix, stBorder},
-			{fold + " ", stDim},
-			{g + " ", st},
-			{pad(name, max(1, nameW-strWidth(r.prefix)-4)) + "  ", ""},
-			{pad(label, 13), st},
-			{pad(age, 6), stDim},
-		}
-		if len(badges) > 0 {
-			l = append(l, seg{strings.Join(badges, " ") + " ", stAwait})
-		}
-		l = append(l, seg{detail, stDim})
-		fill := ""
-		if selected {
-			for k := range l {
-				if l[k].style == "" {
-					l[k].style = stSel
-				} else {
-					l[k].style += ";48;5;237"
-				}
-			}
-			fill = stSel
-		}
-		out = append(out, a.render(l, w, fill))
-	}
-	for len(out) < h {
-		out = append(out, strings.Repeat(" ", w))
-	}
-	return out
-}
-
-func (a *tuiApp) drawPreview(w, h int) []string {
-	out := make([]string, 0, h)
-	if h <= 0 {
-		return out
-	}
-	vis := a.visible()
-	var title tline
-	for i, name := range viewNames {
-		st := stDim
-		if i == a.view {
-			st = stTab
-		}
-		title = append(title, seg{" " + name + " ", st})
-	}
-	if a.sel < len(vis) && len(vis) > 0 {
-		n := vis[a.sel].node
-		_, st, label := statusLook(n.Status)
-		title = append(title, seg{"  " + n.Path + "  ", ""}, seg{label, st})
-	}
-	out = append(out, a.render(title, w, ""))
-	if a.previewMeta != "" && h > 2 {
-		out = append(out, a.render(tline{{" " + a.previewMeta, stDim}}, w, ""))
-	}
-	room := h - len(out)
-	src := a.preview
-	if len(src) > room {
-		src = src[len(src)-room:]
-	}
-	for _, l := range src {
-		out = append(out, a.render(tline{{" " + strings.ReplaceAll(l, "\t", "    "), ""}}, w, ""))
-	}
-	if len(a.preview) == 0 && room > 0 && len(vis) > 0 {
-		out = append(out, a.render(tline{{" (no output yet)", stDim}}, w, ""))
-	}
-	for len(out) < h {
-		out = append(out, strings.Repeat(" ", w))
-	}
-	return out
-}
-
-func (a *tuiApp) hintFor(n treeNode) tline {
-	switch n.Status {
-	case core.StatusAwaitingInput:
-		return tline{{" ◆ " + n.Path + " is waiting for input — ⏎ attach to answer it, or i to send a line", stAwait}}
-	case core.StatusDead:
-		return tline{{" ✕ " + n.Path + " is dead — d deletes its journal, x deletes every dead terminal", stDead}}
-	}
-	if n.Notes > 0 {
-		return tline{{fmt.Sprintf(" %s has %d note(s) its agent has not read yet", n.Path, n.Notes), stDim}}
-	}
-	if n.Child != "" {
-		return tline{{" " + n.Path + " drives its own terminals — space folds them, c creates one under it", stDim}}
-	}
-	if a.c.Mux.Backend() == mux.BackendTmux && insideTmux() {
-		return tline{{" ⏎ attaches as a nested tmux inside this one — detach with Ctrl-b Ctrl-b d", stDim}}
-	}
-	return nil
-}
-
-func (a *tuiApp) keyBar() tline {
-	keys := [][2]string{{"⏎", "attach"}, {"n", "new"}, {"c", "new under"}, {"d", "kill/delete"}, {"i", "send"},
-		{"m", "note"}, {"tab", "view"}, {"o", "open"}, {":", "command"}, {"?", "help"}, {"q", "quit"}}
-	var l tline
-	for _, k := range keys {
-		l = append(l, seg{" " + k[0], stKey}, seg{" " + k[1] + " ", stDim})
-	}
-	return l
-}
-
-func helpLines() []string {
-	return []string{
-		"↑ ↓  j k        move            PgUp PgDn g G   jump",
-		"⏎  a            attach (detach: Ctrl-b d)",
-		"n               new terminal in the top layer",
-		"c               new terminal under the selected one",
-		"d               kill a live terminal / delete a dead one",
-		"x               delete every dead terminal's journal",
-		"m               leave a note for the terminal's agent",
-		"i               send a line of input",
-		"space ← →       fold / unfold a terminal's sub-terminals",
-		"/               filter by path, command or status",
-		"tab             preview: screen ⇄ activity (commands, exit codes, notes)",
-		"o               open it full screen: whole output history / activity",
-		":               run any pairmux command; {} = the selected path",
-		"r               refresh now            q  Ctrl-C  quit",
-		"",
-		"Agents below may only drive their own subtree; the top is yours.",
-	}
-}
-
-// overlay draws a centred box over lines.
-func (a *tuiApp) overlay(lines []string, w int, title string, body []string) {
-	inner := len(title) + 4
-	for _, b := range body {
-		inner = max(inner, strWidth(b)+2)
-	}
-	inner = min(inner, w-4)
-	top := max(1, (len(lines)-len(body)-2)/2)
-	left := max(0, (w-inner-2)/2)
-	put := func(row int, l tline) {
-		if row < 0 || row >= len(lines) {
-			return
-		}
-		lines[row] = strings.Repeat(" ", left) + a.render(l, inner+2, "") + strings.Repeat(" ", max(0, w-left-inner-2))
-	}
-	t := " " + title + " "
-	put(top, tline{{"┌─", stBorder}, {t, stTitle}, {strings.Repeat("─", max(0, inner-strWidth(t)-1)) + "┐", stBorder}})
-	for i, b := range body {
-		put(top+1+i, tline{{"│ ", stBorder}, {pad(b, inner-2), ""}, {" │", stBorder}})
-	}
-	put(top+1+len(body), tline{{"└" + strings.Repeat("─", inner) + "┘", stBorder}})
-}
-
-func (a *tuiApp) overlayForm(lines []string, w int) {
-	f := a.form
-	inner := min(72, w-6)
-	var body []string
-	for i, fld := range f.fields {
-		cursor := ""
-		marker := "  "
-		if i == f.focus {
-			cursor, marker = "█", "▸ "
-		}
-		v := fld.value + cursor
-		if fw := inner - 14; strWidth(v) > fw {
-			r := []rune(v)
-			for strWidth(string(r)) > fw-1 {
-				r = r[1:]
-			}
-			v = "…" + string(r)
-		}
-		body = append(body, marker+pad(fld.label, 10)+" "+v)
-		if i == f.focus && fld.hint != "" {
-			body = append(body, "             "+fld.hint)
-		}
-	}
-	if f.err != "" {
-		body = append(body, "")
-		for _, l := range wrap("✕ "+f.err, inner-2) {
-			body = append(body, l)
-		}
-	}
-	body = append(body, "", "tab next field   ⏎ submit   esc cancel")
-	if len(body) > 0 {
-		body[0] = pad(body[0], inner-2) // the form keeps its width as values change
-	}
-	a.overlay(lines, w, f.title, body)
-}
-
-func wrap(s string, w int) []string {
-	var out []string
-	var cur string
-	for _, word := range strings.Fields(s) {
-		if cur != "" && strWidth(cur)+1+strWidth(word) > w {
-			out = append(out, cur)
-			cur = word
-			continue
-		}
-		if cur != "" {
-			cur += " "
-		}
-		cur += word
-	}
-	if cur != "" {
-		out = append(out, cur)
-	}
-	return out
 }

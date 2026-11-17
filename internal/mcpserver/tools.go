@@ -162,6 +162,21 @@ func tools() []tool {
 		},
 		{
 			definition: toolDefinition{
+				Name:        "pairmux_events",
+				Title:       "Wait for a fleet change",
+				Description: "Block until a terminal in your fleet appears, disappears, or changes state (running, idle, awaiting-input, dead; also its command, lock, unread notes or child layer), then return what changed and what to do about it. With tree it watches every layer below too — the agents your terminals drive and theirs. Use it to supervise several workers at once instead of polling ls or waiting on each one. Output activity alone is not a change.",
+				InputSchema: objectSchema(map[string]any{
+					"tree":    booleanProperty("Watch the terminals of every layer below as well, addressed by path."),
+					"status":  stringProperty("Only report changes that leave a terminal in one of these states, comma-separated: running, idle, awaiting-input, dead. For example awaiting-input,dead."),
+					"max":     integerProperty("Return after this many changes instead of the first.", 1),
+					"timeout": stringProperty("Overall deadline as a Go duration, for example 10m. Defaults to 10m."),
+				}),
+				Annotations: annotations{ReadOnlyHint: true, OpenWorldHint: true},
+			},
+			build: buildEvents,
+		},
+		{
+			definition: toolDefinition{
 				Name:        "pairmux_kill",
 				Title:       "Kill pairmux terminal",
 				Description: "Kill one pairmux terminal, or every managed terminal on the configured socket. Journals are retained. Killing active programs can lose in-memory work and requires user approval.",
@@ -435,6 +450,34 @@ func buildNote(a arguments) ([]string, error) {
 		return nil, err
 	}
 	return []string{"note", terminal, "--", text}, nil
+}
+
+func buildEvents(a arguments) ([]string, error) {
+	if err := a.allow("tree", "status", "max", "timeout"); err != nil {
+		return nil, err
+	}
+	argv := []string{"events", "--wait"}
+	if tree, _, err := a.optionalBool("tree"); err != nil {
+		return nil, err
+	} else if tree {
+		argv = append(argv, "--tree")
+	}
+	if status, present, err := a.optionalString("status"); err != nil {
+		return nil, err
+	} else if present {
+		argv = append(argv, "--status", status)
+	}
+	if n, present, err := a.optionalInt("max", 1); err != nil {
+		return nil, err
+	} else if present {
+		argv = append(argv, "--max", strconv.Itoa(n))
+	}
+	if timeout, present, err := a.optionalString("timeout"); err != nil {
+		return nil, err
+	} else if present {
+		argv = append(argv, "--timeout", timeout)
+	}
+	return argv, nil
 }
 
 func buildLs(a arguments) ([]string, error) {

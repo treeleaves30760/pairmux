@@ -56,8 +56,8 @@ func (c *Ctx) terminalDir(name string) string {
 	return filepath.Join(c.namespaceDir(), name)
 }
 
-// liveChildLayer returns the endpoint of the nested pairmux layer a terminal is
-// driving, or "" when it is driving none.
+// liveChildLayerOf returns the endpoint of the nested pairmux layer a terminal
+// on socket is driving, or "" when it is driving none.
 //
 // The cheap half comes first on purpose: a terminal that has never created a
 // child has no namespace directory for one, which is an os.Stat rather than a
@@ -65,11 +65,6 @@ func (c *Ctx) terminalDir(name string) string {
 // Only a terminal that did create children pays for the liveness check, which
 // is what distinguishes a layer still running from the directory left behind by
 // one that has been killed.
-func (c *Ctx) liveChildLayer(name string) string {
-	return c.liveChildLayerOf(c.Mux.SocketName(), name)
-}
-
-// liveChildLayerOf is liveChildLayer for a terminal on any endpoint.
 func (c *Ctx) liveChildLayerOf(socket, name string) string {
 	child := state.ChildSocket(socket, name)
 	if !isDir(state.SocketDirFor(c.StateDir, c.Mux.Backend(), child)) {
