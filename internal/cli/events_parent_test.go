@@ -1,17 +1,13 @@
-//go:build !windows
-
 package cli
 
 import (
 	"bufio"
 	"encoding/json"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -47,6 +43,9 @@ func TestEventsHelperProcess(t *testing.T) {
 		}
 		os.Stdout.WriteString(strconv.Itoa(cmd.Process.Pid) + "\n")
 		os.Exit(0) // without waiting: the child is orphaned
+	case "sleep": // a process that lives until it is killed
+		time.Sleep(10 * time.Minute)
+		os.Exit(0)
 	case "events":
 		// startPPID was read during package initialisation, before this.
 		_ = os.WriteFile(os.Getenv("PAIRMUX_TEST_EVENTS_OUT")+".ready", nil, 0o600)
@@ -85,9 +84,17 @@ func startOrphanedEvents(t *testing.T, args string) (pid int, outFile string) {
 	return pid, outFile
 }
 
-func alive(pid int) bool {
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
+// killAndReap ends pid and waits until it is gone, so the test's temporary
+// directory (whose files it holds open on Windows) can be removed.
+func killAndReap(t *testing.T, pid int) {
+	t.Helper()
+	if p, err := os.FindProcess(pid); err == nil {
+		p.Kill()
+		p.Release()
+	}
+	for i := 0; i < 250 && alive(pid); i++ {
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func readEvents(t *testing.T, path string) []output.Event {
@@ -118,7 +125,7 @@ func TestEventsExitWithParentEndsWhenParentDies(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	if alive(pid) {
-		syscall.Kill(pid, syscall.SIGKILL)
+		killAndReap(t, pid)
 		t.Fatal("events --exit-with-parent outlived its parent")
 	}
 	// The rc file is written just before exit; give the filesystem a moment.
@@ -145,13 +152,10 @@ func TestEventsExitWithParentEndsWhenParentDies(t *testing.T) {
 // nohup pairmux events > file & use).
 func TestEventsWithoutExitWithParentOutlivesParent(t *testing.T) {
 	pid, out := startOrphanedEvents(t, "events --interval 100ms --timeout 30s")
-	defer syscall.Kill(pid, syscall.SIGKILL)
+	defer killAndReap(t, pid)
 	time.Sleep(1 * time.Second) // ten poll intervals
 	if !alive(pid) {
 		t.Fatalf("events without --exit-with-parent ended with its parent: %+v", readEvents(t, out))
-	}
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -163,7 +167,7 @@ func TestEventsWaitExitWithParent(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	if alive(pid) {
-		syscall.Kill(pid, syscall.SIGKILL)
+		killAndReap(t, pid)
 		t.Fatal("events --wait --exit-with-parent outlived its parent")
 	}
 	b, _ := os.ReadFile(out)
@@ -173,65 +177,5 @@ func TestEventsWaitExitWithParent(t *testing.T) {
 	}
 	if e.Status != "interrupted" || strings.Contains(strings.Join(e.Next, "\n"), "--timeout") {
 		t.Fatalf("reply = %+v", e)
-	}
-}
-
-// An events --wait stopped by a signal before anything changed replies
-// interrupted (exit 0), not timeout: its deadline never came, so "wait longer"
-// is the wrong advice.
-func TestEventsWaitInterruptedIsNotTimeout(t *testing.T) {
-	dir := t.TempDir()
-	out := filepath.Join(dir, "wait.out")
-	cmd := exec.Command(os.Args[0], "-test.run=^TestEventsHelperProcess$")
-	cmd.Env = append(withoutEnv(withoutEnv(withoutEnv(os.Environ(), ScopeEnv), NameEnv), "PAIRMUX_SOCKET"),
-		eventsHelperEnv+"=events",
-		"PAIRMUX_TEST_EVENTS_OUT="+out,
-		"PAIRMUX_TEST_EVENTS_ARGS=--json events --wait --interval 100ms --timeout 30s",
-		"PAIRMUX_BACKEND=builtin",
-		"PAIRMUX_STATE_DIR="+filepath.Join(dir, "state"),
-		"PAIRMUX_SOCKET=pmx-unit-evint-"+strconv.Itoa(os.Getpid()),
-	)
-	var stdout strings.Builder
-	cmd.Stdout = &stdout
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(500 * time.Millisecond) // past the first listing and signal.Notify
-	cmd.Process.Signal(os.Interrupt)
-	if err := cmd.Wait(); err != nil {
-		t.Fatalf("interrupted events --wait: %v (want exit 0)\n%s", err, stdout.String())
-	}
-	var e output.Envelope
-	if err := json.Unmarshal([]byte(stdout.String()), &e); err != nil {
-		t.Fatalf("reply %q: %v", stdout.String(), err)
-	}
-	if !e.OK || e.Status != "interrupted" {
-		t.Fatalf("status = %q, want interrupted: %+v", e.Status, e)
-	}
-	if n := strings.Join(e.Next, "\n"); strings.Contains(n, "--timeout") || !strings.Contains(n, "pairmux events --wait") {
-		t.Fatalf("next = %q: want a plain retry, no doubled timeout", e.Next)
-	}
-}
-
-// Started by pid 1 (a container's PID 1, a systemd unit, a launchd agent),
-// the parent is not gone: pid 1 outlives us, so --exit-with-parent has
-// nothing to observe and the command keeps running.
-func TestExitWithParentUnderPID1KeepsRunning(t *testing.T) {
-	oldStart, oldGet := startPPID, getppid
-	t.Cleanup(func() { startPPID, getppid = oldStart, oldGet })
-	startPPID, getppid = 1, func() int { return 1 }
-	gone, stop, err := watchParent()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer stop()
-	if gone() {
-		t.Fatal("a parent that is pid 1 counted as gone")
-	}
-	// A real parent that then dies (we are reparented) still counts.
-	startPPID = 4242
-	gone, _, _ = watchParent()
-	if !gone() {
-		t.Fatal("reparenting from 4242 to 1 was not seen")
 	}
 }

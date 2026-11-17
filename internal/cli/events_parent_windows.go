@@ -22,7 +22,11 @@ const (
 // time is checked against ours so a parent that died — and whose pid was
 // reused — before the handle was opened counts as already gone.
 func watchParent() (gone func() bool, stop func(), err error) {
-	ppid := os.Getppid()
+	return watchPid(os.Getppid())
+}
+
+// watchPid is watchParent for the process ppid.
+func watchPid(ppid int) (gone func() bool, stop func(), err error) {
 	h, err := syscall.OpenProcess(processQueryLimitedInformation|processSynchronize, false, uint32(ppid))
 	if err != nil {
 		if errors.Is(err, errorInvalidParameter) { // no such process: already gone
