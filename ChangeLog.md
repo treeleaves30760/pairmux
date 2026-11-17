@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-17
+
+### Added
+
+- **`pairmux tui`**, an interactive session manager for humans: the whole layer tree with live
+  status, a preview of the selected terminal's screen, and single keys to attach (returning to the
+  manager on detach), create a terminal at the top or under the selected one, kill a live terminal,
+  delete a dead one's journal or every dead terminal's journal, leave a note, send a line, fold
+  subtrees and filter. Destructive keys ask first; every action runs the same subcommand an agent
+  would. Not available on Windows yet.
+- **`pairmux ls` opens the session manager for people.** A bare `ls` typed at an interactive
+  terminal opens `tui`; any flag (new `--plain`), `--json`, piped or captured output, a caller inside
+  a pairmux terminal, or an agent CLI's tool shell (`CLAUDECODE`, `CODEX_SANDBOX`, `GEMINI_CLI`,
+  `OPENCODE`) still prints the listing, and `PAIRMUX_NO_TUI=1` turns the switch off. `list` is a new
+  alias for `ls`.
+- **Readable output inside the TUI:** `tab` switches the preview between the screen and an Activity
+  view (commands with exit codes and durations, notes and whether the agent has seen them); `o` opens
+  the full output history or activity in a scrollable reader; `x` shows what prune removed; and `:`
+  runs any pairmux command in the background (`{}` = the selected path) and shows its output there.
+- **Agent hierarchy.** Every terminal now carries `PAIRMUX_SCOPE` (its own child layer) and
+  `PAIRMUX_OWNER_SOCKET`. A process with a scope may address that layer and the layers below it;
+  any other endpoint fails with the new `E_SCOPE`, so control flows strictly down and nothing below
+  can drive its owner, a sibling, or the human's top layer. It is a guardrail for cooperating agents,
+  not a security boundary.
+- **Terminal paths:** every command that takes a terminal name accepts `worker/tests` — terminal
+  `tests` in the layer `worker` drives, at any depth. Replies and their `next` commands use the path.
+  `new --name worker/lint` creates directly in that layer.
+- `ls --tree` (alias `-r`) lists every live layer below with a `path` per row; plain `ls` points at it
+  when a terminal drives a layer.
+- `pairmux report <text...>`: from inside a terminal, note that terminal in the layer that owns it —
+  the one upward channel. The older `--socket <owner> note <own name>` form remains allowed.
+- MCP: `pairmux_ls` takes `tree`, a new `pairmux_report` tool, and terminal arguments accept paths.
+
+### Changed
+
+- Pruning a dead terminal also reclaims the retained journals of the layers it used to drive once
+  their servers are gone, which no listing could reach before. Layers still running are untouched.
+
 ## [1.1.0] - 2026-10-23
 
 ### Security
@@ -677,7 +715,8 @@ Codex terminals and fixing what broke.
   `E_TMUX`, `E_INTERNAL`).
 
 [#7]: https://github.com/treeleaves30760/pairmux/issues/7
-[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/treeleaves30760/pairmux/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/treeleaves30760/pairmux/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/treeleaves30760/pairmux/compare/v0.6.0...v1.0.0
 [0.6.0]: https://github.com/treeleaves30760/pairmux/compare/v0.5.3...v0.6.0
