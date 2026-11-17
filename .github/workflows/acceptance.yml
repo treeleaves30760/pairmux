@@ -157,6 +157,10 @@ jobs:
             printf 'tmux absent on PATH before cask installation\n' >> acceptance-logs/tmux-before.txt
           fi
           brew tap treeleaves30760/pairmux 2>&1 | tee acceptance-logs/tap.txt
+          # Homebrew 7+ refuses casks from third-party taps until they are trusted.
+          if brew trust --help >/dev/null 2>&1; then
+            brew trust --tap treeleaves30760/pairmux 2>&1 | tee -a acceptance-logs/tap.txt
+          fi
           tap_dir=$(brew --repository treeleaves30760/pairmux)
           git -C "$tap_dir" rev-parse HEAD > acceptance-logs/tap-commit.txt
           printf 'tap=https://github.com/treeleaves30760/homebrew-pairmux\n' > acceptance-logs/brew-source.txt

@@ -174,6 +174,8 @@ The tap cask installs pairmux **and its tmux dependency** in one command, and st
 quarantine attribute so the binary runs without a Gatekeeper prompt:
 
 ```bash
+brew tap treeleaves30760/pairmux
+brew trust --tap treeleaves30760/pairmux   # Homebrew 7+ loads third-party casks only from trusted taps
 brew install --cask treeleaves30760/pairmux/pairmux
 ```
 
