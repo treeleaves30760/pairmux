@@ -37,14 +37,18 @@ func startSleeper(t *testing.T) *exec.Cmd {
 	return cmd
 }
 
-// A live process is watched until it exits, and then counts as gone.
-func TestWatchPidSeesAProcessExit(t *testing.T) {
+// A live process is watched until it exits, and then counts as gone. A child
+// of the test is necessarily newer than the test, which watchPid's pid-reuse
+// guard rejects (see TestParentNewerGuardsAgainstPidReuse), so this drives the
+// handle check that follows the guard directly.
+func TestHandleExitedSeesAProcessExit(t *testing.T) {
 	cmd := startSleeper(t)
-	gone, stop, err := watchPid(cmd.Process.Pid)
+	h, err := syscall.OpenProcess(processQueryLimitedInformation|processSynchronize, false, uint32(cmd.Process.Pid))
 	if err != nil {
-		t.Fatalf("watchPid: %v", err)
+		t.Fatalf("OpenProcess: %v", err)
 	}
-	defer stop()
+	defer syscall.CloseHandle(h)
+	gone := handleExited(h)
 	if gone() {
 		t.Fatal("a running process counted as gone")
 	}

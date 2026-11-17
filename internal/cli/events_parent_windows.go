@@ -38,11 +38,15 @@ func watchPid(ppid int) (gone func() bool, stop func(), err error) {
 	if parentNewer(h) {
 		return func() bool { return true }, stop, nil
 	}
-	gone = func() bool {
+	return handleExited(h), stop, nil
+}
+
+// handleExited reports, on each call, whether the process behind h has exited.
+func handleExited(h syscall.Handle) func() bool {
+	return func() bool {
 		ev, err := syscall.WaitForSingleObject(h, 0)
 		return err == nil && ev == syscall.WAIT_OBJECT_0
 	}
-	return gone, stop, nil
 }
 
 // parentNewer reports whether the process behind h was created after this one,
