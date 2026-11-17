@@ -132,7 +132,7 @@ pairmux send repl --text "exit()" --enter
 
 A `--cmd` terminal is a program, even with `mode:"sentinel"`: `run` and `wait --done` return
 `E_BAD_ARGS`. Its exit is `dead`. Idle waits can surface inferred prompts, not guaranteed REPL-turn
-completion; use an explicit owning-socket note for a reliable protocol boundary (see collaboration).
+completion; have the program run `pairmux report` for a reliable protocol boundary (see collaboration).
 Pattern waits match only future output: inspect startup readiness before waiting for a later event.
 
 If the REPL needs setup performed by an existing shell, start a shell terminal first and use `run`.

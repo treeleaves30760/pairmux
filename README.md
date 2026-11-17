@@ -547,6 +547,21 @@ handoff avoids routing input through the agent-facing `pairmux send` command, bu
 guarantee how another application echoes, stores, or logs its input. Never type a real secret into a
 demo, and never ask an agent to guess one.
 
+## Agent hierarchies and the TUI
+
+An agent in a pairmux terminal can open its own terminals, which land one layer down — so a lead
+agent can run workers, and workers their own sub-agents. Address any of them by path from where you
+stand (`pairmux peek api/tests`), list the whole subtree with `pairmux ls --tree`, and let a
+sub-agent tell its creator a turn is done with `pairmux report "..."`. Control flows strictly down:
+every terminal carries a scope, so nothing below can drive its owner, a sibling, or the human's top
+layer (`E_SCOPE`).
+
+For humans, `pairmux ls` (or `list`, or `tui`) at an interactive terminal opens the session
+manager: the whole tree with live status, a Screen/Activity preview, and single keys to attach,
+create (at the top or under a selected agent), kill, delete stale terminals, note and send. Output
+you need to read stays inside it: `o` opens a terminal's full history, and `:` runs any pairmux
+command and shows its result. Agents, pipes and `--json` still get the listing. See [Agent hierarchy](https://pairmux-docs.treeleaves30760.com/guides/agent-hierarchy).
+
 ## The `pairmux.v1` envelope
 
 Ordinary non-interactive command replies have a friendly text form by default. Add `--json`

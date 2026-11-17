@@ -456,3 +456,47 @@ func ChildSocket(parent, name string) string {
 	}
 	return head + suffix
 }
+
+// maxLayerDepth bounds every walk down the layer tree. Endpoint names strictly
+// lengthen with depth (ChildSocket), so a cycle is not reachable; the cap is
+// there so a corrupted state tree cannot turn a walk into a runaway.
+const maxLayerDepth = 16
+
+// LayerNames returns the names of terminals that have ever been created on an
+// endpoint and still have retained state there, live or dead. It reads the
+// filesystem only — no multiplexer call — which is what lets IsDescendantLayer
+// run on every invocation of a scoped process at the cost of a few ReadDirs.
+func LayerNames(root, backend, socket string) []string {
+	return stateDirsAt(SocketDirFor(root, backend, socket), socket)
+}
+
+// IsDescendantLayer reports whether target is ancestor itself or an endpoint
+// below it: the layer of one of ancestor's terminals, of one of theirs, and so
+// on. Lineage is structural — ChildSocket(layer, name) for every terminal a
+// layer has had — so it needs no parent pointers on disk and cannot be forged by
+// writing one. A layer that has never had a terminal is still recognised one
+// level down, so a coordinator may create the first terminal in a worker's
+// layer before the worker has.
+func IsDescendantLayer(root, backend, ancestor, target string) bool {
+	ancestor, target = normalizedSocket(ancestor), normalizedSocket(target)
+	if ancestor == target {
+		return true
+	}
+	frontier := []string{ancestor}
+	for depth := 0; depth < maxLayerDepth && len(frontier) > 0; depth++ {
+		var next []string
+		for _, layer := range frontier {
+			for _, name := range LayerNames(root, backend, layer) {
+				child := ChildSocket(layer, name)
+				if child == target {
+					return true
+				}
+				if isDir(SocketDirFor(root, backend, child)) {
+					next = append(next, child)
+				}
+			}
+		}
+		frontier = next
+	}
+	return false
+}

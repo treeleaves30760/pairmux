@@ -126,11 +126,17 @@ journal secrecy. Never put credentials in notes. See [collaboration.md](collabor
 
 ## A note from inside a pane says E_NO_TERMINAL or wakes the wrong waiter
 
-`PAIRMUX_SOCKET` inside the pane is its child endpoint, not its owner. Have the creator supply the
-owning endpoint and terminal name explicitly: a worker owned by `team` calls
-`pairmux --socket team note worker "turn complete"`; its coordinator waits with
-`pairmux --socket team wait worker --note`. Do not parse a parent socket from the child name or
-invent an environment variable. See [the runnable recipe](collaboration.md#notes-from-inside-a-pane-owning-socket-recipe).
+`PAIRMUX_SOCKET` inside the pane is its child layer, not its owner. Use `pairmux report "turn complete"`,
+which writes to the pane's own row in the owner's layer; its coordinator waits with
+`pairmux wait worker --note`. See [the runnable recipe](collaboration.md#reporting-from-inside-a-pane).
+
+## E_SCOPE — a layer outside your scope
+
+You run inside a pairmux terminal and addressed a layer above or beside your own (the top, your
+owner, a sibling) — typically a `--socket` copied from a hint or log. That is refused by design:
+control flows down only. Drive your own layer and below (`pairmux ls --tree` shows them), and ask
+your owner for anything else with `pairmux report "..."`. Do not unset `PAIRMUX_SCOPE` or change
+`PAIRMUX_SOCKET` to get around it. See [hierarchy.md](hierarchy.md).
 
 ## E_TMUX — the terminal backend failed
 
@@ -203,8 +209,8 @@ shows total retained bytes and the largest terminals.
 ## Sentinel mode / `--cmd` terminals
 
 A terminal created with `--cmd` reports `mode:"sentinel"` but is a **program**, not a shell:
-`run` and `wait --done` return `E_BAD_ARGS`. Use `send`/`peek`, `--idle`, future `--pattern`, or explicit
-owning-socket `--note`. Its exit is `dead`, not `done`.
+`run` and `wait --done` return `E_BAD_ARGS`. Use `send`/`peek`, `--idle`, future `--pattern`, or a
+`--note` the program leaves with `pairmux report`. Its exit is `dead`, not `done`.
 
 An unknown interactive **shell**, or a shell whose OSC 133 probe failed, can also report `sentinel`.
 There, injected markers still support `run`/`--done`: POSIX-like shells carry `$?`, Fish uses `$status`,

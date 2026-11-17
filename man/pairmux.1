@@ -99,8 +99,29 @@ inclusive; use
 .I A:end
 to continue through the final shaped line.
 .TP
-.B ls
+.BR ls " [\fB\-\-tree\fR] [\fB\-\-plain\fR]"
 List managed terminals with their status, current command, and last activity.
+.B list
+is an alias. A bare
+.B ls
+typed by a person at an interactive terminal opens
+.B tui
+instead; any flag,
+.BR \-\-json ,
+captured output, or a caller inside a terminal or an agent's tool shell
+prints the listing.
+With
+.B \-\-tree
+(alias
+.BR \-r ),
+also list every live layer below, each row carrying the
+.I path
+that addresses it.
+.TP
+.BR report " \fITEXT\fR.\|.\|."
+From inside a pairmux terminal, leave a note on that terminal in the layer that
+owns it. It is the one command a scoped process may aim above its own layer; see
+.BR "AGENT HIERARCHY" .
 .TP
 .BR kill " \fINAME\fR | \fB\-\-all\fR"
 Kill one or all terminals while keeping their journals on disk.
@@ -139,6 +160,33 @@ if the program exits instead, it prints the exit message.
 .TP
 .BR watch " [\fB\-\-interval\fR \fIDUR\fR]"
 Show a live dashboard of all terminals; Ctrl\-C quits.
+.TP
+.BR tui " [\fB\-\-interval\fR \fIDUR\fR]"
+Interactive session manager: the layer tree with live status and a preview of
+the selected terminal. Enter attaches and returns to the manager on detach;
+.B n
+creates a terminal,
+.B c
+creates one under the selected terminal,
+.B d
+kills a live terminal or deletes a dead one's journal,
+.B x
+deletes every dead terminal's journal,
+.B m
+leaves a note,
+.B i
+sends a line,
+.B /
+filters, space folds, Tab switches the preview between the screen and the
+terminal's activity (commands, exit codes, notes),
+.B o
+opens it full screen and scrollable,
+.B :
+runs any pairmux command and shows its readable output,
+.B ?
+shows help and
+.B q
+quits. Destructive keys ask first. Not available on Windows yet.
 .TP
 .BR note " \fINAME\fR \fITEXT\fR.\|.\|."
 Leave a message in the journal for the agent (or another human). Subsequent
@@ -191,6 +239,25 @@ No command\-specific options or positional arguments are accepted; global
 is supported. See
 .B UPDATE
 below.
+.SH AGENT HIERARCHY
+A terminal's own pairmux opens terminals one layer down, on an endpoint of its
+own, so agents form a tree. Any command taking a terminal name also takes a
+path:
+.I worker/tests
+is terminal
+.I tests
+in the layer
+.I worker
+drives, relative to the current endpoint. Every terminal is created with
+.B PAIRMUX_SCOPE
+set to its layer; a process carrying a scope may address that layer and those
+below it, and any other endpoint fails with
+.BR E_SCOPE .
+Control therefore flows down: nothing below can drive its owner, a sibling, or
+the human's top layer.
+.B report
+is the single upward channel. The scope is a guardrail for cooperating agents,
+not a security boundary: all layers run as the same user.
 .SH STATUSES
 .B peek
 and each
@@ -503,6 +570,20 @@ Use a specific endpoint: the tmux socket or the built\-in server's socket name
 (equivalent to the
 .B \-\-socket
 flag). Socket labels are validated before the backend runs.
+.TP
+.B PAIRMUX_SCOPE
+Set inside every terminal: the highest endpoint its processes may address.
+.TP
+.B PAIRMUX_NO_TUI
+When non\-empty, a bare
+.B ls
+always prints the listing instead of opening
+.BR tui .
+.TP
+.B PAIRMUX_OWNER_SOCKET
+Set inside every terminal: the endpoint that owns it, where
+.B report
+writes.
 .TP
 .B PAIRMUX_BACKEND
 Select the backend:

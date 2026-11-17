@@ -4,13 +4,14 @@ description: >-
   Drive interactive terminal programs your exec-style shell tool cannot: REPLs, TUIs, pagers,
   ssh/sudo password prompts, docker exec -it, git rebase -i — real PTYs with persistent shell state
   (venv, exports, nvm) that survives between commands. When a prompt needs a credential or a
-  judgment call, hand off live to a human who can watch, attach, take over the same terminal, and
-  hand back. Also covers long-lived processes (dev servers, watch tasks, tail -f logs) and slow
-  commands that must share that same live terminal — with blocking calls that return on requested
-  outcomes instead of sleep-and-guess timing, and clean full output history with exit codes.
+  judgment call, hand off live to a human who can attach, take over the same terminal, and hand
+  back. Also covers long-lived processes (dev servers, watch tasks, tail -f logs) and slow commands
+  sharing that terminal, with blocking waits instead of sleep-and-guess timing and full output
+  history with exit codes. Orchestrates other coding agents (Claude Code, Codex…) as a tree:
+  sub-agents in their own terminals, reached by path, reporting up; control flows only down.
   Keywords: tmux, terminal session, PTY, ConPTY, Windows, PowerShell, interactive CLI, REPL, TUI,
   pager, password prompt, human takeover, human-in-the-loop, persistent shell, dev server, watch
-  logs, background process, long-running.
+  logs, background process, long-running, multi-agent, sub-agent, orchestration.
 ---
 
 # pairmux — reliable terminals for agents
@@ -18,7 +19,7 @@ description: >-
 `pairmux` gives agents real, persistent terminals and blocking operations instead of timing guesses.
 A human can watch or take over the same terminal. Ordinary CLI replies support `--json` for a
 `pairmux.v1` envelope; `help` is plain text, `attach`/`watch` are interactive, and `mcp serve` uses
-JSON-RPC rather than CLI envelopes.
+JSON-RPC rather than CLI envelopes. `tui` is the human's manager for the whole terminal tree.
 
 ## When to use pairmux (and when not to)
 
@@ -115,8 +116,8 @@ already finished before waiting. For a program terminal, submit with `new --cmd`
    **future completion**, not the previous result. Add `--idle 800` when driving and needing prompts/idle
    too; pure `--done` intentionally waits past prompts. `wait a,b,c` returns on the first requested
    outcome. For a program's exact turn boundary, arrange an explicit note from its wrapper/hook and use `--note`.
-   Inside a pane, `PAIRMUX_SOCKET` is its child endpoint: the creator must supply the **owning socket**
-   for `pairmux --socket <owner> note <name> "..."`; see the concrete team/worker recipe in
+   Inside a pane, `PAIRMUX_SOCKET` is its child layer: signal your creator with
+   `pairmux report "..."`, never a hand-built `--socket` note; see
    [collaboration.md](references/collaboration.md). Reads/waits take no writer lock.
 6. **Prefer reading the log over re-running.** Recover output from the journal; re-running can change
    state. After a sensitive handoff, inspect only a known-safe range, not the credential span.
@@ -130,6 +131,18 @@ already finished before waiting. For a program terminal, submit with `new --cmd`
 9. **Pattern waits observe future output only.** If readiness may have appeared during `run` or
    `new --cmd`, use `peek`/`log --grep`; never wait for a past line. Inspect returned output first.
    Arm `--pattern` before an event you still expect; it does not replay history.
+
+## Driving other agents (layers and scope)
+
+Each terminal's own `pairmux` opens terminals **one layer down**, so agents form a tree. From where
+you stand you may drive your layer and everything below it, addressed by path (`api/tests` is
+`tests` in the layer `api` drives); `pairmux ls --tree` shows the subtree. **Nothing below can drive
+anything above or beside it** — such calls fail with `E_SCOPE` by design; never unset
+`PAIRMUX_SCOPE` or swap `--socket`/`PAIRMUX_SOCKET` to get around it. The one upward channel is
+`pairmux report "<outcome>"`, a note on your own row your creator reads or waits on with
+`wait <name> --note`. Agent CLIs are program terminals: `new --cmd "codex"`, check startup with `peek`,
+`send` the task (include "run `pairmux report` when done"), then `wait a,b --note`. `kill` ends a
+worker and its whole subtree. Full recipe: [hierarchy.md](references/hierarchy.md).
 
 ## Reading replies
 
@@ -149,7 +162,7 @@ Act on `status`, optional ordered `next`, and unseen `notes` (messages from a hu
 
 `peek` returns **derived terminal status**, not generic `ok`; `ls` has `status:"ok"` plus row states.
 `new --cmd` returns `running` or `dead`. `doctor` can return `ok:true,status:"issues"`; read its report.
-Errors have `ok:false` and `error.code` (`E_BUSY`, `E_BAD_ARGS`, `E_DEAD`, etc.); follow `hint`/`next`.
+Errors have `ok:false` and `error.code` (`E_BUSY`, `E_BAD_ARGS`, `E_DEAD`, `E_SCOPE`, etc.); follow `hint`/`next`.
 See [commands.md](references/commands.md) for all statuses, fields, and error codes.
 
 ## Worked examples
@@ -193,12 +206,14 @@ pairmux peek repl
 | `peek <name> [--screen \| --tail N]` | recent output/current screen + derived state |
 | `send <name> [--text S] [--key K ...] [--enter]` | literal text / named keys to the current program |
 | `log <name> [--cmd N \| --grep RE \| --range A:B\|A:end]` | retained history, not re-execution |
-| `ls` · `kill <name> \| --all` · `prune [name] [--older-than 7d] [--dry-run]` | inventory / destructive lifecycle |
-| `note <name> "<text>"` · `attach [name]` · `watch` | side channel / human takeover / dashboard |
+| `ls [--tree]` · `kill <name> \| --all` · `prune [name] [--older-than 7d] [--dry-run]` | inventory (with sub-layers) / destructive lifecycle |
+| `report "<text>"` | inside a pane: note your own row for your creator (the only upward call) |
+| `note <name> "<text>"` · `attach [name]` · `watch` · `tui` | side channel / human takeover / dashboard / human manager |
 
 ## Go deeper (references/)
 
 - [references/commands.md](references/commands.md) — flags, backend/shell selection, envelope and errors.
 - [references/interactive.md](references/interactive.md) — prompt inference, secrets, REPLs, TUIs and keys.
-- [references/collaboration.md](references/collaboration.md) — handoff outcomes, privacy limits, owning-socket notes.
+- [references/collaboration.md](references/collaboration.md) — handoff outcomes, privacy limits, reporting from a pane.
+- [references/hierarchy.md](references/hierarchy.md) — sub-agents, paths, scope (`E_SCOPE`), `report`, `ls --tree`.
 - [references/troubleshooting.md](references/troubleshooting.md) — busy/dead panes, in-place recovery, waits and backends.

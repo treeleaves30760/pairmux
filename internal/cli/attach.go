@@ -67,7 +67,7 @@ func (c *Ctx) cmdAttach(args []string) int {
 	var name string
 	if len(pos) > 0 {
 		name = pos[0]
-		if rc, rejected := c.rejectInvalidTerminalName(name); rejected {
+		if rc, rejected := c.resolveTarget(&name); rejected {
 			return rc
 		}
 	}

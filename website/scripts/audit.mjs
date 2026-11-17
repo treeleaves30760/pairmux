@@ -16,19 +16,7 @@ import {execFileSync} from 'node:child_process';
 
 // Accepted advisories. Add an entry ONLY when npm reports no fix available:
 // anything else has a version to pin in package.json's "overrides".
-const ACCEPTED = [
-  {
-    package: 'braces',
-    advisories: ['GHSA-vfj7-8cjw-p6xm'],
-    reason:
-      'Reviewed and accepted on 2026-10-08: stack exhaustion requires a deeply ' +
-      'nested attacker-controlled glob. Docusaurus uses repository-controlled ' +
-      'include/exclude and local paths in build/dev tooling, not public request ' +
-      'patterns or browser code. The latest published braces (3.0.3) is affected ' +
-      'and npm reports no fix. This exception expires when a fix is available ' +
-      'or the advisory disappears; untrusted configuration is not supported.',
-  },
-];
+const ACCEPTED = [];
 
 const MIN_SEVERITY = 'moderate';
 const RANK = {info: 0, low: 1, moderate: 2, high: 3, critical: 4};

@@ -113,7 +113,7 @@ func TestToolSchemas(t *testing.T) {
 	}
 	wantNames := []string{
 		"pairmux_new", "pairmux_run", "pairmux_peek", "pairmux_wait", "pairmux_send",
-		"pairmux_log", "pairmux_ls", "pairmux_kill", "pairmux_note", "pairmux_doctor",
+		"pairmux_log", "pairmux_ls", "pairmux_kill", "pairmux_note", "pairmux_report", "pairmux_doctor",
 	}
 	if len(listed) != len(wantNames) {
 		t.Fatalf("got %d tools, want %d", len(listed), len(wantNames))
@@ -172,6 +172,8 @@ func TestToolCallsBuildExactArgv(t *testing.T) {
 		{"pairmux_send", map[string]any{"terminal": "build", "text": "", "keys": []string{"C-c", "Enter"}, "enter": true}, []string{"send", "build", "--text", "", "--key", "C-c", "--key", "Enter", "--enter"}},
 		{"pairmux_log", map[string]any{"terminal": "build", "command_id": 7}, []string{"log", "build", "--cmd", "7"}},
 		{"pairmux_ls", map[string]any{}, []string{"ls"}},
+		{"pairmux_ls", map[string]any{"tree": true}, []string{"ls", "--tree"}},
+		{"pairmux_report", map[string]any{"text": "--done"}, []string{"report", "--", "--done"}},
 		{"pairmux_kill", map[string]any{"all": true}, []string{"kill", "--all"}},
 		{"pairmux_note", map[string]any{"terminal": "build", "text": "--json is literal"}, []string{"note", "build", "--", "--json is literal"}},
 		{"pairmux_doctor", map[string]any{}, []string{"doctor"}},

@@ -30,11 +30,11 @@ func TestInvalidNamesNeverReachStateOrTmux(t *testing.T) {
 	commands := [][]string{
 		{"new", "--name", "../escape"},
 		{"run", "/tmp/absolute", "echo", "ok"},
-		{"peek", "a/b"},
+		{"peek", "a/../b"},
 		{"wait", "..", "--timeout", "1ms"},
 		{"send", "../escape", "--enter"},
 		{"log", "/tmp/absolute"},
-		{"kill", "a/b"},
+		{"kill", "/a/b"},
 		{"attach", ".."},
 		{"note", "../escape", "hello"},
 	}
@@ -57,6 +57,14 @@ func TestInvalidNamesNeverReachStateOrTmux(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("invalid-name commands touched the state root: %v", entries)
+	}
+	// A well-formed path into a layer that does not exist is an ordinary
+	// missing terminal, and looking for it creates nothing either.
+	if env, code := pmx(t, e, "peek", "a/b"); code != 1 || env.Error == nil || env.Error.Code != output.CodeNoTerminal {
+		t.Fatalf("peek a/b: code=%d env=%+v, want E_NO_TERMINAL", code, env)
+	}
+	if entries, _ := os.ReadDir(e.state); len(entries) != 0 {
+		t.Fatalf("a path lookup touched the state root: %v", entries)
 	}
 }
 
