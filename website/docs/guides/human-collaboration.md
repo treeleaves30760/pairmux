@@ -1,6 +1,6 @@
 ---
 title: Human collaboration
-description: attach, watch, and note — how a human steps into an agent's terminal and hands back.
+description: "Watch an agent's live pairmux terminal, take it over with attach, answer a secret prompt yourself, and hand control back with a note."
 ---
 
 # Human collaboration

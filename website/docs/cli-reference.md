@@ -1,6 +1,6 @@
 ---
 title: CLI Reference
-description: Every pairmux command with its flags, representative JSON examples, and the full pairmux.v1 envelope schema.
+description: "Look up any pairmux command: its flags, behavior and JSON examples, plus the pairmux.v1 envelope schema, terminal statuses and error codes."
 ---
 
 # CLI Reference
@@ -55,6 +55,7 @@ Two fields are always present — `schema` and `ok`. Everything else is omitted 
 | `truncated` | object | Present when `output` was elided; see below. |
 | `terminals` | array | The `ls` listing (one object per terminal). |
 | `notes` | array of string | Unseen human messages left via `pairmux note`. |
+| `events` | array | Fleet changes from `events --wait`; see [events](#events). |
 | `next` | array of string | Ordered contextual hints. Obey prose safety entries, replace placeholders, then run the first applicable command. |
 | `error` | object | Present when `ok` is `false`; see [Errors](#errors). |
 
@@ -94,7 +95,7 @@ Terminal statuses are returned directly by `peek`, appear in each `ls` row, and 
 | `dead` | The pane is gone; the journal is retained. |
 | `unknown` | The pane is live but pairmux cannot yet derive a confident state, for example during fresh sentinel activity or when the journal cannot be read. Usually transient; observe again before writing. |
 
-Per-command action statuses are separate from terminal state. An interactive-shell `new` returns `created`; `new --cmd` immediately returns the program terminal's derived `running` or `dead` state. `run` returns `done`, `running`, or `awaiting-input`; `peek` returns the derived terminal status; `send`, `note`, and `kill` return `sent`, `noted`, and `killed`. The outer `log`/`ls`/`version` status is `ok`; `doctor` returns `ok` or `issues`; `skill install` returns `installed` or `dry-run`; and `update` (v0.6.0+) returns `updated` or `refreshed`. `wait` outcomes are `idle`, `awaiting-input`, `pattern-found`, `human-done`, `dead`, or `timeout`.
+Per-command action statuses are separate from terminal state. An interactive-shell `new` returns `created`; `new --cmd` immediately returns the program terminal's derived `running` or `dead` state. `run` returns `done`, `running`, or `awaiting-input`; `peek` returns the derived terminal status; `send`, `note`, and `kill` return `sent`, `noted`, and `killed`. The outer `log`/`ls`/`version` status is `ok`; `doctor` returns `ok` or `issues`; `skill install` returns `installed` or `dry-run`; and `update` (v0.6.0+) returns `updated` or `refreshed`. `events --wait` returns `changed` or `timeout`. `wait` outcomes are `idle`, `awaiting-input`, `pattern-found`, `human-done`, `dead`, or `timeout`.
 
 ### Errors
 
@@ -427,6 +428,45 @@ in the layer that terminal `worker` drives, at any depth, relative to the curren
 show the path in `terminal` and in their `next` commands. `new --name worker/lint` creates directly in
 that layer. One `wait` may name several terminals of a single layer.
 
+### events
+
+Report changes to the fleet: terminals that appear, disappear, or change state. By default, `events`
+prints a JSON-lines stream (`pairmux.events.v1`) for front ends. With `--wait`, it blocks and returns
+one `pairmux.v1` envelope for agents. See [Integrations](./integrations.md) for the event schema and
+a reference client.
+
+```text
+pairmux events [--tree] [--wait] [--status S,S] [--max N] [--timeout D] [--interval 1s] [--no-snapshot]
+```
+
+| flag | effect |
+|---|---|
+| `--tree` (`-r`) | also follow every live layer below; rows are addressed by `path` |
+| `--wait` | return one envelope after the first change: `status` is `changed` or `timeout`, `events` lists the changes, and `next` says what to do. The default timeout is 10m |
+| `--status S,S` | report only `added` and `changed` events that leave a terminal in one of these states: `running`, `idle`, `awaiting-input`, `dead` (removals always pass) |
+| `--max N` | stop after N changes (the stream ends with an `end` line) |
+| `--timeout D` | stop after D, a Go duration such as `30s` or `10m` (the stream ends with an `end` line, and `--wait` replies `timeout`) |
+| `--interval D` | how often to sample the fleet; default 1s |
+| `--no-snapshot` | skip the stream's first `snapshot` line |
+
+The stream's lines are `snapshot`, `added`, `changed` (with `changes` and, when the status changed,
+the previous status in `from`), `removed`, and `end`. New output alone is never a change; read it
+with `peek` or `log`.
+
+This call blocks until a worker in the tree needs input or dies:
+
+```bash
+pairmux events --tree --wait --status awaiting-input,dead --timeout 30m
+```
+
+```text
+changed
+  changed lead/api/tests  running → awaiting-input  (status, lock_holder)
+next:
+  pairmux peek lead/api/tests   # it needs input: read the prompt before answering
+  pairmux events --wait --tree --status awaiting-input,dead   # keep watching
+```
+
 ### kill
 
 Kill a terminal (or, with `--all`, every managed terminal). **Journals are retained on disk** either way. On Windows, killing a terminal ends its whole process tree through a job object.
@@ -519,13 +559,17 @@ terminal, and single keys to attach (and come back on detach), create a terminal
 the selected one, kill or delete, delete every dead terminal's journal, leave a note, send a line,
 fold subtrees and filter. Destructive actions ask first.
 
-Command output a person needs to read is shown inside it rather than in scrollback: `tab` switches
-the preview between the terminal's **Screen** and its **Activity** (what it is, then every command
-with exit code and duration, notes and whether its agent has seen them); `o` opens either one full
-screen and scrollable — Screen becomes the whole retained output history; `x` shows what prune
-removed; and `:` runs any pairmux command (`{}` stands for the selected path, `↑` recalls the last
-one) in the background and shows its readable output in the same reader. See [Agent hierarchy](./guides/agent-hierarchy.md#watching-and-steering-the-tree-pairmux-tui)
-for the key map. Needs an interactive terminal; not available on Windows yet. `ui` is an alias.
+Every region is a box with its name and controls set into its border, and the key for each control
+is highlighted. Every control is also a mouse button: click a row to select it, click it again to
+attach, and scroll with the wheel. The TUI shows command output you need to read inside itself
+instead of in scrollback. `1`/`2` (or `tab`) switch the preview between the terminal's **screen**
+and its **activity** (what it is, then every command with exit code and duration, and each note and
+whether its agent has seen it). `o` opens either view full screen and scrollable; the screen view
+then shows the whole retained output history. `x` deletes every dead terminal's journal and shows
+what it removed. `:` runs any pairmux command in the background and shows its readable output in the
+same reader; `{}` stands for the selected path, and `↑` recalls the last command. See
+[The TUI](./guides/tui.md) for a tour and the key map. `tui` needs an interactive terminal and is not
+available on Windows yet. `ui` is an alias.
 
 ```text
 pairmux tui [--interval 1s]

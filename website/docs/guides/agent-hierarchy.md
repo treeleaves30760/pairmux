@@ -1,6 +1,6 @@
 ---
 title: Agent hierarchy
-description: Coordinators that open sub-agents, paths that reach them, a scope that keeps control flowing down, and the TUI that shows the whole tree.
+description: "Run a coordinator agent that opens its own sub-agents with pairmux: reach them by path, collect their reports, and use scopes so control only flows down."
 ---
 
 # Agent hierarchy
@@ -9,6 +9,8 @@ An agent that runs in a pairmux terminal can use pairmux itself. Whatever it ope
 down**, on an endpoint of its own, so a coordinator can start workers, each worker can start its
 own sub-agents, and every layer stays separate: names never collide across layers, `ls` at one layer
 lists that layer, and killing a terminal tears down every layer below it.
+
+![Concept: you at the top; a lead agent drives api and web workers; api drives its own tests, lint and release sub-agents; reports flow up; a passphrase prompt is handed to you; front ends read the same tree](/img/concept-agent-tree.svg)
 
 ```text
 you (human, your own terminal)       ← the top: no scope, drives everything
@@ -81,6 +83,24 @@ pairmux wait api,web --note --timeout 1800s
 talk about the caller. For agents with stop hooks, `pairmux report "turn complete"` in the hook is
 the reliable turn boundary.
 
+## Supervise without polling: `events --wait`
+
+A coordinator with several workers should not loop over `peek`. One blocking call returns as soon as
+anything in its subtree changes, names what changed, and says what to do about it:
+
+```bash
+# lead: block until any worker or sub-worker needs input or dies
+pairmux events --tree --wait --status awaiting-input,dead --timeout 30m
+```
+
+![An agent's terminal: ls --tree lists the fleet, events --wait returns when lead/api/tests reaches a passphrase prompt, and peek shows the prompt with the instruction to hand off to the human](/img/cli-supervise.svg)
+
+`--status` keeps only the events that leave a terminal in one of the given states (`running`,
+`idle`, `awaiting-input`, `dead`); without it, the first change of any kind returns. `--max N` waits
+for N changes before it returns. On `timeout`, the reply's `next` repeats the call with a longer
+deadline. Over MCP, the same call is the `pairmux_events` tool. `wait --note` is still the right
+call when you are waiting for a specific worker to `report`.
+
 ## The environment each terminal carries
 
 | variable | value inside terminal `api` of layer `pairmux-lead` |
@@ -95,38 +115,13 @@ the reliable turn boundary.
 `pairmux tui` is the human's console over the whole tree. Typing a bare `pairmux ls` (or `list`)
 at your own terminal opens it too; agents, pipes and `--json` keep getting the listing.
 
-```text
- pairmux   pairmux · tmux   ● 2 running   ◆ 1 needs input   ○ 1 idle   ✕ 1 dead          14:02:11
- Terminals  5                                   │ Screen  Activity   lead/api  running
-▌▾ ○ lead         idle         4s               │ created 12m ago · program · drives 2 below
- ├─ ▾ ● api       running      1s    codex      │ > Implementing /users endpoint…
- │  └─   ◆ tests  needs input  9s               │
- └─   ● web       running      2s    claude     │
-   ✕ old          dead         3h               │
- ◆ lead/api/tests is waiting for input — ⏎ attach to answer it, or i to send a line
- ⏎ attach  n new  c new under  d kill/delete  i send  m note  tab view  o open  : command  ? help  q quit
-```
+![The pairmux TUI: the agent tree with live status on the left, the selected agent's screen on the right, and every control set into the box borders](/img/tui-overview.svg)
 
-| key | action |
-|---|---|
-| `↑` `↓` / `j` `k`, `PgUp` `PgDn`, `g` `G` | move |
-| `⏎` / `a` | attach to the selected terminal; detach with `Ctrl-b d` and you are back in the TUI |
-| `n` | new terminal (name, command such as `claude` or `codex`, directory, layer) in the top layer |
-| `c` | new terminal under the selected one — a sub-agent of it |
-| `d` | kill a live terminal (and everything below it; journals kept) or delete a dead one's journal |
-| `x` | delete the retained journals of every dead terminal in the tree, including orphaned layers |
-| `m` | leave a note for the selected terminal's agent |
-| `i` | send one line of input (never a secret — attach for that) |
-| `space` `←` `→` | fold / unfold a terminal's sub-terminals |
-| `/` | filter by path, command or status |
-| `tab` | switch the preview between **Screen** and **Activity**: what the terminal is, then every command with exit code and duration, notes and whether its agent has seen them |
-| `o` | open the preview full screen and scrollable — Screen becomes the whole retained output history |
-| `:` | run any pairmux command and read its output in the same reader; `{}` is the selected path (`log {} --cmd 3`, `prune --dry-run`, `doctor`), `↑` recalls the last one. It runs in the background, so a long `run` or `wait` never freezes the tree |
-| `?`, `r`, `q` | help, refresh, quit |
-
-Every action asks before destroying anything and runs the same subcommand an agent would, so the TUI
-follows the CLI's rules exactly. Inside tmux, `⏎` opens a nested tmux client; detach it with
-`Ctrl-b Ctrl-b d`. The TUI is not available on Windows yet; use `pairmux watch` and `pairmux attach`.
+In the TUI you can attach to any terminal with `⏎` (or double-click its row), create workers at the
+top (`n`) or under the selected agent (`c`), answer a prompt an agent handed you, leave notes, and
+run any pairmux command. Destructive actions ask first, and every action runs the same subcommand an
+agent would, so the TUI follows the CLI's rules exactly. The [TUI guide](./tui.md) has the full key
+map, the mouse controls, and a tour of each view.
 
 ## A coordinator recipe
 

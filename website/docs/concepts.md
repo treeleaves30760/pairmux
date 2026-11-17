@@ -1,6 +1,6 @@
 ---
 title: Concepts
-description: How pairmux is built — tmux or a built-in multiplexer as the state engine, the journal as source of truth, and reliable completion detection.
+description: "How pairmux works: tmux or a built-in multiplexer owns live panes, a journal records output, and blocking calls return on completion, a prompt or a timeout."
 ---
 
 # Concepts
@@ -18,6 +18,12 @@ The built-in backend and native Windows support. v0.6.0 and earlier always use t
 :::
 
 ## Architecture
+
+![Concept: you at the top; a lead agent drives workers that drive their own sub-agents; reports flow up; front ends read the same tree](/img/concept-agent-tree.svg)
+
+A terminal can host an agent that uses pairmux itself, so the same architecture nests. See
+[Agent hierarchy](./guides/agent-hierarchy.md) for layers and scopes, and
+[Integrations](./integrations.md) to follow a whole tree from outside.
 
 ```mermaid
 flowchart LR

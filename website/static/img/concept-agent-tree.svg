@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" role="img" aria-label="pairmux concept: a human at the top, a lead agent that drives worker agents, workers that drive their own sub-agents, reports flowing up, and front ends subscribing to the same fleet">
+  <defs>
+    <marker id="down" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5fd3bc"/>
+    </marker>
+    <marker id="up" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#e5c07b"/>
+    </marker>
+    <marker id="sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b59cf0"/>
+    </marker>
+    <style>
+      text{font-family:Inter,'Segoe UI',system-ui,-apple-system,sans-serif;fill:#d6dde6}
+      .mono{font-family:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace}
+      .h{font-size:17px;font-weight:700}
+      .s{font-size:13px;fill:#9aa5b1}
+      .tag{font-size:12px;font-weight:600}
+      .layer{font-size:12px;fill:#6b7684;letter-spacing:.08em}
+    </style>
+  </defs>
+  <rect width="1200" height="640" rx="16" fill="#0f1419"/>
+
+  <!-- layer bands -->
+  <g>
+    <rect x="24" y="24" width="800" height="112" rx="12" fill="#151b22"/>
+    <rect x="24" y="152" width="800" height="120" rx="12" fill="#151b22"/>
+    <rect x="24" y="288" width="800" height="150" rx="12" fill="#151b22"/>
+    <rect x="24" y="454" width="800" height="160" rx="12" fill="#151b22"/>
+    <text class="layer" x="44" y="50">TOP · THE HUMAN</text>
+    <text class="layer" x="44" y="178">LAYER 0 · pairmux ls</text>
+    <text class="layer" x="44" y="314">LAYER 1 · lead/&lt;name&gt;</text>
+    <text class="layer" x="44" y="480">LAYER 2 · lead/api/&lt;name&gt;</text>
+  </g>
+
+  <!-- human -->
+  <rect x="300" y="44" width="260" height="76" rx="10" fill="#1d2630" stroke="#5fd3bc" stroke-width="1.5"/>
+  <text class="h" x="430" y="74" text-anchor="middle">You</text>
+  <text class="s mono" x="430" y="98" text-anchor="middle">pairmux tui · attach · note</text>
+
+  <!-- lead -->
+  <rect x="300" y="186" width="260" height="72" rx="10" fill="#1d2630" stroke="#5fd3bc" stroke-width="1.5"/>
+  <text class="h" x="430" y="214" text-anchor="middle">lead</text>
+  <text class="s" x="430" y="238" text-anchor="middle">coordinating agent (Claude Code)</text>
+
+  <!-- workers -->
+  <rect x="150" y="330" width="250" height="84" rx="10" fill="#1d2630" stroke="#b59cf0" stroke-width="1.5"/>
+  <text class="h" x="275" y="360" text-anchor="middle">lead/api</text>
+  <text class="s" x="275" y="384" text-anchor="middle">worker agent (Codex)</text>
+  <text class="s mono" x="275" y="403" text-anchor="middle" style="font-size:11px">drives its own layer ↓</text>
+
+  <rect x="460" y="330" width="250" height="84" rx="10" fill="#1d2630" stroke="#b59cf0" stroke-width="1.5"/>
+  <text class="h" x="585" y="360" text-anchor="middle">lead/web</text>
+  <text class="s" x="585" y="384" text-anchor="middle">dev server · npm run dev</text>
+
+  <!-- sub-agents -->
+  <rect x="70" y="500" width="200" height="80" rx="10" fill="#1d2630" stroke="#6cb6ff" stroke-width="1.5"/>
+  <text class="h" x="170" y="532" text-anchor="middle">lead/api/tests</text>
+  <text class="s mono" x="170" y="556" text-anchor="middle">go test ./...</text>
+
+  <rect x="290" y="500" width="200" height="80" rx="10" fill="#1d2630" stroke="#6cb6ff" stroke-width="1.5"/>
+  <text class="h" x="390" y="532" text-anchor="middle">lead/api/lint</text>
+  <text class="s mono" x="390" y="556" text-anchor="middle">golangci-lint run</text>
+
+  <rect x="540" y="500" width="270" height="80" rx="10" fill="#241f12" stroke="#e5c07b" stroke-width="1.5"/>
+  <text class="h" x="675" y="528" text-anchor="middle" style="fill:#ffd580">lead/api/release</text>
+  <text class="s" x="675" y="550" text-anchor="middle">needs a signing passphrase —</text>
+  <text class="s" x="675" y="568" text-anchor="middle">handed to you, never typed by an agent</text>
+
+  <!-- drive arrows (down) -->
+  <g stroke="#5fd3bc" stroke-width="2" fill="none">
+    <path d="M430 120 V184" marker-end="url(#down)"/>
+    <path d="M380 258 L290 328" marker-end="url(#down)"/>
+    <path d="M480 258 L570 328" marker-end="url(#down)"/>
+  </g>
+  <g stroke="#b59cf0" stroke-width="2" fill="none">
+    <path d="M240 414 L190 498" marker-end="url(#sub)"/>
+    <path d="M310 414 L370 498" marker-end="url(#sub)"/>
+    <path d="M380 400 C 480 440, 600 450, 650 498" marker-end="url(#sub)"/>
+  </g>
+  <!-- report arrows (up) -->
+  <g stroke="#e5c07b" stroke-width="1.6" fill="none" stroke-dasharray="5 4">
+    <path d="M110 498 C 80 440, 110 400, 148 380" marker-end="url(#up)"/>
+    <path d="M150 352 C 110 300, 200 240, 298 222" marker-end="url(#up)"/>
+    <path d="M720 498 C 790 420, 800 200, 562 100" marker-end="url(#up)"/>
+  </g>
+  <text class="tag mono" x="36" y="284" style="fill:#e5c07b">↑ pairmux report</text>
+  <text class="tag mono" x="580" y="284" style="fill:#e5c07b">↑ wait --human --notify</text>
+  <text class="tag mono" x="446" y="160" style="fill:#5fd3bc">new · run · wait</text>
+
+  <!-- right column: front ends -->
+  <rect x="848" y="24" width="328" height="590" rx="12" fill="#151b22"/>
+  <text class="layer" x="868" y="50">FRONT ENDS &amp; INTEGRATIONS</text>
+
+  <rect x="868" y="70" width="288" height="100" rx="10" fill="#1d2630" stroke="#3a4552"/>
+  <text class="h" x="888" y="98">pairmux events</text>
+  <text class="s" x="888" y="122">JSON-lines stream of the fleet:</text>
+  <text class="s mono" x="888" y="142" style="font-size:12px">snapshot · added · changed</text>
+  <text class="s mono" x="888" y="160" style="font-size:12px">removed · end</text>
+
+  <rect x="868" y="186" width="288" height="96" rx="10" fill="#1d2630" stroke="#3a4552"/>
+  <text class="h" x="888" y="214">pairmux --json</text>
+  <text class="s" x="888" y="238">every action as a versioned</text>
+  <text class="s mono" x="888" y="258" style="font-size:12px">pairmux.v1 envelope + next steps</text>
+
+  <rect x="868" y="298" width="288" height="96" rx="10" fill="#1d2630" stroke="#3a4552"/>
+  <text class="h" x="888" y="326">pairmux mcp serve</text>
+  <text class="s" x="888" y="350">typed tools for any MCP client,</text>
+  <text class="s mono" x="888" y="370" style="font-size:12px">incl. pairmux_events</text>
+
+  <rect x="868" y="410" width="288" height="96" rx="10" fill="#1d2630" stroke="#3a4552"/>
+  <text class="h" x="888" y="438">pairmux skill install</text>
+  <text class="s" x="888" y="462">teaches Claude Code, Codex,</text>
+  <text class="s" x="888" y="482">Gemini, opencode … the workflow</text>
+
+  <text class="s" x="1012" y="548" text-anchor="middle">desktop apps · dashboards ·</text>
+  <text class="s" x="1012" y="568" text-anchor="middle">editor panels · supervisor agents</text>
+  <text class="s" x="1012" y="588" text-anchor="middle">all read the same live tree</text>
+
+</svg>

@@ -1,6 +1,6 @@
 ---
 title: Interactive programs
-description: REPLs, pagers, confirmation prompts, and the never-guess-secrets rule.
+description: "Drive REPLs, pagers and [y/N] prompts with pairmux: how awaiting-input detection works, sending text versus keys, and why agents must never guess secrets."
 ---
 
 # Interactive programs

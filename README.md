@@ -9,10 +9,20 @@
 [Changelog](https://github.com/treeleaves30760/pairmux/blob/main/ChangeLog.md) ·
 [Source](https://github.com/treeleaves30760/pairmux)
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/treeleaves30760/pairmux/main/website/static/img/tui-overview.svg" alt="The pairmux TUI: a tree of agents on the left — a lead agent, its api and web workers, and api's own tests and lint sub-agents — with live status, and the selected agent's screen on the right" width="100%">
+</p>
+
 pairmux is a small Agent-Computer Interface layer over a terminal multiplexer. Agents get a real PTY
 with persistent shell state, blocking command outcomes, retained history, and machine-readable
 recovery hints. Humans keep normal access to the same live terminal: watch the agent work, take over
 an interactive prompt, hand back.
+
+pairmux also lets **agents drive agents**. A lead agent opens worker agents in pairmux terminals, and
+the workers open their own sub-agents. Every one is a real terminal that you can watch, attach to
+and answer. Control flows down the tree, reports flow up, and the human stays at the top. Front ends
+and supervisor agents follow the same fleet through a JSON event stream
+([Build on pairmux](#build-on-pairmux)).
 
 pairmux drives terminals through **tmux** (3.2 or newer) when tmux is installed, and otherwise
 through its own **built-in multiplexer** — real PTYs on macOS/Linux, ConPTY on Windows — so tmux is
@@ -558,11 +568,53 @@ sub-agent tell its creator a turn is done with `pairmux report "..."`. Control f
 every terminal carries a scope, so nothing below can drive its owner, a sibling, or the human's top
 layer (`E_SCOPE`).
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/treeleaves30760/pairmux/main/website/static/img/concept-agent-tree.svg" alt="Concept: you at the top; a lead agent below you drives api and web workers; api drives tests, lint and release sub-agents; reports flow up; a passphrase prompt is handed to you; front ends read the same tree through events, --json, MCP and skills" width="100%">
+</p>
+
+A supervising agent does not have to poll its workers. The command
+`pairmux events --tree --wait --status awaiting-input,dead` blocks until a worker needs attention
+and says what to do next.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/treeleaves30760/pairmux/main/website/static/img/cli-supervise.svg" alt="An agent's terminal: pairmux ls --tree lists the fleet, pairmux events --wait returns when lead/api/tests reaches a passphrase prompt, and peek shows the prompt with the instruction to hand off to the human" width="100%">
+</p>
+
 For humans, `pairmux ls` (or `list`, or `tui`) at an interactive terminal opens the session
-manager: the whole tree with live status, a Screen/Activity preview, and single keys to attach,
+manager: the whole tree with live status, a `screen`/`activity` preview, and single keys to attach,
 create (at the top or under a selected agent), kill, delete stale terminals, note and send. Output
 you need to read stays inside it: `o` opens a terminal's full history, and `:` runs any pairmux
 command and shows its result. Agents, pipes and `--json` still get the listing. See [Agent hierarchy](https://pairmux-docs.treeleaves30760.com/guides/agent-hierarchy).
+
+Like [btop](https://github.com/aristocratos/btop), every region is a box. Its name and controls sit
+in its border, the key for each control is highlighted, and every control is also a button. Click a
+row to select it, click it again to attach, click a border label to press it, and scroll with the
+wheel. See the [TUI guide](https://pairmux-docs.treeleaves30760.com/guides/tui).
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/treeleaves30760/pairmux/main/website/static/img/tui-handoff.svg" alt="The TUI with deploy selected: it needs input, and the preview shows a sudo password prompt; the footer says to attach and answer it" width="100%">
+</p>
+
+## Build on pairmux
+
+You can build on pairmux. A desktop app, a web dashboard, an editor panel, or an agent that manages
+other agents can follow and drive the same fleet as the CLI and the TUI:
+
+| Interface | Use it for |
+| --- | --- |
+| `pairmux events [--tree]` | Follow the fleet: a JSON-lines stream (`pairmux.events.v1`) with one `snapshot`, then `added`, `changed` and `removed` per terminal, and `end` when it stops |
+| `pairmux events --wait` | Block until something in the fleet changes (`--status awaiting-input,dead`, `--max`, `--timeout`), then return one `pairmux.v1` envelope with next steps |
+| `pairmux --json <command>` | Act: every command returns a versioned `pairmux.v1` envelope with a stable error code and an ordered `next` list |
+| `pairmux mcp serve` | The same operations as typed MCP tools, including `pairmux_events` |
+| `pairmux skill install` | Teach Claude Code, Codex, Gemini CLI, opencode and other agents the workflow |
+
+```bash
+pairmux events --tree | jq -c '{type, path, status: .terminal.status}'
+```
+
+Everything a front end does is an ordinary pairmux command, so it inherits the same scope rules, busy
+locks and secret handling. See [Integrations](https://pairmux-docs.treeleaves30760.com/integrations)
+for the event schema, a reference client and the stability guarantees.
 
 ## The `pairmux.v1` envelope
 

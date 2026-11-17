@@ -1,6 +1,6 @@
 ---
 title: Multi-agent sharing
-description: Lock-free reads, the per-terminal writer lock, and busy envelopes.
+description: "Share a pairmux terminal among agents: lock-free peek, log and wait reads, the per-terminal run writer lock, E_BUSY envelopes and a division-of-labor recipe."
 ---
 
 # Multi-agent sharing
