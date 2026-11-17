@@ -28,6 +28,24 @@ key reference. Every label in a border is also a button.
 Status glyphs: `●` running, `◆` needs input, `○` idle, `✕` dead. When you select a terminal that
 needs input, the footer turns yellow and says how to answer it.
 
+### Terminals that draw symbols double-width
+
+Many of these glyphs (`●` `◆` `─` `│` `╭` `…`) are East Asian *Ambiguous* characters. A terminal set
+to draw them two cells wide, as CJK setups often are, pushes the boxes out of line and moves every
+click. So at startup the TUI asks the terminal how wide it draws each glyph, with a cursor position
+query that waits up to about 200 ms. It draws any glyph that comes back two cells wide as ASCII
+instead: `+` `-` `|` for the boxes, `[label]` for the border buttons, `*` running, `!` needs input,
+`o` idle, `x` dead, `>` for the selection and `v`/`>` for fold arrows. Other text, such as CJK names
+or output, is measured to match and keeps its place.
+
+A terminal that does not answer the query keeps the usual glyphs. If yours draws them two cells wide
+but does not answer, set `PAIRMUX_TUI_AMBIGUOUS_WIDTH` yourself and the TUI skips the query:
+
+- `PAIRMUX_TUI_AMBIGUOUS_WIDTH=1` draws the usual glyphs.
+- `PAIRMUX_TUI_AMBIGUOUS_WIDTH=2` draws the ASCII set.
+
+Any other value is ignored, and the TUI asks the terminal.
+
 ## Keys and buttons
 
 | key | button | action |
