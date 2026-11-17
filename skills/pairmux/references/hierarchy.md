@@ -49,6 +49,18 @@ pairmux wait api,web --note --timeout 1800s     # first worker to report ends th
 pairmux peek api                                # read its report in notes + its screen
 ```
 
+With several workers, do not loop over `peek`: one call blocks until anything in your subtree needs
+you, says which terminal, and what to run next:
+
+```bash
+pairmux events --tree --wait --status awaiting-input,dead --timeout 30m
+# changed  api/tests  running → awaiting-input  →  next: pairmux peek api/tests
+```
+
+Without `--status` the first change of any kind returns (a worker starting or finishing a command
+too); `--max N` collects N changes; on `timeout` repeat it with the longer deadline from `next`. Over
+MCP it is the `pairmux_events` tool. Keep `wait --note` for "this worker said it is done".
+
 Use `ls --tree` for the fleet's state at a glance (`awaiting-input` rows need attention). A worker
 stuck at `awaiting-input` on a non-secret confirmation may be answered once with `send`; a secret or
 judgment call goes to the human.
