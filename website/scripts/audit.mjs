@@ -13,10 +13,22 @@
 // package, or the advisory disappears, this fails and tells you to pin it and
 // delete the entry. An exception that cannot expire is how the drift starts.
 import {execFileSync} from 'node:child_process';
+import {readFileSync} from 'node:fs';
 
 // Accepted advisories. Add an entry ONLY when npm reports no fix available:
 // anything else has a version to pin in package.json's "overrides".
-const ACCEPTED = [];
+const ACCEPTED = [
+  {
+    package: 'picomatch',
+    advisories: ['GHSA-fc5q-39xc-vjpf'],
+    reason:
+      'No patched release exists: the advisory covers picomatch <= 4.0.7 with no first patched version, ' +
+      'and 4.0.7 is the latest published. picomatch is build-time-only docs tooling, pulled in by ' +
+      '@docusaurus/core (micromatch, chokidar, jest-util); it is not in the pairmux binary and not in the ' +
+      "site's emitted JS. The issue is a ReDoS via crafted extglob patterns; the patterns here are build-time " +
+      "glob matching over this repo's files and config, and no pattern is taken from site visitors.",
+  },
+];
 
 const MIN_SEVERITY = 'moderate';
 const RANK = {info: 0, low: 1, moderate: 2, high: 3, critical: 4};
@@ -30,6 +42,36 @@ function runAudit() {
     if (error.stdout) return JSON.parse(error.stdout);
     throw error;
   }
+}
+
+// Whether npm's `fixAvailable` for an accepted package is a real fix. `true`
+// is. An object names a package to install instead, and counts only when that
+// is not a downgrade of what is installed. npm sometimes proposes a downgrade
+// that resolves nothing: for GHSA-fc5q-39xc-vjpf it suggested
+// @docusaurus/preset-classic 3.6.3 or 3.8.0 in place of the installed 3.10.2,
+// on some runs only (most runs said `false`), even though those trees still
+// resolve picomatch 2.x inside the affected `<= 4.0.7`. Treating that as a fix
+// would make the exception fail at random. Anything we cannot parse or compare
+// counts as a fix, so the gate fails closed.
+const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
+function installedVersion(name) {
+  try {
+    return JSON.parse(readFileSync(new URL(`../node_modules/${name}/package.json`, import.meta.url), 'utf8')).version;
+  } catch {
+    return undefined;
+  }
+}
+function isRealFix(fixAvailable, installed = installedVersion) {
+  if (!fixAvailable) return false;
+  if (typeof fixAvailable !== 'object') return true;
+  const proposed = SEMVER.exec(fixAvailable.version ?? '');
+  const current = SEMVER.exec(installed(fixAvailable.name) ?? '');
+  if (!proposed || !current) return true;
+  for (let i = 1; i <= 3; i++) {
+    const diff = Number(proposed[i]) - Number(current[i]);
+    if (diff !== 0) return diff > 0;
+  }
+  return true;
 }
 
 const report = runAudit();
@@ -66,7 +108,7 @@ for (const root of roots.values()) {
   const exception = accepted.get(root.id);
   if (!exception) {
     blocking.push(root);
-  } else if (root.fixAvailable) {
+  } else if (isRealFix(root.fixAvailable)) {
     blocking.push({...root, note: 'a fix is now available — pin it and delete the exception'});
   } else {
     allowed.push({root, exception});
