@@ -3,7 +3,6 @@
 package integration
 
 import (
-	"runtime"
 	"strings"
 	"testing"
 
@@ -17,12 +16,8 @@ func TestUpdateRefusesDevelopmentBinary(t *testing.T) {
 	if code != 1 || e.OK || e.Error == nil || e.Error.Code != output.CodeUpdate {
 		t.Fatalf("update development binary: code=%d envelope=%+v", code, e)
 	}
-	// Windows refuses before looking at the version at all (uv's Windows tool
-	// layout and in-use executables cannot be updated in place).
+	// Every platform, Windows included, checks the version first.
 	want := "version"
-	if runtime.GOOS == "windows" {
-		want = "not supported on Windows"
-	}
 	if !strings.Contains(e.Error.Message, want) || e.Error.Hint == "" {
 		t.Fatalf("missing %q refusal or recovery hint: %+v", want, e.Error)
 	}
