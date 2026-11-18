@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -48,18 +47,36 @@ func (c *Ctx) cmdTUI(args []string) int {
 			"tui needs an interactive terminal, but stdin or stdout is not a tty",
 			"run pairmux tui from an interactive shell; agents use pairmux ls --tree")
 	}
-	app := &tuiApp{c: c, interval: interval, collapsed: map[string]bool{},
-		noColor: os.Getenv("NO_COLOR") != "", results: make(chan tuiResult, 4)}
-	if err := app.run(); err != nil {
-		if errors.Is(err, errTUIUnsupported) {
-			return c.fail(output.CodeBadArgs, err.Error(), "pairmux watch")
-		}
-		return c.fail(output.CodeInternal, "tui: "+err.Error(), "pairmux ls --tree")
+	rc, err := c.runTUI(interval)
+	if errors.Is(err, muxd.ErrNoTUI) {
+		return c.fail(output.CodeBadArgs, err.Error(), "pairmux ls --tree, pairmux watch and pairmux attach work in this console")
 	}
-	return 0
+	return rc
 }
 
-var errTUIUnsupported = errors.New("unsupported")
+// runTUI runs the session manager until the human quits. An error wrapping
+// muxd.ErrNoTUI means this terminal cannot host it (a Windows console
+// without VT input); nothing was drawn or printed then, so a bare ls can fall
+// back to its listing.
+func (c *Ctx) runTUI(interval time.Duration) (int, error) {
+	app := &tuiApp{c: c, interval: interval, collapsed: map[string]bool{},
+		noColor: os.Getenv("NO_COLOR") != "", results: make(chan tuiResult, 4)}
+	run := app.run
+	if tuiRunHook != nil {
+		run = func() error { return tuiRunHook(app) }
+	}
+	if err := run(); err != nil {
+		if errors.Is(err, muxd.ErrNoTUI) {
+			return 0, err
+		}
+		return c.fail(output.CodeInternal, "tui: "+err.Error(), "pairmux ls --tree"), nil
+	}
+	return 0, nil
+}
+
+// tuiRunHook, when set by a test, runs in place of (*tuiApp).run so the
+// terminal can be stood in for.
+var tuiRunHook func(*tuiApp) error
 
 // NoTUIEnv set to anything non-empty keeps a bare ls a listing everywhere.
 const NoTUIEnv = "PAIRMUX_NO_TUI"
@@ -74,8 +91,7 @@ var agentShellEnv = []string{"CLAUDECODE", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWO
 // instead of printing. It errs toward printing: an agent that got a TUI it
 // cannot drive would hang, a person who got a table loses nothing.
 func (c *Ctx) humanAtTerminal() bool {
-	// The TUI needs a unix tty (muxd.RawPoll); on Windows ls stays a table.
-	if runtime.GOOS == "windows" || c.JSON || c.Stdout != os.Stdout || !isTTY() || !stdinIsTTY() {
+	if c.JSON || c.Stdout != os.Stdout || !isTTY() || !stdinIsTTY() {
 		return false
 	}
 	if os.Getenv("TERM") == "dumb" {
@@ -181,9 +197,6 @@ func (a *tuiApp) run() (err error) {
 	a.out = a.c.Stdout
 	restore, err := muxd.RawPoll()
 	if err != nil {
-		if errors.Is(err, muxd.ErrNoTUI) {
-			return fmt.Errorf("%w: %v", errTUIUnsupported, err)
-		}
 		return err
 	}
 	a.restoreTTY = restore

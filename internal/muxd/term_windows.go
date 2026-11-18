@@ -201,9 +201,6 @@ func EnableVT() (restore func()) {
 	return func() { _ = setConsoleMode(out, mode) }
 }
 
-// RawPoll is unavailable on Windows; see ErrNoTUI.
-func RawPoll() (restore func(), err error) { return nil, ErrNoTUI }
-
 // TermSize reports the console size, or 80x24.
 func TermSize() (cols, rows int) {
 	out, err := syscall.GetStdHandle(syscall.STD_OUTPUT_HANDLE)
@@ -213,5 +210,13 @@ func TermSize() (cols, rows int) {
 	return (&winTerminal{out: out}).size()
 }
 
-// WatchResize is a no-op on Windows.
-func WatchResize(fn func()) (stop func()) { return func() {} }
+// WatchResize calls fn whenever the console window is resized, until stop is
+// called. It polls the window size, as attach does: in VT input mode the
+// console reports no resize events through the reads the UI makes.
+func WatchResize(fn func()) (stop func()) {
+	out, err := syscall.GetStdHandle(syscall.STD_OUTPUT_HANDLE)
+	if err != nil {
+		return func() {}
+	}
+	return (&winTerminal{out: out}).watchResize(func(int, int) { fn() })
+}
