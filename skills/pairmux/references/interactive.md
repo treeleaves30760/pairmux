@@ -23,8 +23,9 @@ pairmux decides this mostly from the **terminal itself**, not from the words on 
 
 - **Echo off while canonical (whole-line) input remains enabled is a credential signal** on
   macOS/Linux; it is independent of wording or language. Raw-mode TUIs also turn echo off, so
-  echo-off alone is not a secret verdict. Windows has no tty line discipline to inspect and relies
-  on wording instead.
+  echo-off alone is not a secret verdict. On Windows pairmux reads the pseudo console's input mode
+  the same way (line input on, echo off), but tools that read key by key (OpenSSH, Python `getpass`,
+  `Read-Host -AsSecureString`) show no such mode, so for them it relies on wording.
 - **A recognized phrasing** — `[y/N]`, `(yes/no)`, `password:`, `PIN:`, OTP/MFA codes, API keys,
   pagers (`--More--`, `(END)`, a bare `:`), "press any key" — classifies without waiting.
 - **Anything else that goes quiet mid-line** for ten seconds can be reported as unrecognized.
@@ -38,8 +39,9 @@ can remain `running` when detection misses its prompt; hand off anyway rather th
 
 `PAIRMUX_SECRET_PROMPT_RE` still extends the phrase list for a prompt that echoes what you type and
 is nonetheless sensitive; `pairmux doctor` validates it. On macOS/Linux it is rarely needed: a
-prompt that hides your typing is already classified without it. On Windows it is the only way to
-teach pairmux a differently worded credential prompt.
+prompt that hides your typing is already classified without it. On Windows it is how you teach
+pairmux a differently worded credential prompt from a tool that reads key by key.
+`PAIRMUX_CONSOLE_PROBE=0` stops the Windows console-mode helper (wording alone then).
 
 ## The never-guess-secrets rule
 

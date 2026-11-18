@@ -234,8 +234,10 @@ tokens, and the standard sudo password translations for common locales — are c
 points at human handoff (`wait --human --notify`, which ends on a note or once the prompt is
 answered). The secret verdict comes from the pane's line discipline — echo suppressed while the
 kernel still assembles a line is what `getpass()` does, so it identifies a credential prompt in any
-language and from any tool, including ones no pattern covers. Windows has no tty line discipline to
-read, so there the wording is the only evidence. Phrasing is a second source, and a
+language and from any tool, including ones no pattern covers. Windows has no tty, but the pseudo
+console has the same two facts as its input mode (line input is `ICANON`, echo input is `ECHO`), which
+pairmux reads through a short-lived helper; see [Windows](#windows) for where that falls short.
+Phrasing is a second source, and a
 terminal that merely goes quiet mid-line for ten seconds is reported as an unrecognized prompt so
 an unusual question still surfaces. Recognition of *wording* remains best-effort: a missed prompt
 leaves the terminal `running` (never an auto-answer), and `PAIRMUX_SECRET_PROMPT_RE` extends the
@@ -268,8 +270,9 @@ the reply teaches the next step.
 On Windows (10 1809 or newer, x86-64 or ARM64) pairmux always uses the built-in backend over
 ConPTY; neither tmux nor WSL is needed. This support is new: it is validated by CI on hosted Windows
 Server 2025 runners and was accepted on real Windows 11 x86-64 hardware (Windows PowerShell 5.1,
-cmd.exe and Git Bash terminals through ConPTY, including a human `attach`); the ARM64 build has not
-been exercised at runtime. WSL remains possible: inside it, pairmux is a Linux program and chooses its
+cmd.exe and Git Bash terminals through ConPTY, including a human `attach`). The ARM64 build has not
+been accepted on real hardware; CI runs its unit and packaging tests on a native Windows ARM64 runner
+(`windows-11-arm`). WSL remains possible: inside it, pairmux is a Linux program and chooses its
 backend as on Linux.
 
 - **Shell.** A new terminal starts PowerShell 7 (`pwsh.exe`), else Windows PowerShell
@@ -283,12 +286,30 @@ backend as on Linux.
   (`cmd /v:on /k`, exit status from `ERRORLEVEL`). Git Bash gets the same bash hooks shim as on Unix.
 - **Program terminals.** `new --cmd` runs its command through the shell: PowerShell
   `-EncodedCommand`, `cmd /s /c`, or `bash -lc`.
-- **Secret prompts.** There is no tty line discipline to read, so classification uses prompt wording
-  only; `PAIRMUX_SECRET_PROMPT_RE` can extend it.
+- **Prompt detection.** There is no tty, so pairmux reads the pseudo console's input mode through a
+  short-lived hidden helper (`pairmux __console-probe`, its answer cached for about a second):
+  `ENABLE_LINE_INPUT` is `ICANON` and `ENABLE_ECHO_INPUT` is `ECHO`, and line input with echo
+  cleared is classified as secret whatever the wording. Many Windows tools read key by key instead
+  (Win32-OpenSSH, Go's `x/term`, Python's `getpass`, PowerShell's `Read-Host -AsSecureString`), and
+  the mode says nothing about those; for them the evidence is the prompt's wording, and
+  `PAIRMUX_SECRET_PROMPT_RE` can extend it. Whether a terminal is parked or working comes from the
+  thread states of the processes on the console, so the inferred cases (a quiet unterminated line,
+  a program that reads keys itself and is idle) work as on Unix. A terminal's `meta.json` records
+  `tty` as `conpty:<pid>:<creation time>` for this; terminals created before the upgrade keep
+  wording-only detection. `PAIRMUX_CONSOLE_PROBE=0` turns the helper off and leaves wording as
+  the only evidence.
+- **Terminal UI.** `pairmux tui` (alias `ui`), and a bare `pairmux ls` typed at a console, work in
+  Windows Terminal and in Windows 10 1809+ conhost, which have VT input. A console without it keeps
+  the table for `ls` and fails `tui` with `E_BAD_ARGS`. A Git Bash (mintty) window is not a console
+  to Windows, so `ls` prints the table there. With Quick Edit on, mouse clicks select text and the
+  TUI gets none; the keyboard still works.
 - **Process lifetime.** `kill` ends the terminal's whole process tree through a job object.
 - **Notifications and updates.** `--notify` shows a best-effort notification through Windows
-  PowerShell. `pairmux update` refuses with `E_UPDATE` (see the
-  [CLI reference](./cli-reference.md#update-v060)).
+  PowerShell. `pairmux update` works on a persistent uv install: it proves the copied `pairmux.exe`
+  matches the tool environment's, renames the running executables to `pairmux.exe.old-<pid>` before
+  uv replaces them, and renames them back if uv fails. It refuses a custom `UV_TOOL_DIR` install
+  run from the copy in the executable directory, and a path containing ` (`. See the
+  [CLI reference](./cli-reference.md#update-v060).
 
 ## Statuses and modes
 

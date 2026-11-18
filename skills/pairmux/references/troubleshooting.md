@@ -229,5 +229,6 @@ works but human-interleave correlation is slightly weaker (e.g. bash 3.2, PowerS
 supplies native OSC 133 marks; older/degraded Fish uses its sentinel fallback. pairmux runs natively
 on macOS, Linux, and Windows 10 1809+ (built-in backend; from v1.0.0), and inside WSL. Shell
 selection is `PAIRMUX_SHELL` > `SHELL` > OS fallback; on Windows `SHELL` must name a real file, else
-pwsh → Windows PowerShell → COMSPEC/`cmd.exe`. Secret detection there relies on wording only.
+pwsh → Windows PowerShell → COMSPEC/`cmd.exe`. Secret detection there reads the console input mode, and falls back to wording for tools that
+read key by key and for terminals created before an upgrade.
 `doctor` can return `ok:true,status:"issues"`; read the report and fixes, not just the success flag.

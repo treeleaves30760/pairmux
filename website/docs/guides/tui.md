@@ -106,8 +106,12 @@ The TUI refuses commands that take over the terminal or never end (`attach`, `wa
 
 ## Limits
 
-- The TUI needs an interactive terminal on macOS or Linux. On Windows, use `pairmux watch` and
-  `pairmux attach`.
+- The TUI needs an interactive terminal. On Windows that means Windows Terminal or a Windows 10
+  1809+ console (conhost) with VT input. In an older console `pairmux tui` fails with `E_BAD_ARGS`
+  and a bare `pairmux ls` prints the table; use `pairmux watch` and `pairmux attach` there. A Git
+  Bash (mintty) window is not a console to Windows, so `ls` prints the table in it.
+- In a Windows console with Quick Edit on, mouse clicks select text and the TUI receives none. The
+  keyboard still works; turn Quick Edit off in the console's properties to get clicks.
 - `NO_COLOR` turns color off. The layout and buttons stay.
 - The TUI reads the same state as the CLI on a timer (`--interval`, default 1s). A program that
   needs the same live picture should subscribe to [`pairmux events`](../integrations.md) instead of

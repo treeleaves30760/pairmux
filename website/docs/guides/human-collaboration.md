@@ -121,10 +121,14 @@ This is guidance, not a credential vault or input firewall. The agent must not p
 programs normally suppress terminal echo, but a program that echoes typed input can put it in the
 journal. Before entering a real secret, the human must confirm that the prompt hides input.
 
-On macOS/Linux an echo-suppressed prompt is classified as secret whatever its wording. Windows has no
-tty line discipline to read, so there classification relies on the prompt's wording alone (for
-example PowerShell's `Read-Host -AsSecureString -Prompt Password` shows `Password: `); extend it
-with `PAIRMUX_SECRET_PROMPT_RE` when your tools phrase credential prompts differently.
+On macOS/Linux an echo-suppressed prompt is classified as secret whatever its wording. On Windows
+pairmux reads the pseudo console's input mode, and line input with echo cleared is classified the
+same way. Many Windows tools read key by key (Win32-OpenSSH, Go's `x/term`, Python's `getpass`,
+PowerShell's `Read-Host -AsSecureString`), which that mode does not show; for them classification
+relies on the prompt's wording (PowerShell's `Read-Host -AsSecureString -Prompt Password` shows
+`Password: `). Extend the wording with `PAIRMUX_SECRET_PROMPT_RE` when your tools phrase credential
+prompts differently. Terminals created before an upgrade, and runs with `PAIRMUX_CONSOLE_PROBE=0`,
+use wording alone.
 
 ## Notes flow both ways
 

@@ -60,10 +60,14 @@ recognition (it never replaces it); `pairmux doctor` reports whether the pattern
 
 On macOS and Linux, pairmux also reads the pane's terminal: echo suppressed while a line is being
 read is what `getpass()` does, so such a prompt is classified as secret whatever its wording. Windows
-has no tty line discipline to read, so there classification uses the prompt's wording only. A
-PowerShell `Read-Host -AsSecureString -Prompt Password` shows `Password: ` and is recognized by its
-wording; a credential prompt phrased differently needs `PAIRMUX_SECRET_PROMPT_RE`, or the
-`peek --screen` then `wait --human --notify` fallback above.
+has no tty, but pairmux reads the pseudo console's input mode through a short-lived hidden helper
+(`pairmux __console-probe`, cached for about a second): line input with echo cleared is classified
+the same way. Many Windows tools read key by key and show no such mode (Win32-OpenSSH, Go's
+`x/term`, Python's `getpass`, PowerShell's `Read-Host -AsSecureString`), so for those the evidence
+is the prompt's wording. A PowerShell `Read-Host -AsSecureString -Prompt Password` shows
+`Password: ` and is recognized by its wording; a credential prompt phrased differently needs
+`PAIRMUX_SECRET_PROMPT_RE`, or the `peek --screen` then `wait --human --notify` fallback above.
+Terminals created before an upgrade, and runs with `PAIRMUX_CONSOLE_PROBE=0`, use wording alone.
 
 ## The never-guess-secrets rule
 

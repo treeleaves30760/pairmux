@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`pairmux tui` and `ui` run in a Windows console.** A bare `pairmux ls` or `list` typed at one
+  opens the TUI as it does on macOS and Linux. It works in Windows Terminal and in Windows 10 1809+
+  conhost, which have VT input; a console without it still gets the table from a bare `ls`, and
+  `tui` fails with `E_BAD_ARGS` and points at `ls --tree`, `watch` and `attach`. On Windows,
+  pairmux now decides whether it is talking to a terminal with `GetConsoleMode`, so `NUL` and the
+  pipes of Git Bash (mintty) are not terminals: the listing is printed there. In a console with
+  Quick Edit on, a mouse click selects text and the TUI receives none; the keyboard works, and
+  turning Quick Edit off in the console's properties restores clicks.
+- **`pairmux update` runs on Windows.** It verifies that the running `pairmux.exe` is the one a
+  persistent uv tool installed (the copy in uv's executable directory must match the tool
+  environment's `Scripts\pairmux.exe` byte for byte, and uv's own listing must record both), moves
+  the executables that uv replaces aside as `pairmux.exe.old-<pid>`, because Windows will not
+  overwrite or delete a running program, and runs `uv tool install --upgrade --reinstall`. If uv
+  fails, the executables are moved back. The next update deletes leftover `.old-*` files that are
+  no longer running. An install made with a custom `UV_TOOL_DIR` is refused when the copy in the
+  executable directory is the one running, with a hint to run that tool environment's
+  `Scripts\pairmux.exe update`. A path containing ` (`, such as `Program Files (x86)`, is still
+  refused because uv's listing cannot be parsed unambiguously there.
+- **`PAIRMUX_CONSOLE_PROBE=0`** (also `off`, `false`, `no`) stops pairmux from starting the helper
+  described below; Windows prompt detection then uses wording alone, as before.
+- CI runs the unit and packaging suites on a native Windows ARM64 runner (`windows-arm64-unit` on
+  `windows-11-arm`), so the ARM64 build is now executed in CI. It has still not been accepted on
+  real hardware.
+
+### Changed
+
+- **Windows prompt detection reads the console's input mode.** pairmux asks a short-lived hidden
+  helper (`pairmux __console-probe`, its answer cached for about a second) for the input mode of
+  the terminal's pseudo console. Line input with echo cleared (`ENABLE_LINE_INPUT` set,
+  `ENABLE_ECHO_INPUT` clear, the counterparts of `ICANON` and `ECHO`) is classified as a secret
+  whatever the wording, as on macOS and Linux. Many Windows programs read key by key instead, so
+  line input is off and the mode says nothing about secrecy: Win32-OpenSSH, Go's `x/term`,
+  Python's `getpass` and PowerShell's `Read-Host -AsSecureString` do. For those the evidence is
+  still the prompt's wording and `PAIRMUX_SECRET_PROMPT_RE`, exactly as before; nothing is
+  classified less than it was.
+- **Parked and working states are known on Windows.** pairmux reads the thread states of the
+  processes attached to the console, so the two inferred detections that need them now exist there
+  too: a terminal that goes quiet on an unterminated line is reported as an unrecognized prompt,
+  and one whose program reads keys itself, prints nothing and is off the CPU is reported as
+  `awaiting-input` with a hint to look at the screen. A terminal with a thread on the CPU is no
+  longer reported as waiting.
+- On Windows, `meta.json` records the terminal's `tty` as `conpty:<pid>:<creation time>`, which
+  the helper uses to find the pseudo console. A terminal created before the upgrade has no such
+  value and keeps wording-only detection until it is recreated.
+- `E_UPDATE` is no longer returned for the platform being Windows.
+
 ## [1.4.0] - 2026-11-18
 
 ### Added
