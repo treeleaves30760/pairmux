@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-18
+
 ### Added
 
 - **`pairmux events --exit-with-parent`** ends the command once the process that started it has
@@ -784,7 +786,8 @@ Codex terminals and fixing what broke.
   `E_TMUX`, `E_INTERNAL`).
 
 [#7]: https://github.com/treeleaves30760/pairmux/issues/7
-[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/treeleaves30760/pairmux/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/treeleaves30760/pairmux/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/treeleaves30760/pairmux/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/treeleaves30760/pairmux/compare/v1.0.0...v1.1.0
