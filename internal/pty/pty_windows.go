@@ -90,6 +90,7 @@ type conPty struct {
 	process syscall.Handle
 	job     syscall.Handle
 	pid     int
+	console string // FormatConsoleID of the program; "" when it could not be named
 	in      *os.File
 	out     *os.File
 
@@ -197,6 +198,15 @@ func (p *conPty) spawn(path string, o Options) error {
 	}
 	p.process = pi.Process
 	p.pid = int(pi.ProcessId)
+	// Name the pseudo console by its first program so prompt detection can
+	// inspect it from another process (see FormatConsoleID). Without a
+	// creation time the name could outlive the pid, so none is recorded.
+	var created, exited, kernel, user syscall.Filetime
+	if syscall.GetProcessTimes(pi.Process, &created, &exited, &kernel, &user) == nil {
+		if ft := uint64(created.HighDateTime)<<32 | uint64(created.LowDateTime); ft != 0 {
+			p.console = FormatConsoleID(pi.ProcessId, ft)
+		}
+	}
 
 	// A kill-on-close job holds the whole tree the program starts, so killing
 	// a terminal — or this server dying — takes its children with it, the way
@@ -267,7 +277,10 @@ func (p *conPty) Resize(cols, rows int) error {
 
 func (p *conPty) Pid() int { return p.pid }
 
-func (p *conPty) TTY() string { return "" }
+// TTY returns a console identifier rather than a path: Windows has no terminal
+// device, and a pseudo console is reachable only through a process attached
+// to it.
+func (p *conPty) TTY() string { return p.console }
 
 func (p *conPty) Wait() (int, error) {
 	<-p.exited

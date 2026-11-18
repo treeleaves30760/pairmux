@@ -44,8 +44,11 @@ type Pty interface {
 	Resize(cols, rows int) error
 	// Pid is the program's process id.
 	Pid() int
-	// TTY is the path of the terminal device (e.g. /dev/ttys004); "" where the
-	// platform has none (Windows).
+	// TTY names the terminal for read-only inspection by prompt detection:
+	// the device path on Unix (e.g. /dev/ttys004), and on Windows, which has
+	// no terminal device, a console identifier (see FormatConsoleID) naming
+	// the pseudo console through the program attached to it. "" when neither
+	// is available.
 	TTY() string
 	// Wait blocks until the program exits and returns its exit status; a
 	// program killed by a signal reports 128+signal like a shell would.

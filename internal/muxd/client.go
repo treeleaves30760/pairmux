@@ -350,7 +350,8 @@ func (c *Client) KillServer() error {
 	return err
 }
 
-// PaneTTY returns the pane's terminal device ("" on Windows, which has none).
+// PaneTTY returns the pane's terminal device, or on Windows, which has none, a
+// console identifier (pty.FormatConsoleID) that prompt detection resolves.
 func (c *Client) PaneTTY(paneID string) (string, error) {
 	resp, err := c.call(request{Op: "pane-tty", Pane: paneID})
 	if err != nil {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/treeleaves30760/pairmux/internal/backend"
 	"github.com/treeleaves30760/pairmux/internal/core"
+	"github.com/treeleaves30760/pairmux/internal/detect"
 	"github.com/treeleaves30760/pairmux/internal/mux"
 	"github.com/treeleaves30760/pairmux/internal/muxd"
 	"github.com/treeleaves30760/pairmux/internal/output"
@@ -48,6 +49,12 @@ func Main(args []string) int {
 	if len(args) > 0 && args[0] == muxd.ServeCommand {
 		return muxd.ServeMain(args[1:])
 	}
+	// So is the helper that reads a Windows pseudo console's input mode for
+	// prompt detection (see detect/console.go). Every other command may run it.
+	if len(args) > 0 && args[0] == detect.ConsoleProbeCommand {
+		return detect.ConsoleProbeMain(args[1:])
+	}
+	detect.EnableConsoleProbe()
 	socket := os.Getenv("PAIRMUX_SOCKET")
 	rest, jsonMode, socket := stripGlobals(args, false, socket)
 	if socket == "" {
