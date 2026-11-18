@@ -86,7 +86,9 @@ func sameUpdateContent(path string, info os.FileInfo, other string) (bool, error
 	}
 	defer a.Close()
 	opened, err := a.Stat()
-	if err != nil || !os.SameFile(info, opened) {
+	// SameFile alone is not enough: Linux reuses a freed inode number at once,
+	// so a replacement can share the old identity. Size, mode and mtime too.
+	if err != nil || !sameUpdateFile(info, opened) {
 		return false, fmt.Errorf("%s changed while opening it", filepath.Base(path))
 	}
 	b, err := os.Open(other)
