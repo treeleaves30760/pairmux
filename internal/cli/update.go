@@ -31,13 +31,15 @@ const (
 	updateUVHint        = "Install uv from https://docs.astral.sh/uv/getting-started/installation/ and retry pairmux update."
 )
 
-// Only process discovery and execution are injected. Filesystem ownership
-// checks always run, including in tests. A test-only runner can redirect the
-// fixed install argv to an offline wheelhouse without a production override.
+// Only process discovery, execution and the Windows move-aside renames are
+// injected. Filesystem ownership checks always run, including in tests. A
+// test-only runner can redirect the fixed install argv to an offline wheelhouse
+// without a production override. A zero fs uses the real filesystem.
 type updateOps struct {
 	executable func() (string, error)
 	lookPath   func(string) (string, error)
 	run        func(string, []string, []string) (updateRunResult, error)
+	fs         updateFS
 }
 
 type updateRunResult struct {
@@ -45,8 +47,10 @@ type updateRunResult struct {
 	stdoutTruncated, stderrTruncated bool
 }
 
-// updateGOOS is runtime.GOOS, a variable so tests can exercise the Windows
-// refusal on any platform.
+// updateGOOS is runtime.GOOS, a variable so tests can exercise uv's Windows
+// tool layout (copied .exe entrypoints, Scripts directory, move-aside of the
+// running executable) on any platform. Only the layout follows it; filesystem
+// semantics such as exec bits and path syntax follow the real platform.
 var updateGOOS = runtime.GOOS
 
 func (c *Ctx) cmdUpdate(args []string) int {
@@ -64,29 +68,45 @@ func (c *Ctx) cmdUpdateWith(args []string, current string, ops updateOps) int {
 	if len(args) != 0 {
 		return c.usage("pairmux update", "update accepts no arguments or command-specific flags; add global --json for JSON output")
 	}
-	if updateGOOS == "windows" {
-		// uv installs Windows tools as copied .exe files rather than the
-		// symlinked layout this updater verifies ownership through, and
-		// Windows cannot replace an executable while it runs — which this one
-		// is. Refuse before touching anything and name the manual route.
-		return c.fail(output.CodeUpdate, "pairmux update is not supported on Windows",
-			"Close pairmux, then run: uv tool install --upgrade pairmux (or pip install -U pairmux in the environment that has it).")
-	}
 	old, err := parseUpdateVersion(current)
 	if err != nil {
 		return c.fail(output.CodeUpdate, fmt.Sprintf("running version %q is not a canonical release", current),
 			"Install a released pairmux with your existing package manager before retrying update.")
 	}
 
+	layout := currentUpdateLayout()
 	executable, err := ops.executable()
 	if err != nil {
 		return c.fail(output.CodeUpdate, "cannot locate the running executable: "+err.Error(), updateOwnershipHint)
 	}
-	installation, err := locateUpdateInstallation(executable)
+	running, err := canonicalUpdateExecutable(executable)
 	if err != nil {
 		return c.fail(output.CodeUpdate, "cannot verify a persistent uv-owned pairmux installation: "+err.Error(), updateOwnershipHint)
 	}
-	uv, err := resolveUpdateUV(ops.lookPath, installation.env)
+	installation, err := locateUpdateInstallation(running)
+	var uv string
+	if err != nil && layout.windows && errors.Is(err, errUpdateNotToolBinary) && filepath.Base(running) == layout.name {
+		// uv copies Windows entrypoints into the executable directory, so the
+		// usual running binary has no link back to its tool environment. Ask
+		// uv's default tool directory, under the same scrubbed environment,
+		// which environment records it; inspect() below then proves the copy.
+		if uv, err = resolveUpdateUV(ops.lookPath, ""); err != nil {
+			return c.fail(output.CodeUpdate, err.Error(), updateUVHint)
+		}
+		var binary string
+		if binary, err = discoverUpdateWindowsBinary(uv, updateEnvironment(os.Environ(), "", ""), ops.run); err != nil {
+			return c.fail(output.CodeUpdate, "cannot verify a persistent uv-owned pairmux installation: "+err.Error(), updateWindowsDiscoveryHint)
+		}
+		installation, err = locateUpdateInstallation(binary)
+	}
+	if err != nil {
+		return c.fail(output.CodeUpdate, "cannot verify a persistent uv-owned pairmux installation: "+err.Error(), updateOwnershipHint)
+	}
+	if uv == "" {
+		uv, err = resolveUpdateUV(ops.lookPath, installation.env)
+	} else {
+		err = updateUVOutside(uv, installation.env)
+	}
 	if err != nil {
 		return c.fail(output.CodeUpdate, err.Error(), updateUVHint)
 	}
@@ -97,9 +117,25 @@ func (c *Ctx) cmdUpdateWith(args []string, current string, ops updateOps) int {
 	if err := installation.inspect(uv, env, ops.run); err != nil {
 		return c.fail(output.CodeUpdate, "cannot verify uv ownership: "+err.Error(), updateOwnershipHint)
 	}
+	if layout.windows && running != installation.binary && running != installation.entrypointResolved {
+		return c.fail(output.CodeUpdate, "cannot verify uv ownership: the running executable is neither the tool environment's "+
+			layout.name+" nor its recorded entrypoint", updateOwnershipHint)
+	}
 	env = updateEnvironment(os.Environ(), installation.toolRoot, filepath.Dir(installation.entrypoint))
 	if err := installation.recheck(); err != nil {
 		return c.fail(output.CodeUpdate, "installation changed before update: "+err.Error(), updateOwnershipHint)
+	}
+
+	// Windows cannot overwrite or delete an executable image while it runs
+	// (this process, or a daemon started from the same file), but it can
+	// rename one. Move both files uv replaces aside on their own volumes.
+	var aside *updateAside
+	if layout.windows {
+		files := ops.fs.orDefault()
+		cleanUpdateAside(files, layout, installation.binDir, installation.toolRoot)
+		if aside, err = moveUpdateAside(files, installation, os.Getpid()); err != nil {
+			return c.fail(output.CodeUpdate, "cannot move the installed executables aside before update: "+err.Error(), updateRepairHint)
+		}
 	}
 
 	// A fresh install requirement resets the old receipt's pins, constraints,
@@ -110,7 +146,7 @@ func (c *Ctx) cmdUpdateWith(args []string, current string, ops updateOps) int {
 		"--no-cache", "--prerelease", "disallow", "pairmux>=" + old.core()}
 	result, err := ops.run(uv, args, env)
 	if err != nil {
-		return c.fail(output.CodeUpdate, updateCommandFailure("uv tool install", result, err), updateRepairHint)
+		return c.fail(output.CodeUpdate, updateCommandFailure("uv tool install", result, err)+aside.restore(), updateRepairHint)
 	}
 
 	// The old linker stamp remains in this process. Check the replacement's
@@ -129,23 +165,26 @@ func (c *Ctx) cmdUpdateWith(args []string, current string, ops updateOps) int {
 		err = updated.recheck()
 	}
 	if err != nil {
-		return c.fail(output.CodeUpdate, "uv finished, but replacement ownership could not be verified: "+err.Error(), updateRepairHint)
+		return c.fail(output.CodeUpdate, "uv finished, but replacement ownership could not be verified: "+err.Error()+aside.kept(), updateRepairHint)
 	}
 	result, err = ops.run(updated.binary, []string{"--json", "version"}, env)
 	if err != nil {
-		return c.fail(output.CodeUpdate, updateCommandFailure("replacement version check", result, err), updateRepairHint)
+		return c.fail(output.CodeUpdate, updateCommandFailure("replacement version check", result, err)+aside.kept(), updateRepairHint)
 	}
 	newVersion, err := parseUpdateVersionReply(result)
 	if err != nil {
-		return c.fail(output.CodeUpdate, "uv finished, but the replacement version could not be verified: "+err.Error(), updateRepairHint)
+		return c.fail(output.CodeUpdate, "uv finished, but the replacement version could not be verified: "+err.Error()+aside.kept(), updateRepairHint)
 	}
 	newRelease, err := parseUpdateVersion(newVersion)
 	if err != nil || newRelease.prerelease || compareUpdateCore(newRelease, old) < 0 {
-		return c.fail(output.CodeUpdate, fmt.Sprintf("replacement version %q is not a stable release at or above %s", newVersion, old.core()), updateRepairHint)
+		return c.fail(output.CodeUpdate, fmt.Sprintf("replacement version %q is not a stable release at or above %s", newVersion, old.core())+aside.kept(), updateRepairHint)
 	}
 	if err := updated.recheck(); err != nil {
-		return c.fail(output.CodeUpdate, "replacement changed during the version check: "+err.Error(), updateRepairHint)
+		return c.fail(output.CodeUpdate, "replacement changed during the version check: "+err.Error()+aside.kept(), updateRepairHint)
 	}
+	// Best effort: a moved-aside image that is still running (this process)
+	// cannot be deleted yet; a later update removes it.
+	aside.discard()
 	status := "updated"
 	if !old.prerelease && compareUpdateCore(old, newRelease) == 0 {
 		status = "refreshed"
@@ -189,40 +228,74 @@ func compareUpdateCore(a, b updateVersion) int {
 }
 
 type updateInstallation struct {
+	layout                updateLayout
 	binary, env, toolRoot string
 	receipt               []byte
 	binaryInfo            os.FileInfo
 	entrypoint, link      string
-	binDir                string // canonical directory, for post-install identity
+	entrypointResolved    string      // canonical recorded entrypoint
+	entrypointInfo        os.FileInfo // Windows layout: identity of the verified copy
+	binDir                string      // canonical directory, for post-install identity
 }
 
-func locateUpdateInstallation(executable string) (*updateInstallation, error) {
+// errUpdateNotToolBinary marks an executable outside the
+// <tool-root>/pairmux/<scripts>/ layout. On Windows that is the usual case:
+// uv copied the entrypoint into its executable directory.
+var errUpdateNotToolBinary = errors.New("the running binary is not inside a uv tool environment")
+
+func canonicalUpdateExecutable(executable string) (string, error) {
 	binary, err := filepath.EvalSymlinks(executable)
 	if err != nil {
-		return nil, fmt.Errorf("resolve executable: %w", err)
+		return "", fmt.Errorf("resolve executable: %w", err)
 	}
 	binary, err = filepath.Abs(binary)
 	if err != nil || !safeUpdatePath(binary) {
-		return nil, fmt.Errorf("the executable path is not supported")
+		return "", fmt.Errorf("the executable path is not supported")
+	}
+	return binary, nil
+}
+
+func locateUpdateInstallation(executable string) (*updateInstallation, error) {
+	layout := currentUpdateLayout()
+	binary, err := canonicalUpdateExecutable(executable)
+	if err != nil {
+		return nil, err
 	}
 	bin := filepath.Dir(binary)
 	env := filepath.Dir(bin)
-	if filepath.Base(binary) != "pairmux" || filepath.Base(bin) != "bin" || filepath.Base(env) != "pairmux" {
-		return nil, fmt.Errorf("the running binary is not <tool-root>/pairmux/bin/pairmux")
+	if filepath.Base(binary) != layout.name || filepath.Base(bin) != layout.scripts || filepath.Base(env) != "pairmux" {
+		return nil, fmt.Errorf("%w (expected <tool-root>/pairmux/%s/%s)", errUpdateNotToolBinary, layout.scripts, layout.name)
 	}
-	info, err := os.Stat(binary)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+	info, err := updateLstat(binary)
+	if err != nil || !updateExecutableInfo(info) {
 		return nil, fmt.Errorf("the running binary is not a regular executable")
 	}
 	receipt, err := readUpdateReceipt(filepath.Join(env, "uv-receipt.toml"))
 	if err != nil {
 		return nil, err
 	}
-	return &updateInstallation{binary: binary, env: env, toolRoot: filepath.Dir(env), receipt: receipt, binaryInfo: info}, nil
+	return &updateInstallation{layout: layout, binary: binary, env: env, toolRoot: filepath.Dir(env), receipt: receipt, binaryInfo: info}, nil
+}
+
+// updateLstat is os.Lstat with the file identity captured immediately. On
+// Windows, Go fills a FileInfo's volume/file index lazily from its path at the
+// first os.SameFile call, so a stale info would otherwise be compared using
+// whatever file replaced it. Comparing the info with itself pins it now.
+func updateLstat(path string) (os.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if err == nil {
+		os.SameFile(info, info)
+	}
+	return info, err
+}
+
+// Windows has no exec bits (Go reports 0666 or 0444): a regular file suffices.
+func updateExecutableInfo(info os.FileInfo) bool {
+	return info.Mode().IsRegular() && (runtime.GOOS == "windows" || info.Mode().Perm()&0o111 != 0)
 }
 
 func readUpdateReceipt(path string) ([]byte, error) {
-	before, err := os.Lstat(path)
+	before, err := updateLstat(path)
 	if err != nil || !before.Mode().IsRegular() {
 		return nil, fmt.Errorf("uv-receipt.toml is missing or is not a regular non-symlink file")
 	}
@@ -280,8 +353,17 @@ func safeUpdateText(b []byte, receipt bool) bool {
 	return true
 }
 
+// On Windows the backslash is the separator, and filepath.Clean there rewrites
+// any forward slash, so a clean path cannot mix the two.
 func safeUpdatePath(path string) bool {
-	return filepath.IsAbs(path) && filepath.Clean(path) == path && !strings.ContainsAny(path, "\\\n\r\t") && safeUpdateText([]byte(path), false)
+	return filepath.IsAbs(path) && filepath.Clean(path) == path && !strings.ContainsAny(path, updatePathControls()) && safeUpdateText([]byte(path), false)
+}
+
+func updatePathControls() string {
+	if filepath.Separator == '\\' {
+		return "\n\r\t"
+	}
+	return "\\\n\r\t"
 }
 
 func resolveUpdateUV(lookPath func(string) (string, error), env string) (string, error) {
@@ -294,7 +376,7 @@ func resolveUpdateUV(lookPath func(string) (string, error), env string) (string,
 		if homeErr != nil || !filepath.IsAbs(home) {
 			return "", fmt.Errorf("uv was not found on PATH or in ~/.local/bin")
 		}
-		path = filepath.Join(home, ".local", "bin", "uv")
+		path = filepath.Join(home, ".local", "bin", updateUVName())
 	}
 	if !filepath.IsAbs(path) {
 		return "", fmt.Errorf("uv does not have a supported absolute executable path")
@@ -308,109 +390,163 @@ func resolveUpdateUV(lookPath func(string) (string, error), env string) (string,
 		return "", fmt.Errorf("uv does not have a supported absolute executable path")
 	}
 	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+	if err != nil || !updateExecutableInfo(info) {
 		return "", fmt.Errorf("uv is not a regular executable")
 	}
-	rel, err := filepath.Rel(env, path)
-	if err != nil || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("uv is inside the pairmux environment being replaced; install uv separately")
+	if env == "" { // Windows discovery: checked once the environment is known.
+		return path, nil
 	}
-	return path, nil
+	return path, updateUVOutside(path, env)
+}
+
+func updateUVName() string {
+	if runtime.GOOS == "windows" {
+		return "uv.exe"
+	}
+	return "uv"
+}
+
+func updateUVOutside(uv, env string) error {
+	rel, err := filepath.Rel(env, uv)
+	if err != nil || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("uv is inside the pairmux environment being replaced; install uv separately")
+	}
+	return nil
 }
 
 func updateEnvironment(original []string, toolRoot, binDir string) []string {
 	env := make([]string, 0, len(original)+2)
 	for _, kv := range original {
 		name, _, _ := strings.Cut(kv, "=")
+		if runtime.GOOS == "windows" {
+			// Windows (and uv's env lookups there) ignore the case of names.
+			name = strings.ToUpper(name)
+		}
 		if strings.HasPrefix(name, "UV_") || strings.HasPrefix(name, "CARGO_DIST_") ||
 			strings.HasPrefix(name, "INSTALLER_") || name == "CARGO_HOME" {
 			continue
 		}
 		env = append(env, kv)
 	}
-	env = append(env, "UV_TOOL_DIR="+toolRoot)
+	if toolRoot != "" { // Empty only for Windows discovery: uv's default.
+		env = append(env, "UV_TOOL_DIR="+toolRoot)
+	}
 	if binDir != "" {
 		env = append(env, "UV_TOOL_BIN_DIR="+binDir)
 	}
 	return env
 }
 
+// Paths are matched loosely here and then held to safeUpdatePath, which
+// requires a clean absolute path in the platform's own syntax.
 var (
-	updateListHeader = regexp.MustCompile(`^([a-zA-Z0-9_.-]+) v([^[:space:]]+) \((/.*)\)$`)
-	updateListEntry  = regexp.MustCompile(`^- ([a-zA-Z0-9_.-]+) \((/.*)\)$`)
+	updateListHeader = regexp.MustCompile(`^([a-zA-Z0-9_.-]+) v([^[:space:]]+) \((.+)\)$`)
+	updateListEntry  = regexp.MustCompile(`^- ([a-zA-Z0-9_.-]+) \((.+)\)$`)
 )
 
 func parseUpdateListing(b []byte, env string) (string, error) {
-	if len(b) == 0 || len(b) > updateOutputLimit || !safeUpdateText(b, false) || bytes.Contains(b, []byte(`\`)) {
-		return "", fmt.Errorf("uv tool listing is empty, oversized or has unsupported characters")
+	_, entrypoint, err := parseUpdateListingIn(b, env)
+	return entrypoint, err
+}
+
+// parseUpdateListingIn returns the pairmux environment and its single recorded
+// entrypoint. With env == "" (Windows discovery only) the listed environment
+// is returned, canonicalized, instead of being required to equal env.
+func parseUpdateListingIn(b []byte, env string) (string, string, error) {
+	layout := currentUpdateLayout()
+	// A backslash is only ever a Windows path separator in uv's listing.
+	if len(b) == 0 || len(b) > updateOutputLimit || !safeUpdateText(b, false) ||
+		filepath.Separator != '\\' && bytes.Contains(b, []byte(`\`)) {
+		return "", "", fmt.Errorf("uv tool listing is empty, oversized or has unsupported characters")
 	}
 	tools, entries, paths := map[string]bool{}, map[string]bool{}, map[string]bool{}
-	tool, entrypoint := "", ""
+	tool, entrypoint, listed := "", "", ""
 	pairmuxCount := 0
 	for _, line := range strings.Split(strings.TrimSuffix(string(b), "\n"), "\n") {
 		// uv prints receipt names and paths without quoting. More than one
 		// delimiter could hide a different install-path inside an entrypoint name.
 		if strings.Count(line, " (") != 1 {
-			return "", fmt.Errorf("uv tool listing has an ambiguous name/path delimiter")
+			return "", "", fmt.Errorf("uv tool listing has an ambiguous name/path delimiter")
 		}
 		if m := updateListHeader.FindStringSubmatch(line); m != nil {
 			tool = m[1]
 			if tools[tool] || !safeUpdatePath(m[3]) {
-				return "", fmt.Errorf("uv tool listing has a duplicate or unsupported header")
+				return "", "", fmt.Errorf("uv tool listing has a duplicate or unsupported header")
 			}
 			tools[tool] = true
 			if tool == "pairmux" {
 				resolved, err := filepath.EvalSymlinks(m[3])
-				if err != nil || resolved != env {
-					return "", fmt.Errorf("the listed pairmux environment is not the running environment")
+				if err != nil || env != "" && resolved != env || env == "" && (!safeUpdatePath(resolved) || filepath.Base(resolved) != "pairmux") {
+					return "", "", fmt.Errorf("the listed pairmux environment is not the running environment")
 				}
+				listed = resolved
 			}
 			continue
 		}
 		m := updateListEntry.FindStringSubmatch(line)
 		if m == nil || tool == "" || !safeUpdatePath(m[2]) {
-			return "", fmt.Errorf("uv tool listing has an unrecognized line or continuation")
+			return "", "", fmt.Errorf("uv tool listing has an unrecognized line or continuation")
 		}
 		key := tool + "/" + m[1]
 		if entries[key] || paths[m[2]] {
-			return "", fmt.Errorf("uv tool listing has duplicate entrypoints")
+			return "", "", fmt.Errorf("uv tool listing has duplicate entrypoints")
 		}
 		entries[key], paths[m[2]] = true, true
 		if tool == "pairmux" {
 			pairmuxCount++
-			if m[1] != "pairmux" || filepath.Base(m[2]) != "pairmux" {
-				return "", fmt.Errorf("pairmux has an unexpected recorded entrypoint")
+			// uv names an entrypoint after its file, so pairmux.exe on Windows.
+			if m[1] != layout.name || filepath.Base(m[2]) != layout.name {
+				return "", "", fmt.Errorf("pairmux has an unexpected recorded entrypoint")
 			}
 			entrypoint = m[2]
 		}
 	}
 	if !tools["pairmux"] || pairmuxCount != 1 {
-		return "", fmt.Errorf("uv tool listing must contain exactly one pairmux tool and one pairmux entrypoint")
+		return "", "", fmt.Errorf("uv tool listing must contain exactly one pairmux tool and one pairmux entrypoint")
 	}
-	return entrypoint, nil
+	return listed, entrypoint, nil
+}
+
+func runUpdateListing(uv string, env []string, run func(string, []string, []string) (updateRunResult, error)) ([]byte, error) {
+	result, err := run(uv, []string{"tool", "list", "--no-config", "--show-paths", "--color", "never"}, env)
+	if err != nil {
+		return nil, fmt.Errorf("%s", updateCommandFailure("uv tool list", result, err))
+	}
+	if result.stdoutTruncated {
+		return nil, fmt.Errorf("uv tool listing exceeds %d bytes", updateOutputLimit)
+	}
+	return result.stdout, nil
 }
 
 func (installation *updateInstallation) inspect(uv string, env []string, run func(string, []string, []string) (updateRunResult, error)) error {
-	result, err := run(uv, []string{"tool", "list", "--no-config", "--show-paths", "--color", "never"}, env)
-	if err != nil {
-		return fmt.Errorf("%s", updateCommandFailure("uv tool list", result, err))
-	}
-	if result.stdoutTruncated {
-		return fmt.Errorf("uv tool listing exceeds %d bytes", updateOutputLimit)
-	}
-	entrypoint, err := parseUpdateListing(result.stdout, installation.env)
+	listing, err := runUpdateListing(uv, env, run)
 	if err != nil {
 		return err
 	}
-	link, err := verifyUpdateEntrypoint(entrypoint, installation.binary)
+	entrypoint, err := parseUpdateListing(listing, installation.env)
 	if err != nil {
 		return err
+	}
+	var link string
+	var info os.FileInfo
+	if installation.layout.windows {
+		info, err = verifyUpdateCopiedEntrypoint(entrypoint, installation.binary)
+	} else {
+		link, err = verifyUpdateEntrypoint(entrypoint, installation.binary)
+	}
+	if err != nil {
+		return err
+	}
+	resolved, err := filepath.EvalSymlinks(entrypoint)
+	if err != nil {
+		return fmt.Errorf("resolve the recorded pairmux entrypoint: %w", err)
 	}
 	binDir, err := filepath.EvalSymlinks(filepath.Dir(entrypoint))
 	if err != nil {
 		return fmt.Errorf("resolve the recorded executable directory: %w", err)
 	}
 	installation.entrypoint, installation.link, installation.binDir = entrypoint, link, binDir
+	installation.entrypointResolved, installation.entrypointInfo = resolved, info
 	// The listing may acquire uv's own lock, but is not an atomic snapshot.
 	// Detect receipt/link changes after it and again before the install.
 	return installation.recheck()
@@ -440,17 +576,26 @@ func (installation *updateInstallation) recheck() error {
 	if !bytes.Equal(receipt, installation.receipt) {
 		return fmt.Errorf("uv-receipt.toml changed since it was inspected")
 	}
-	info, err := os.Lstat(installation.binary)
+	info, err := updateLstat(installation.binary)
 	resolved, resolveErr := filepath.EvalSymlinks(installation.binary)
 	if err != nil || resolveErr != nil || resolved != installation.binary || !info.Mode().IsRegular() || !sameUpdateFile(installation.binaryInfo, info) {
 		return fmt.Errorf("the binary changed since it was inspected")
 	}
-	link, err := verifyUpdateEntrypoint(installation.entrypoint, installation.binary)
-	if err != nil {
-		return err
-	}
-	if link != installation.link {
-		return fmt.Errorf("the recorded pairmux symlink changed since it was inspected")
+	if installation.layout.windows {
+		// inspect() compared the copy's bytes; from then on its identity,
+		// size and modification time stand in for them, as for the binary.
+		info, err := updateLstat(installation.entrypoint)
+		if err != nil || !info.Mode().IsRegular() || !sameUpdateFile(installation.entrypointInfo, info) {
+			return fmt.Errorf("the recorded pairmux entrypoint changed since it was inspected")
+		}
+	} else {
+		link, err := verifyUpdateEntrypoint(installation.entrypoint, installation.binary)
+		if err != nil {
+			return err
+		}
+		if link != installation.link {
+			return fmt.Errorf("the recorded pairmux symlink changed since it was inspected")
+		}
 	}
 	binDir, err := filepath.EvalSymlinks(filepath.Dir(installation.entrypoint))
 	if err != nil || binDir != installation.binDir {
