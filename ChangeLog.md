@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-18
+
+### Added
+
+- **`pairmux events --exit-with-parent`** ends the command once the process that started it has
+  exited. Without it, a stream whose reader died only noticed on its next write, so with a quiet
+  fleet an orphaned `pairmux events` kept polling forever. The stream's last line is then `end` with
+  the new reason **`parent-exited`**, and the exit code is 0. The flag is opt-in, so
+  `nohup pairmux events > file &` still outlives its shell, and it works with `--wait` too. It has
+  no effect when pid 1 started the command (a container's PID 1, a systemd unit, a launchd agent),
+  and on macOS and Linux a parent that exits before `pairmux` has started is not detected.
+- **The TUI measures how wide your terminal draws its glyphs.** A terminal set to draw East Asian
+  Ambiguous characters double-width (common in CJK setups) draws `●` `─` `│` `╭` and similar glyphs
+  two cells wide, which pushed borders out of line and put mouse clicks on the wrong column. At
+  startup the TUI asks the terminal where the cursor lands after each glyph and replaces any glyph
+  that comes back two cells wide with an ASCII one (`+ - |` for borders, `* ! o x` for status
+  marks). A terminal that does not answer within about 200 ms keeps the usual glyphs.
+  **`PAIRMUX_TUI_AMBIGUOUS_WIDTH=1`** or **`=2`** skips the check and sets the width yourself.
+
+### Fixed
+
+- The v1.3.0 TUI lost its right-hand border column: the boxes that reach the edge of the screen were
+  missing their right edge (`╮`, `│`, `╯`), because each row's erase-to-end-of-line wiped the last
+  cell. The border is restored.
+- An `events --wait` stopped by a signal (Ctrl-C or SIGTERM, for example) before anything changed
+  replied `status: "timeout"`, with a next step that doubled a deadline that had never been reached.
+  It now replies **`interrupted`**, still with exit code 0, and suggests running the same wait
+  again.
+
 ## [1.3.0] - 2026-11-17
 
 ### Added
@@ -757,7 +786,8 @@ Codex terminals and fixing what broke.
   `E_TMUX`, `E_INTERNAL`).
 
 [#7]: https://github.com/treeleaves30760/pairmux/issues/7
-[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/treeleaves30760/pairmux/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/treeleaves30760/pairmux/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/treeleaves30760/pairmux/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/treeleaves30760/pairmux/compare/v1.0.0...v1.1.0

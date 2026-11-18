@@ -14,7 +14,7 @@ import (
 	"github.com/treeleaves30760/pairmux/internal/output"
 )
 
-const eventsUsage = "pairmux events [--tree] [--wait] [--status S,S] [--max N] [--timeout D] [--interval 1s] [--no-snapshot]"
+const eventsUsage = "pairmux events [--tree] [--wait] [--status S,S] [--max N] [--timeout D] [--interval 1s] [--no-snapshot] [--exit-with-parent]"
 
 // defaultEventsWait bounds events --wait when no --timeout is given, so an
 // agent that forgets one is not parked forever.
@@ -36,11 +36,16 @@ const defaultEventsWait = 10 * time.Minute
 //
 // Output activity alone (last_activity) is never a change; it would turn the
 // stream into a firehose. Read peek or log for content.
+//
+// --exit-with-parent ends it once the process that started it is gone. A
+// stream notices a dead reader only on its next write, so with a quiet fleet
+// an orphaned stream would otherwise poll forever. It is opt-in because the
+// opposite is also a use: nohup pairmux events > file & must outlive its shell.
 func (c *Ctx) cmdEvents(args []string) int {
-	var tree, noSnap, waitMode bool
+	var tree, noSnap, waitMode, withParent bool
 	var intervalS, maxS, timeoutS, statusS string
 	if _, err := parseFlags(args, flagSpec{
-		bools: map[string]*bool{"tree": &tree, "r": &tree, "no-snapshot": &noSnap, "wait": &waitMode},
+		bools: map[string]*bool{"tree": &tree, "r": &tree, "no-snapshot": &noSnap, "wait": &waitMode, "exit-with-parent": &withParent},
 		vals:  map[string]*string{"interval": &intervalS, "max": &maxS, "timeout": &timeoutS, "status": &statusS},
 	}); err != nil {
 		return c.usage(eventsUsage, err.Error())
@@ -84,6 +89,18 @@ func (c *Ctx) cmdEvents(args []string) int {
 		timeout = defaultEventsWait
 	}
 
+	// Armed before the first listing, so a parent that dies while it runs is
+	// still caught on the first tick.
+	parentGone := func() bool { return false }
+	if withParent {
+		gone, stop, err := watchParent()
+		if err != nil {
+			return c.fail(output.CodeInternal, err.Error(), "run it without --exit-with-parent and stop it yourself")
+		}
+		defer stop()
+		parentGone = gone
+	}
+
 	nodes, err := c.walkTree(tree)
 	if err != nil {
 		return c.muxErr(err)
@@ -109,11 +126,16 @@ func (c *Ctx) cmdEvents(args []string) int {
 		return enc.Encode(e) == nil
 	}
 	finish := func(reason string) int {
+		if reason == endParentExited {
+			// Nobody may be reading any more: the goodbye is best effort, and
+			// a closed pipe must not turn a clean exit into death by SIGPIPE.
+			tolerateClosedStdout()
+		}
 		if !waitMode {
 			send(output.Event{Type: "end", Reason: reason})
 			return 0
 		}
-		return c.emitFleetChanges(collected, tree, statusS, timeout)
+		return c.emitFleetChanges(collected, tree, statusS, timeout, reason)
 	}
 
 	if !noSnap && !waitMode {
@@ -148,6 +170,9 @@ func (c *Ctx) cmdEvents(args []string) int {
 		case <-deadline:
 			return finish("timeout")
 		case <-tick.C:
+		}
+		if parentGone() {
+			return finish(endParentExited)
 		}
 		nodes, err := c.walkTree(tree)
 		if err != nil {
@@ -260,12 +285,22 @@ func rowChanges(a, b output.TerminalRow) []string {
 	return out
 }
 
+// endParentExited is the end reason (and, for --wait, the stop cause) when
+// --exit-with-parent saw the starting process go away.
+const endParentExited = "parent-exited"
+
 // emitFleetChanges is events --wait's reply: what changed, and what to do
-// about each change.
-func (c *Ctx) emitFleetChanges(evs []output.Event, tree bool, statusS string, timeout time.Duration) int {
+// about each change. reason is why the wait stopped: max, timeout,
+// interrupted (a signal) or parent-exited. A wait stopped from outside before
+// anything changed is interrupted, not timeout: its deadline never arrived, so
+// the timeout advice (wait longer) would be wrong.
+func (c *Ctx) emitFleetChanges(evs []output.Event, tree bool, statusS string, timeout time.Duration, reason string) int {
 	status := "changed"
 	if len(evs) == 0 {
 		status = "timeout"
+		if reason == "interrupted" || reason == endParentExited {
+			status = "interrupted"
+		}
 	}
 	again := "pairmux events --wait"
 	if tree {
@@ -288,9 +323,14 @@ func (c *Ctx) emitFleetChanges(evs []output.Event, tree bool, statusS string, ti
 			next = append(next, "pairmux log "+ev.Path+"   # it died: read why")
 		}
 	}
-	if status == "timeout" {
+	switch {
+	case status == "timeout":
 		next = append(next, again+" --timeout "+(2*timeout).String()+"   # nothing changed; keep watching")
-	} else {
+	case status == "interrupted" && reason == endParentExited:
+		next = append(next, again+"   # stopped because the process that started it exited; nothing changed before that")
+	case status == "interrupted":
+		next = append(next, again+"   # stopped by a signal before anything changed; run it again to keep watching")
+	default:
 		next = append(next, again+"   # keep watching")
 	}
 	return c.emit(output.Envelope{Status: status, Events: evs, Next: next})

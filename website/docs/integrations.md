@@ -25,8 +25,20 @@ handling) instead of reimplementing them.
 `pairmux events` prints the fleet as **JSON lines**, one object per line, until you interrupt it or
 its reader closes the pipe. See the [CLI reference](./cli-reference.md#events) for every flag.
 
+A closed pipe is noticed only on the next write, and a quiet fleet writes nothing, so a stream whose
+front end crashed could otherwise run on. Start it with `--exit-with-parent` and it ends once the
+process that started it has exited, with a last `end` line whose `reason` is `parent-exited`. Leave
+the flag off when the stream should outlive its starter, as in `nohup pairmux events > file &`.
+
+Two cases are not detected:
+
+- The starter is pid 1 (your front end is PID 1 in a container, a systemd unit or a launchd agent).
+  The flag has no effect, because pid 1 outlives the stream.
+- On macOS and Linux, the starter exits before `pairmux` has started, as in
+  `sh -c 'pairmux events --exit-with-parent &'`.
+
 ```text
-pairmux events [--tree] [--interval 1s] [--no-snapshot] [--status S,S] [--max N] [--timeout D]
+pairmux events [--tree] [--interval 1s] [--no-snapshot] [--status S,S] [--max N] [--timeout D] [--exit-with-parent]
 ```
 
 ```bash
@@ -47,7 +59,7 @@ pairmux events --tree
 | `added` | a terminal appeared (created, or a new layer came alive) | `path`, `terminal` |
 | `changed` | a tracked field of a row changed (see `changes`) | `path`, `terminal` (the new row), `changes`, `from` (previous status, when the status changed) |
 | `removed` | a terminal is gone from the listing (pruned, or its layer torn down) | `path` |
-| `end` | the stream stopped on `--max` or `--timeout` | `reason`: `max` or `timeout` |
+| `end` | the stream stopped on `--max`, `--timeout` or `--exit-with-parent` (a signal stops it without an `end` line) | `reason`: `max`, `timeout` or `parent-exited` |
 
 Every line has `schema` (`pairmux.events.v1`), `seq` (1, 2, 3 … within one stream) and `ts`
 (RFC 3339, UTC). `changes` lists fields from this set: `status`, `current_cmd`, `lock_holder`,
@@ -122,8 +134,10 @@ next:
 ![An agent's terminal: ls --tree, then events --wait returning when a sub-agent reaches a passphrase prompt, then peek](/img/cli-supervise.svg)
 
 The envelope's `events` array holds the same objects as the stream, without `schema` and `seq`.
-`status` is `changed`, or `timeout` when nothing qualified before the deadline (default 10
-minutes). `--max N` waits for N changes, and `--status` filters as it does for the stream. Over MCP,
+`status` is `changed`, `timeout` when nothing qualified before the deadline (default 10
+minutes), or `interrupted` when a signal or `--exit-with-parent` stopped it before anything
+changed. An interrupted wait still exits with code 0; run it again rather than lengthening the
+timeout. `--max N` waits for N changes, and `--status` filters as it does for the stream. Over MCP,
 this call is the `pairmux_events` tool, with `tree`, `status`, `max` and `timeout` arguments.
 
 ## A reference client
@@ -136,7 +150,8 @@ import subprocess
 
 fleet = {}  # path -> row
 
-proc = subprocess.Popen(["pairmux", "events", "--tree"], stdout=subprocess.PIPE, text=True)
+proc = subprocess.Popen(["pairmux", "events", "--tree", "--exit-with-parent"],
+                        stdout=subprocess.PIPE, text=True)
 for line in proc.stdout:
     ev = json.loads(line)
     if ev.get("schema") != "pairmux.events.v1":
@@ -156,6 +171,9 @@ def act(*args):
     out = subprocess.run(["pairmux", "--json", *args], capture_output=True, text=True).stdout
     return json.loads(out.strip().splitlines()[-1])
 ```
+
+`--exit-with-parent` makes `pairmux events` exit when this process does, so a crashed front end
+leaves no stream behind.
 
 The same loop works in any language that can spawn a process and read lines — a Tauri or Electron
 main process, a VS Code extension host, a Go or Rust daemon.

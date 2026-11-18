@@ -95,7 +95,7 @@ Terminal statuses are returned directly by `peek`, appear in each `ls` row, and 
 | `dead` | The pane is gone; the journal is retained. |
 | `unknown` | The pane is live but pairmux cannot yet derive a confident state, for example during fresh sentinel activity or when the journal cannot be read. Usually transient; observe again before writing. |
 
-Per-command action statuses are separate from terminal state. An interactive-shell `new` returns `created`; `new --cmd` immediately returns the program terminal's derived `running` or `dead` state. `run` returns `done`, `running`, or `awaiting-input`; `peek` returns the derived terminal status; `send`, `note`, and `kill` return `sent`, `noted`, and `killed`. The outer `log`/`ls`/`version` status is `ok`; `doctor` returns `ok` or `issues`; `skill install` returns `installed` or `dry-run`; and `update` (v0.6.0+) returns `updated` or `refreshed`. `events --wait` returns `changed` or `timeout`. `wait` outcomes are `idle`, `awaiting-input`, `pattern-found`, `human-done`, `dead`, or `timeout`.
+Per-command action statuses are separate from terminal state. An interactive-shell `new` returns `created`; `new --cmd` immediately returns the program terminal's derived `running` or `dead` state. `run` returns `done`, `running`, or `awaiting-input`; `peek` returns the derived terminal status; `send`, `note`, and `kill` return `sent`, `noted`, and `killed`. The outer `log`/`ls`/`version` status is `ok`; `doctor` returns `ok` or `issues`; `skill install` returns `installed` or `dry-run`; and `update` (v0.6.0+) returns `updated` or `refreshed`. `events --wait` returns `changed`, `timeout`, or `interrupted` (a signal or `--exit-with-parent` stopped it before anything changed). `wait` outcomes are `idle`, `awaiting-input`, `pattern-found`, `human-done`, `dead`, or `timeout`.
 
 ### Errors
 
@@ -436,22 +436,24 @@ one `pairmux.v1` envelope for agents. See [Integrations](./integrations.md) for 
 a reference client.
 
 ```text
-pairmux events [--tree] [--wait] [--status S,S] [--max N] [--timeout D] [--interval 1s] [--no-snapshot]
+pairmux events [--tree] [--wait] [--status S,S] [--max N] [--timeout D] [--interval 1s] [--no-snapshot] [--exit-with-parent]
 ```
 
 | flag | effect |
 |---|---|
 | `--tree` (`-r`) | also follow every live layer below; rows are addressed by `path` |
-| `--wait` | return one envelope after the first change: `status` is `changed` or `timeout`, `events` lists the changes, and `next` says what to do. The default timeout is 10m |
+| `--wait` | return one envelope after the first change: `status` is `changed`, `timeout`, or `interrupted` (a signal such as Ctrl-C or SIGTERM, or `--exit-with-parent`, stopped it before anything changed; exit code 0), `events` lists the changes, and `next` says what to do. The default timeout is 10m |
 | `--status S,S` | report only `added` and `changed` events that leave a terminal in one of these states: `running`, `idle`, `awaiting-input`, `dead` (removals always pass) |
 | `--max N` | stop after N changes (the stream ends with an `end` line) |
 | `--timeout D` | stop after D, a Go duration such as `30s` or `10m` (the stream ends with an `end` line, and `--wait` replies `timeout`) |
 | `--interval D` | how often to sample the fleet; default 1s |
 | `--no-snapshot` | skip the stream's first `snapshot` line |
+| `--exit-with-parent` | stop once the process that started `events` has exited (checked every `--interval`). The stream ends with an `end` line whose `reason` is `parent-exited`; with `--wait`, the reply is `interrupted` if nothing had changed. The exit code is 0. Off by default, so `nohup pairmux events > file &` keeps running. When pid 1 started `events` (PID 1 in a container, a systemd unit, a launchd agent), the flag has no effect, because pid 1 outlives it. On macOS and Linux, a parent that exits before `pairmux` has started, as in `sh -c 'pairmux events --exit-with-parent &'`, is not detected |
 
 The stream's lines are `snapshot`, `added`, `changed` (with `changes` and, when the status changed,
-the previous status in `from`), `removed`, and `end`. New output alone is never a change; read it
-with `peek` or `log`.
+the previous status in `from`), `removed`, and `end` (with `reason`: `max`, `timeout` or
+`parent-exited`). A stream stopped by a signal, such as Ctrl-C, exits with code 0 and no `end` line.
+New output alone is never a change; read it with `peek` or `log`.
 
 This call blocks until a worker in the tree needs input or dies:
 

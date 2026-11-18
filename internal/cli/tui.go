@@ -198,6 +198,10 @@ func (a *tuiApp) run() (err error) {
 
 	a.reader = newTTYReader()
 	go a.reader.loop()
+	// Measure the glyphs before the first frame; keys typed during the probe
+	// are handled once the tree is loaded below.
+	var early []byte
+	tuiCells, early = detectCells(a.out, a.reader.out)
 
 	resized := make(chan struct{}, 1)
 	stopResize := muxd.WatchResize(func() {
@@ -213,6 +217,9 @@ func (a *tuiApp) run() (err error) {
 
 	a.w, a.h = muxd.TermSize()
 	a.refresh()
+	for _, k := range parseKeys(early) {
+		a.handleKey(k)
+	}
 	tick := time.NewTicker(a.interval)
 	defer tick.Stop()
 	for !a.quit {
@@ -518,14 +525,14 @@ func (a *tuiApp) visible() []visRow {
 			if lastAt[d] {
 				p.WriteString("   ")
 			} else {
-				p.WriteString("│  ")
+				p.WriteString(gl("│", "|") + "  ")
 			}
 		}
 		if n.Depth > 0 {
 			if n.Last {
-				p.WriteString("└─ ")
+				p.WriteString(gl("└─", "`-") + " ")
 			} else {
-				p.WriteString("├─ ")
+				p.WriteString(gl("├─", "|-") + " ")
 			}
 		}
 		out = append(out, visRow{node: n, prefix: p.String()})
