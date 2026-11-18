@@ -36,3 +36,18 @@ func TestKeyBytes(t *testing.T) {
 		t.Error("unknown key accepted")
 	}
 }
+
+func TestLiteralInputEndsLinesWithCROnWindows(t *testing.T) {
+	for _, tt := range []struct{ goos, in, want string }{
+		{"linux", "a\nb\r\nc", "a\nb\r\nc"},
+		{"darwin", "a\nb", "a\nb"},
+		{"windows", "left=1\nright=2\nprint(left)", "left=1\rright=2\rprint(left)"},
+		{"windows", "a\r\nb\n", "a\rb\r"},
+		{"windows", "a\rb", "a\rb"},
+		{"windows", "no newline", "no newline"},
+	} {
+		if got := string(literalInput(tt.in, tt.goos)); got != tt.want {
+			t.Errorf("literalInput(%q, %s) = %q, want %q", tt.in, tt.goos, got, tt.want)
+		}
+	}
+}

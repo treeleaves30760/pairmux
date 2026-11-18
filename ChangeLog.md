@@ -55,6 +55,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value and keeps wording-only detection until it is recreated.
 - `E_UPDATE` is no longer returned for the platform being Windows.
 
+### Fixed
+
+- On Windows, a multi-line `send --text` (and any other literal text pairmux types) now submits
+  each line: the built-in backend types every LF or CRLF as CR, the Enter key a Windows console
+  ends a line at. Before, a console took LF as an ordinary character, so the lines reached the
+  program joined into one (a Python REPL saw `left=1right=2…` and raised a `SyntaxError`).
+
 ## [1.4.0] - 2026-11-18
 
 ### Added
