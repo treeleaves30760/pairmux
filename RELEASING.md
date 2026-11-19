@@ -192,6 +192,29 @@ inventory check already found the six 1.3.0 wheels (the WSL job's PyPI JSON
 still named 1.2.0 as latest); rerunning only those two jobs passed. No tag
 or artifact was rebuilt or overwritten after PyPI publication.
 
+**v1.5.0 published and accepted (2026-11-19).** The annotated tag is fixed to
+merged-main commit `d09c5d5` (PR #20, native Windows parity), whose
+[CI 44429777904](https://github.com/treeleaves30760/pairmux/actions/runs/44429777904)
+and [Docs deployment 44429777636](https://github.com/treeleaves30760/pairmux/actions/runs/44429777636)
+passed. The [tap credential check 44429796684](https://github.com/treeleaves30760/pairmux/actions/runs/44429796684)
+passed before tagging. The companion skill was released as `pairmux-skills`
+v0.6.0 (PR #8), byte-identical to `skills/pairmux/`.
+[Release run 44430150367](https://github.com/treeleaves30760/pairmux/actions/runs/44430150367)
+passed `validate`, `windows-smoke` and `publish` on its first attempt: nine
+native assets, six PyPI wheels and the Homebrew Cask at 1.5.0. Independently,
+all eight downloaded assets match `checksums.txt`, PyPI's JSON lists the six
+1.5.0 wheels, and the tap's Cask has `version "1.5.0"` with four sha256 values
+equal to `checksums.txt`. A local isolated uv install of the public wheel on
+macOS ARM64 ran `version` (1.5.0) and a healthy `doctor` (tmux backend); its
+binary is identical to the `darwin_arm64` archive's. The live docs serve the new
+`PAIRMUX_CONSOLE_PROBE` documentation.
+
+[Published-release acceptance 44431646821](https://github.com/treeleaves30760/pairmux/actions/runs/44431646821)
+passed all seven jobs on its first attempt (dispatched about 15 minutes after the
+PyPI upload). The new Windows TUI, mouse and attach round trip are covered by
+unit tests only; they have not been exercised interactively on real Windows
+hardware. No tag or artifact was rebuilt or overwritten after PyPI publication.
+
 **v1.4.0 published and accepted (2026-11-18).** The annotated tag is fixed to
 merged-main commit `4da6418a55ccaf0e94e18f81a4c160c28e777584` (PR #18), whose
 [CI 44280446216](https://github.com/treeleaves30760/pairmux/actions/runs/44280446216)
