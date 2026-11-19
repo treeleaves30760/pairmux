@@ -334,7 +334,10 @@ issue tracker, release archive, and source of the changelog.
    checksum file = nine native assets**, six wheels (including `win_amd64` and
    `win_arm64`), and zero `.deb` files. (v0.6.0 and earlier: seven native
    assets and four wheels.) `go test` on macOS/Linux does not exercise the
-   Windows build; rely on the Windows CI jobs for that.
+   Windows build; rely on the Windows CI jobs for that, including
+   `windows-arm64-unit` on `windows-11-arm`, which runs the unit and packaging
+   tests on native ARM64 (the Windows ARM64 binary has still not been accepted
+   on real hardware).
    The release workflow retains its build-once / verify / publish pipeline;
    it validates wheel installation against the staged artifacts before
    publishing, not against a version that is not yet on PyPI.
@@ -361,9 +364,15 @@ issue tracker, release archive, and source of the changelog.
    and, from v0.6.0, `pairmux update` followed by `version`/`doctor`. Also test the
    website installer, optional uvx quick runs, a direct RPM, and Homebrew. From
    v1.0.0, also test a native Windows install (`install.ps1` default
-   and `uv tool install pairmux`), where `pairmux update` must refuse with
-   `E_UPDATE`, and a macOS/Linux machine without tmux, where `doctor` must
-   report the built-in backend.
+   and `uv tool install pairmux`), where `pairmux update` must succeed on a
+   uv install (reporting `refreshed` or `updated`, with `version` and `doctor`
+   healthy afterwards and no `pairmux.exe.old-*` file left in the tool root or
+   executable directory other than one still held by a running process) and a
+   macOS/Linux machine without tmux, where `doctor` must report the built-in
+   backend. Windows installs that cannot update (a custom `UV_TOOL_DIR` run
+   from the copied executable, a path containing ` (`) must refuse with
+   `E_UPDATE` and the documented hint. A console without VT input should keep
+   the `ls` table and fail `tui` with `E_BAD_ARGS`.
    Start an older-release bootstrap check with `uv tool install 'pairmux==0.5.3'`,
    then `uv tool install --upgrade pairmux`, and only then `pairmux update`.
    Substitute a new release pin only **after** its upload succeeds. A same-version

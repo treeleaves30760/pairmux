@@ -45,13 +45,13 @@ built-in endpoint stays built-in unless tmux is running there too. Windows uses 
 
 If missing, recommend `uv tool install pairmux` (Python 3.9+). With explicit user authorization,
 `pairmux update` (v0.6.0+) updates only a verified persistent uv installation; older versions need
-`uv tool install --upgrade pairmux`. Windows, uvx, non-uv and dev builds refuse `update` (`E_UPDATE`);
-follow the hint. Do not install or update autonomously during a terminal workflow.
+`uv tool install --upgrade pairmux`. uvx, non-uv, dev builds and a Windows custom `UV_TOOL_DIR` bin copy
+refuse `update` (`E_UPDATE`); follow the hint. Do not install or update autonomously mid-workflow.
 
 Shell selection is `PAIRMUX_SHELL` > `SHELL` > OS fallback (`bash` on Unix; on Windows, `SHELL`
 must name a real file, otherwise pwsh → Windows PowerShell → COMSPEC/`cmd.exe`). Write commands in
-that shell's syntax; Windows credential detection relies on wording, so a quiet credential command
-may need human handoff even at `running`.
+that shell's syntax; on Windows, key-by-key readers (OpenSSH, `getpass`, `Read-Host -AsSecureString`)
+are detected by wording only, so a quiet credential command may need handoff.
 
 ## Choose the terminal kind
 

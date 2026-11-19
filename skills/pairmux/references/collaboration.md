@@ -27,7 +27,8 @@ These commands address the layer that **owns** the terminal; from above, a path 
 **1. Recognize the boundary.** Passwords, passphrases, PINs, OTP/MFA codes, API keys, tokens and
 localized credential prompts require a human. Do not guess, extract a secret from the environment,
 or copy one from earlier output. Detection is best-effort: a known credential command that goes
-quiet at `running` can also need handoff (notably on Windows, where detection relies on wording).
+quiet at `running` can also need handoff (notably Windows tools that read key by key, where
+detection relies on wording).
 
 ```json
 {"schema":"pairmux.v1","ok":true,"status":"awaiting-input","terminal":"dbmigrate","mode":"hooks","output":"Password: ","next":["do NOT guess or type secrets","pairmux wait dbmigrate --human --notify   # hand off to the human"]}

@@ -26,6 +26,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -402,7 +403,7 @@ func (s *Server) handle(req request) response {
 		p.journal = f
 		return response{OK: true}
 	case "send-text":
-		if err := p.enqueue([]byte(req.Text)); err != nil {
+		if err := p.enqueue(literalInput(req.Text, runtime.GOOS)); err != nil {
 			return fail("%v", err)
 		}
 		return response{OK: true}
@@ -665,6 +666,18 @@ func (p *pane) isGone() bool {
 // program that is not reading its input stalls only its own queue — never the
 // output reader that would otherwise deadlock against it, and never the
 // caller beyond inputQueueBytes.
+// literalInput is the bytes typed for send-text. A Unix tty's line discipline
+// ends a line at LF, so text goes through unchanged. A Windows console ends a
+// line only at CR (the Enter key) and takes LF as an ordinary character, so a
+// multi-line --text would reach the program as one joined line; there each
+// LF, or CRLF, is typed as CR.
+func literalInput(text, goos string) []byte {
+	if goos != "windows" || !strings.Contains(text, "\n") {
+		return []byte(text)
+	}
+	return []byte(strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\r"), "\n", "\r"))
+}
+
 func (p *pane) enqueue(b []byte) error {
 	if len(b) == 0 {
 		return nil

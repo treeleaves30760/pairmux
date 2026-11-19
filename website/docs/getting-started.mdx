@@ -224,8 +224,9 @@ x86-64 and ARM64, with the built-in multiplexer: neither tmux nor WSL is needed.
 Native Windows ships from v1.0.0, which adds `win_amd64`/`win_arm64` wheels and
 `pairmux_<version>_windows_amd64.zip` / `_windows_arm64.zip` release archives. It is validated by CI
 on hosted Windows Server 2025 runners and was accepted on real Windows 11 x86-64 hardware (Windows
-PowerShell 5.1, cmd.exe and Git Bash terminals through ConPTY, including a human `attach`); the ARM64
-build has not been exercised at runtime. Pinning a version before v1.0.0 has no Windows wheel, so
+PowerShell 5.1, cmd.exe and Git Bash terminals through ConPTY, including a human `attach`). The ARM64
+build has not been accepted on real hardware; CI runs its unit and packaging tests on a native
+Windows ARM64 runner (`windows-11-arm`). Pinning a version before v1.0.0 has no Windows wheel, so
 the native install then fails with a hint to use WSL.
 :::
 
@@ -252,7 +253,7 @@ New terminals start PowerShell 7 (`pwsh.exe`), else Windows PowerShell, else `%C
 (normally `cmd.exe`). `PAIRMUX_SHELL` overrides that on every platform, for example
 `$env:PAIRMUX_SHELL = 'C:\Program Files\Git\bin\bash.exe'`; `$SHELL` is honored only if it names
 an existing file. See [Concepts: Windows](./concepts.md#windows) for shell integration and the other
-differences, and note that `pairmux update` refuses on Windows ([Update](#update-v060)).
+differences, and note that `pairmux update` works on a persistent uv install ([Update](#update-v060)).
 
 **WSL (optional).** Inside WSL, pairmux is an ordinary Linux program: it uses tmux if installed in
 that distribution and the built-in multiplexer otherwise (v0.6.0 and earlier need tmux there). The
@@ -353,12 +354,17 @@ tmux is untouched. There are no command-specific options, automatic updates, or 
 `--json` is supported; see the [CLI reference](./cli-reference.md#update-v060) for verification,
 JSON, and exit behavior.
 
-**On Windows, `pairmux update` refuses with `E_UPDATE`.** uv installs Windows tools as copied `.exe`
-files rather than the symlinked layout the updater verifies ownership through, and Windows cannot
-replace an executable while it runs. Close running pairmux commands (such as `watch`, `attach`, or an
-MCP client's `mcp serve`), then run `uv tool install --upgrade pairmux` (or `pip install -U pairmux`
-in the environment that has it). Managed terminals may stay open: the built-in server runs from its
-own copy of the executable.
+**On Windows, `pairmux update` works for a persistent uv install** (`uv tool install pairmux`, or the
+PowerShell installer). uv copies the tool's `pairmux.exe` into its executable directory instead of
+linking it, so the updater checks that copy byte for byte against the tool environment's
+`Scripts\pairmux.exe`. Windows will not overwrite or delete a running program, so the updater renames
+both files to `pairmux.exe.old-<pid>` before uv runs, renames them back if uv fails, and deletes
+leftovers on a later update. Programs already running (`watch`, `attach`, an MCP client's `mcp
+serve`) keep the old executable until restarted. Managed terminals may stay open: the built-in
+server runs from its own copy of the executable. An install made with a custom `UV_TOOL_DIR` is
+refused when the copy in the executable directory is the one running; run that tool environment's
+`Scripts\pairmux.exe update` instead. A path that contains ` (`, such as `Program Files (x86)`, is
+refused.
 
 ## Migrating from APT / Debian packages
 

@@ -35,6 +35,7 @@ Ordinary non-interactive CLI commands reply through the **`pairmux.v1` envelope*
 | `PAIRMUX_NAME` | Set by pairmux inside every terminal: its own name in the owner's layer. |
 | `PAIRMUX_NO_TUI` | When non-empty, a bare `ls` always prints the listing instead of opening `tui`. |
 | `PAIRMUX_SECRET_PROMPT_RE` | An RE2 pattern that extends (never replaces) secret-prompt recognition. |
+| `PAIRMUX_CONSOLE_PROBE` | Windows only. `0`, `off`, `false` or `no` stops pairmux from starting the short-lived helper (`pairmux __console-probe`) that reads a pseudo console's input mode for prompt detection; classification then uses wording alone. Any other value, or unset, leaves it on. |
 
 Journals live in an isolated hash per endpoint under `<root>/.sockets/`: for tmux, of the canonical `TMUX_TMPDIR`, uid, and socket; built-in endpoints hash a separate identity, so equal terminal names on the two backends never collide, and each backend lists only its own terminals, live or dead. For the conventional default tmux endpoint only, journals from the historical `<root>/<terminal>/` layout remain readable in place; pairmux never migrates them implicitly.
 
@@ -117,7 +118,7 @@ pairmux --json peek nonexistent
 | `E_DEAD` | The terminal's pane is gone. |
 | `E_BAD_ARGS` | A usage or flag error (invalid name/socket/key, bad regex, wrong terminal kind, invalid `PAIRMUX_BACKEND`). |
 | `E_TMUX` | The terminal backend — tmux or the built-in server — failed. The name is historical; built-in failures carry built-in-specific hints (for example, set `PAIRMUX_TMPDIR`). |
-| `E_UPDATE` | v0.6.0+: persistent uv ownership, supported version, uv execution, or post-update verification failed, or the platform is Windows. Follow the recovery hint. |
+| `E_UPDATE` | v0.6.0+: persistent uv ownership, supported version, uv execution, or or post-update verification failed. Follow the recovery hint. |
 | `E_SCOPE` | The caller runs inside a pairmux terminal and addressed a layer above or beside its own scope. Drive your own layer and below; tell your owner with `report`. |
 | `E_INTERNAL` | An unexpected internal error. |
 
@@ -401,7 +402,10 @@ manager, instead of a table. The listing is printed whenever any flag (`--plain`
 that) or `--json` is given, output is piped or captured, or the caller runs inside a pairmux
 terminal (`PAIRMUX_SCOPE`/`PAIRMUX_NAME`) or an agent CLI's tool shell (`CLAUDECODE`,
 `CODEX_SANDBOX`, `GEMINI_CLI`, `OPENCODE`), so agents and scripts keep getting the listing. Set
-`PAIRMUX_NO_TUI=1` to turn the switch off. On Windows `ls` always prints.
+`PAIRMUX_NO_TUI=1` to turn the switch off. On Windows the same holds in a console (Windows
+Terminal, or Windows 10 1809+ conhost); where the console has no VT input, or the stream is a Git
+Bash (mintty) pipe, `ls` prints the table. Windows decides "interactive terminal" with
+`GetConsoleMode`, so `NUL` and mintty pipes do not count.
 
 ```bash
 pairmux --json ls
@@ -570,8 +574,10 @@ whether its agent has seen it). `o` opens either view full screen and scrollable
 then shows the whole retained output history. `x` deletes every dead terminal's journal and shows
 what it removed. `:` runs any pairmux command in the background and shows its readable output in the
 same reader; `{}` stands for the selected path, and `↑` recalls the last command. See
-[The TUI](./guides/tui.md) for a tour and the key map. `tui` needs an interactive terminal and is not
-available on Windows yet. `ui` is an alias.
+[The TUI](./guides/tui.md) for a tour and the key map. `tui` needs an interactive terminal. On Windows it runs in Windows Terminal and in
+Windows 10 1809+ conhost; a console without VT input fails with `E_BAD_ARGS` (use `ls --tree`,
+`watch` or `attach` there), and a Git Bash (mintty) window is not a console. With Quick Edit on,
+mouse clicks select text and the TUI receives none; the keyboard still works. `ui` is an alias.
 
 ```text
 pairmux tui [--interval 1s]
@@ -666,11 +672,9 @@ pairmux --json version
 Update **only the currently running, verified persistent uv tool installation** of pairmux,
 including one created by the Bash/WSL installer. No tmux installation or terminal access is needed.
 
-**Not on Windows.** On Windows the command refuses with `E_UPDATE` before touching anything. uv
-installs Windows tools as copied `.exe` files rather than the symlinked layout these ownership checks
-rely on, and Windows cannot replace an executable while it runs. The hint says to close pairmux and
-run `uv tool install --upgrade pairmux` (or `pip install -U pairmux` in the environment that has
-it). Managed terminals may stay open: the built-in server runs from its own copy of the executable.
+**On Windows** the command works for a persistent uv install, with the differences described under
+Ownership checks and Windows replacement below. Managed terminals may stay open: the built-in
+server runs from its own copy of the executable.
 
 ```text
 pairmux update
@@ -687,7 +691,12 @@ manager or manual replacement, not this command.
 
 **Ownership checks.** The resolved running executable, its regular non-symlink `uv-receipt.toml`,
 and `uv tool list --show-paths` must agree on one persistent pairmux tool and its single entrypoint.
-The entrypoint must be a symlink resolving to that executable. Verified custom tool/bin directories
+The entrypoint must be a symlink resolving to that executable. On Windows uv copies its entrypoint
+instead of linking it, so the recorded `pairmux.exe` must be a regular, non-link file whose bytes
+equal the tool environment's `Scripts\pairmux.exe`; when the copy is the running executable, the
+environment is found from uv's listing of its default tool directory. An install made with a custom
+`UV_TOOL_DIR` is therefore refused in that case, with a hint to run that tool environment's
+`pairmux\Scripts\pairmux.exe update`. Verified custom tool/bin directories
 are retained, not inherited `UV_TOOL_DIR`/`UV_TOOL_BIN_DIR` guesses. Missing, malformed, oversized,
 ambiguous, escaped/multiline-path, or control-character receipt/listing data fails closed. Paths
 containing ` (` are unsupported because uv's unquoted name/path display would be ambiguous. The
@@ -719,6 +728,15 @@ pairmux --json update
 ```json
 {"schema":"pairmux.v1","ok":true,"status":"refreshed","output":"pairmux 0.6.0 -> 0.6.0\nsource: https://pypi.org/simple\ninstalled: /home/alice/.local/bin/pairmux"}
 ```
+
+**Windows replacement.** Windows cannot overwrite or delete a running executable, but it can rename
+one. Before uv runs, the copy in uv's executable directory and the environment's
+`Scripts\pairmux.exe` are renamed to `pairmux.exe.old-<pid>` (in that directory and in the tool root,
+respectively). If uv fails, they are renamed back, unless uv already created a new file there; the
+error message says where the previous executables are. After a successful update the command deletes
+them, and one that is still running (this process) is deleted by the next update, which also removes
+leftover `.old-*` files from earlier runs. Programs already running keep running the old executable
+until restarted.
 
 Ownership, unsupported-version, missing-uv, subprocess, and post-update verification failures emit
 `ok:false`, `status:"error"`, and `error.code:"E_UPDATE"` with an actionable `error.hint` mirrored

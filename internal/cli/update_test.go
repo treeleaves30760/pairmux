@@ -4,7 +4,6 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,11 +19,6 @@ import (
 	"github.com/treeleaves30760/pairmux/internal/output"
 	"github.com/treeleaves30760/pairmux/internal/version"
 )
-
-type updateTestCall struct {
-	path      string
-	args, env []string
-}
 
 type updateFixture struct {
 	root, toolRoot, environment, binary, binDir, entrypoint, uv string
@@ -65,13 +59,6 @@ func newUpdateFixtureAt(t *testing.T, root string) *updateFixture {
 	f.writeReceipt(t, "0.5.3")
 	f.listing = f.makeListing("0.5.3")
 	return f
-}
-
-func writeUpdateTestFile(t *testing.T, path string, b []byte, mode os.FileMode) {
-	t.Helper()
-	if err := os.WriteFile(path, b, mode); err != nil {
-		t.Fatal(err)
-	}
 }
 
 // This is real uv TOML, not the install.sh mock's plain-path "receipt". It
@@ -132,30 +119,6 @@ func (f *updateFixture) ops(t *testing.T) updateOps {
 			}
 		},
 	}
-}
-
-func updateTestVersionReply(t *testing.T, v string) updateRunResult {
-	t.Helper()
-	b, err := json.Marshal(output.Envelope{Schema: core.SchemaID, OK: true, Status: "ok", Output: v})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return updateRunResult{stdout: append(b, '\n')}
-}
-
-func assertUpdateError(t *testing.T, rc int, buf *bytes.Buffer) output.Envelope {
-	t.Helper()
-	if rc != 1 {
-		t.Fatalf("rc=%d, want 1: %s", rc, buf.String())
-	}
-	e := decode(t, buf)
-	if e.OK || e.Status != "error" || e.Error == nil || e.Error.Code != output.CodeUpdate || e.Error.Hint == "" || len(e.Next) != 1 || e.Next[0] != e.Error.Hint {
-		t.Fatalf("invalid E_UPDATE envelope: %+v", e)
-	}
-	if strings.Count(buf.String(), "\n") != 1 {
-		t.Fatalf("JSON must be a single envelope: %q", buf.String())
-	}
-	return e
 }
 
 func TestUpdateSuccessVersions(t *testing.T) {

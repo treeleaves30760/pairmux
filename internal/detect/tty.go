@@ -53,6 +53,9 @@ func (s TTYState) RawInput() bool { return s.Known && !s.Canonical }
 // never becomes the controlling terminal, and opens non-blocking, so polling it
 // while a program waits on that terminal cannot disturb the program — verified
 // against a live getpass prompt. An empty path returns an unknown state.
+//
+// On Windows path is a console identifier (pty.FormatConsoleID) and the state
+// is the pseudo console's input mode, read by a helper process; see console.go.
 func ReadTTYState(path string) TTYState {
 	if path == "" {
 		return TTYState{}

@@ -120,6 +120,11 @@ func RawPoll() (restore func(), err error) {
 	return func() { _ = termios(fd, ioctlSetTermios, &saved) }, nil
 }
 
+// PollRead reads input from a terminal RawPoll set up. It returns within about
+// 100ms whether or not a key arrived (0 bytes and io.EOF when none did), so the
+// caller can stop reading between calls without leaving a read pending.
+func PollRead(p []byte) (int, error) { return os.Stdin.Read(p) }
+
 // TermSize reports the size of the terminal on stdout (else stdin), or 80x24.
 func TermSize() (cols, rows int) {
 	return (&unixTerminal{fd: os.Stdin.Fd()}).size()

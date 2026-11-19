@@ -186,7 +186,10 @@ runs any pairmux command and shows its readable output,
 .B ?
 shows help and
 .B q
-quits. Destructive keys ask first. Not available on Windows yet.
+quits. Destructive keys ask first. On Windows it runs in Windows Terminal and in
+Windows 10 1809+ consoles with VT input; a console without it fails with
+.BR E_BAD_ARGS .
+With Quick Edit on, mouse clicks select text and the TUI receives none.
 .TP
 .BR note " \fINAME\fR \fITEXT\fR.\|.\|."
 Leave a message in the journal for the agent (or another human). Subsequent
@@ -229,9 +232,7 @@ Print the pairmux version.
 .B update
 From v0.6.0 onward, reinstall only the currently running, verified persistent
 uv tool installation of pairmux, including one created by the Bash/WSL
-installer. On Windows it always refuses with
-.BR E_UPDATE ;
-see
+installer. On Windows it works for a persistent uv install; see
 .BR WINDOWS .
 Requires uv already installed; needs no tmux and never changes terminals.
 No command\-specific options or positional arguments are accepted; global
@@ -404,24 +405,58 @@ runs its command through the shell: PowerShell
 or
 .BR "bash \-lc" .
 .PP
-Windows has no tty line discipline to inspect, so secret\-prompt
-classification uses prompt wording only;
+Windows has no tty, so prompt detection reads the pseudo console's input mode
+through a short\-lived hidden helper
+.RB ( "pairmux __console\-probe" ,
+cached for about a second): line input with echo cleared
+.RB ( ENABLE_LINE_INPUT
+and
+.BR ENABLE_ECHO_INPUT ,
+the counterparts of ICANON and ECHO) is classified as secret whatever the
+wording. Many Windows tools read key by key (Win32\-OpenSSH, Go's x/term,
+Python's getpass, PowerShell's
+.BR "Read\-Host \-AsSecureString" ),
+which that mode does not show; for them prompt wording is the evidence, and
 .B PAIRMUX_SECRET_PROMPT_RE
-can extend it.
+can extend it. Terminals created before an upgrade use wording only, as does a
+run with
+.BR PAIRMUX_CONSOLE_PROBE=0 .
+.PP
+.B tui
+and a bare
+.B ls
+work in Windows Terminal and in Windows 10 1809+ consoles with VT input. A
+console without it keeps the table for
+.B ls
+and fails
+.B tui
+with
+.BR E_BAD_ARGS ;
+a Git Bash (mintty) window is not a console, so
+.B ls
+prints the table there. With Quick Edit on, mouse clicks select text and the
+TUI receives none.
+.PP
 .B kill
 ends the terminal's whole process tree through a job object.
 .B "wait \-\-notify"
 shows a best\-effort notification through Windows PowerShell.
 .B update
-refuses with
-.BR E_UPDATE :
-uv installs Windows tools as copied executables rather than the symlinked
-layout the updater verifies, and Windows cannot replace a running executable.
-Close pairmux and run
-.B "uv tool install \-\-upgrade pairmux"
-(or
-.B "pip install \-U pairmux"
-in the environment that has it).
+works for a persistent uv install. uv installs Windows tools as a copied
+.IR pairmux.exe ,
+so ownership is proved by content: the recorded copy must be a regular file with
+the same bytes as the tool environment's
+.IR Scripts\epairmux.exe .
+Windows cannot overwrite or delete a running executable but can rename it, so
+both files are renamed to
+.I pairmux.exe.old\-<pid>
+before uv runs, renamed back if uv fails, and left\-over ones are deleted by a
+later update. An install made with a custom
+.B UV_TOOL_DIR
+is refused when the copy in uv's executable directory is the one running (run
+that tool environment's
+.I Scripts\epairmux.exe
+update instead), and so is a path containing " (".
 .SH UPDATE
 Available from v0.6.0. v0.5.3 and older have no update command; first use
 .B "uv tool install \-\-upgrade pairmux"
@@ -430,7 +465,9 @@ with normal uv configuration to obtain v0.6.0 or newer when available.
 The running executable, a regular non\-symlink
 .I uv\-receipt.toml,
 and uv's tool listing must agree on one persistent pairmux tool with a single
-entrypoint symlink resolving to that executable. Verified custom tool and bin
+entrypoint symlink resolving to that executable (on Windows, a copy of it; see
+.BR WINDOWS ).
+Verified custom tool and bin
 directories are retained. Missing, malformed, oversized, ambiguous, escaped or
 multiline path, and control\-character receipt/listing data fails closed.
 The receipt and entrypoint are checked again before reinstalling; this is not a
@@ -579,6 +616,17 @@ When non\-empty, a bare
 .B ls
 always prints the listing instead of opening
 .BR tui .
+.TP
+.B PAIRMUX_CONSOLE_PROBE
+Windows only. Set to
+.BR 0 ,
+.BR off ,
+.B false
+or
+.B no
+to stop pairmux from starting the short\-lived helper that reads a pseudo
+console's input mode for prompt detection; classification then uses wording
+alone.
 .TP
 .B PAIRMUX_OWNER_SOCKET
 Set inside every terminal: the endpoint that owns it, where

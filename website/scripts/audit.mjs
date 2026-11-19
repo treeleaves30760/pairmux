@@ -17,18 +17,7 @@ import {readFileSync} from 'node:fs';
 
 // Accepted advisories. Add an entry ONLY when npm reports no fix available:
 // anything else has a version to pin in package.json's "overrides".
-const ACCEPTED = [
-  {
-    package: 'picomatch',
-    advisories: ['GHSA-fc5q-39xc-vjpf'],
-    reason:
-      'No patched release exists: the advisory covers picomatch <= 4.0.7 with no first patched version, ' +
-      'and 4.0.7 is the latest published. picomatch is build-time-only docs tooling, pulled in by ' +
-      '@docusaurus/core (micromatch, chokidar, jest-util); it is not in the pairmux binary and not in the ' +
-      "site's emitted JS. The issue is a ReDoS via crafted extglob patterns; the patterns here are build-time " +
-      "glob matching over this repo's files and config, and no pattern is taken from site visitors.",
-  },
-];
+const ACCEPTED = [];
 
 const MIN_SEVERITY = 'moderate';
 const RANK = {info: 0, low: 1, moderate: 2, high: 3, critical: 4};

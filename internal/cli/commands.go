@@ -844,7 +844,13 @@ func (c *Ctx) cmdLs(args []string) int {
 	// --json, a pipe, or a caller inside a terminal or an agent's tool shell
 	// keeps the listing (see humanAtTerminal).
 	if len(args) == 0 && c.humanAtTerminal() {
-		return c.cmdTUI(nil)
+		if rc, rejected := c.rejectInvalidSocket(); rejected {
+			return rc
+		}
+		if rc, err := c.runTUI(time.Second); err == nil {
+			return rc
+		}
+		// A console that cannot host the TUI gets the listing instead.
 	}
 	if rc, rejected := c.rejectInvalidSocket(); rejected {
 		return rc

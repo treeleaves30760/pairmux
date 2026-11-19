@@ -2,6 +2,7 @@ package muxd
 
 import "errors"
 
-// ErrNoTUI is RawPoll's answer where pairmux tui is not available yet: the
-// Windows console has no polled-read mode to park the UI's reader with.
-var ErrNoTUI = errors.New("pairmux tui is not available on Windows yet; use pairmux watch and pairmux attach")
+// ErrNoTUI is RawPoll's answer when the terminal cannot host pairmux tui at
+// all. Only a Windows console without VT input (older than Windows 10 1809)
+// gives it; a Unix terminal always can.
+var ErrNoTUI = errors.New("this console cannot host pairmux tui: it needs VT input (Windows 10 1809 or later, or Windows Terminal)")

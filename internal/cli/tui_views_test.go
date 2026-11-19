@@ -3,7 +3,6 @@ package cli
 import (
 	"os"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -49,9 +48,6 @@ func TestHardWrapKeepsEveryCell(t *testing.T) {
 }
 
 func TestHumanAtTerminal(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the TUI is unix-only, so ls never opens it on Windows")
-	}
 	oldTTY, oldStdin := isTTY, stdinIsTTY
 	t.Cleanup(func() { isTTY, stdinIsTTY = oldTTY, oldStdin })
 	isTTY = func() bool { return true }

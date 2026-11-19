@@ -123,12 +123,19 @@ tmux is untouched. There are no command-specific options, automatic updates, sud
 Global `--json` is supported; see the
 [CLI reference](https://pairmux-docs.treeleaves30760.com/cli-reference#update-v060) for the contract.
 
-**On Windows, `pairmux update` refuses with `E_UPDATE`.** uv installs Windows tools as copied `.exe`
-files rather than the symlinked layout the updater verifies ownership through, and Windows cannot
-replace an executable while it runs. Close running pairmux commands (such as `watch`, `attach`, or
-an MCP client's `mcp serve`), then run `uv tool install --upgrade pairmux` (or `pip install -U
-pairmux` in the environment that has it). Managed terminals may stay open: the built-in server runs
-from its own copy of the executable (see [Terminal backends](#terminal-backends)).
+**On Windows, `pairmux update` works for a persistent uv install** (`uv tool install pairmux`, or the
+PowerShell installer). uv installs Windows tools as a copied `pairmux.exe` rather than a symlink, so
+instead of a link the updater proves ownership by content: uv's own listing must record that
+`pairmux.exe` for the pairmux tool environment, and it must be a byte-for-byte copy of the
+environment's `Scripts\pairmux.exe`. Windows will not overwrite or delete a running program, so both
+files are renamed to `pairmux.exe.old-<pid>` first (the one in the tool root, outside the
+environment uv recreates) and moved back if uv fails; the next update deletes leftovers that are no
+longer running. Programs already running, such as `watch`, `attach` or an MCP client's `mcp serve`,
+keep running the old executable until restarted. Managed terminals may stay open: the built-in
+server runs from its own copy of the executable (see [Terminal backends](#terminal-backends)).
+Two cases are refused: an install made with a custom `UV_TOOL_DIR` when the copy in uv's executable
+directory is the one running (run that tool environment's `Scripts\pairmux.exe update` instead),
+and a path that contains ` (`, such as `Program Files (x86)`.
 
 ### Alternative: PyPI installer
 
@@ -218,7 +225,8 @@ x86-64 and ARM64, using the [built-in multiplexer](#terminal-backends); neither 
 WSL is needed. **This is new in v1.0.0**, which adds `win_amd64`/`win_arm64` wheels and Windows
 release zips. It is validated by CI on hosted Windows Server 2025 runners and was accepted on real
 Windows 11 x86-64 hardware (Windows PowerShell 5.1, cmd.exe and Git Bash terminals through ConPTY,
-including a human `attach`); the ARM64 build has not been exercised at runtime.
+including a human `attach`). The ARM64 build has not been accepted on real hardware; CI runs the
+unit and packaging tests for it on a native Windows ARM64 runner (`windows-11-arm`).
 
 Install it from PowerShell with any PyPI installer (`uv tool install pairmux`, `pipx install
 pairmux`, or `python -m pip install pairmux` in a dedicated environment), or with the PowerShell
@@ -254,10 +262,19 @@ OSC 133 marks with the exit status (`$?`/`$LASTEXITCODE`). It is passed with `-N
 from `ERRORLEVEL`); Git Bash gets the same bash hooks shim as on Unix. `new --cmd` runs its command
 through that shell: PowerShell `-EncodedCommand`, `cmd /s /c`, or `bash -lc`.
 
-**What differs on Windows.** There is no tty line discipline to read, so secret-prompt
-classification relies on prompt wording only (`PAIRMUX_SECRET_PROMPT_RE` extends it). `kill` ends
-the terminal's whole process tree through a job object. `--notify` shows a best-effort notification
-through Windows PowerShell. `pairmux update` refuses; see [Update](#update-v060).
+**What differs on Windows.** There is no tty to read, so prompt detection reads the pseudo
+console's input mode instead, through a short-lived hidden helper (`pairmux __console-probe`, cached
+for about a second): line input with echo cleared is classified as secret whatever the wording, as
+on macOS and Linux. Many Windows tools read key by key (Win32-OpenSSH, Go's `x/term`, Python's
+`getpass`, PowerShell's `Read-Host -AsSecureString`); for those the evidence is still the wording,
+and `PAIRMUX_SECRET_PROMPT_RE` extends it. Set `PAIRMUX_CONSOLE_PROBE=0` to disable the helper and
+use wording alone. Terminals created before an upgrade keep wording-only detection. `kill` ends the
+terminal's whole process tree through a job object. `--notify` shows a best-effort notification
+through Windows PowerShell. `pairmux update` works on a persistent uv install; see
+[Update](#update-v060). `pairmux tui`, and a bare `pairmux ls` typed at a console, open the TUI in
+Windows Terminal or Windows 10 1809+ conhost (a console without VT input keeps the table, and `tui`
+fails with `E_BAD_ARGS`). A Git Bash (mintty) window is not a console, so `ls` prints the table
+there. With Quick Edit on, mouse clicks select text and the TUI gets none; the keyboard still works.
 
 **WSL remains an option.** Inside WSL, pairmux is an ordinary Linux program: it uses tmux if it is
 installed in that distribution and the built-in multiplexer otherwise (v0.6.0 and earlier need tmux
@@ -484,8 +501,10 @@ the terminal `running` (a false negative, never an auto-answer). If a command yo
 credentials sits quiet at `running`, treat that as a handoff candidate: `peek --screen`, then
 `wait --human --notify`. Set `PAIRMUX_SECRET_PROMPT_RE` to an RE2 pattern to extend (never
 replace) the builtin secret recognition for your environment; `pairmux doctor` validates it. On
-macOS/Linux, a prompt that turns terminal echo off is classified as secret whatever its wording;
-Windows has no tty line discipline to read, so there the wording is the only evidence.
+macOS/Linux, a prompt that turns terminal echo off is classified as secret whatever its wording.
+On Windows pairmux reads the pseudo console's input mode (line input with echo cleared, the same
+fact), but many Windows tools read key by key and show no such mode, so for those the wording is
+still the evidence.
 
 This safe demo creates its terminal first and uses a disposable input value. The simulated program
 turns terminal echo off before reading (POSIX shell; a PowerShell variant follows):
@@ -500,7 +519,8 @@ pairmux --json wait handoff --human --notify --timeout 5m
 ```
 
 `sh` and `stty` do not exist in a Windows PowerShell terminal. There, start the prompt with
-`Read-Host`, which masks what is typed; the single quotes keep the calling shell from expanding `$p`:
+`Read-Host`, which masks what is typed (it reads key by key, so pairmux recognizes the prompt by its
+`Password:` wording); the single quotes keep the calling shell from expanding `$p`:
 
 ```powershell
 pairmux --json run handoff '$p = Read-Host -AsSecureString -Prompt Password; echo done'
@@ -589,7 +609,8 @@ command and shows its result. Agents, pipes and `--json` still get the listing. 
 Like [btop](https://github.com/aristocratos/btop), every region is a box. Its name and controls sit
 in its border, the key for each control is highlighted, and every control is also a button. Click a
 row to select it, click it again to attach, click a border label to press it, and scroll with the
-wheel. See the [TUI guide](https://pairmux-docs.treeleaves30760.com/guides/tui).
+wheel. On Windows the TUI runs in Windows Terminal and in Windows 10 1809+ consoles; with Quick Edit
+on, clicks select text and only the keyboard works. See the [TUI guide](https://pairmux-docs.treeleaves30760.com/guides/tui).
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/treeleaves30760/pairmux/main/website/static/img/tui-handoff.svg" alt="The TUI with deploy selected: it needs input, and the preview shows a sudo password prompt; the footer says to attach and answer it" width="100%">

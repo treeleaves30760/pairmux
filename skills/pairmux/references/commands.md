@@ -50,6 +50,7 @@ Other environment variables:
 - `PAIRMUX_STATE_DIR`: journal root; otherwise `$XDG_STATE_HOME/pairmux`, then `~/.local/state/pairmux`.
 - `PAIRMUX_TMPDIR`: built-in runtime directory (socket, lock and `<socket>.log`); see troubleshooting.
 - `PAIRMUX_SECRET_PROMPT_RE`: extra secret-prompt wording (RE2), validated by `doctor`.
+- `PAIRMUX_CONSOLE_PROBE=0|off|false|no`: Windows only; stops the helper that reads a console's input mode.
 - `PAIRMUX_NAME`, `PAIRMUX_STATE_NAMESPACE`, `PAIRMUX_TERMINAL_DIR`: pane identity and canonical state
   locators supplied by pairmux; do not derive other endpoints from them.
 
@@ -104,7 +105,7 @@ input. `human-done` means a note arrived, not that the command finished.
 | `E_DEAD` | the terminal's pane is gone |
 | `E_BAD_ARGS` | usage/flag error (invalid name/key, bad regex, wrong terminal kind, invalid `PAIRMUX_BACKEND`) |
 | `E_TMUX` | the terminal backend failed — tmux or the built-in server (historical name); see troubleshooting |
-| `E_UPDATE` | unsupported/unverified installation, uv failure, post-update verification failure, or Windows |
+| `E_UPDATE` | unsupported/unverified installation, uv failure, or post-update verification failure |
 | `E_SCOPE` | from inside a pane, a layer above or beside your scope was addressed; see [hierarchy.md](hierarchy.md) |
 | `E_INTERNAL` | an unexpected internal error |
 
@@ -378,8 +379,8 @@ pairmux prune [name] [--older-than 7d] [--dry-run]
 - `pairmux tui [--interval 1s]` (what a person's bare `ls` opens) — interactive manager for the
   whole layer tree: live status, a Screen/Activity preview (commands, exit codes, notes), full-screen
   output history, attach and return, create (top or under a terminal), kill, delete stale, note,
-  send, and a `:` line that runs any pairmux command and shows its readable output. Human-only; not
-  on Windows yet.
+  send, and a `:` line that runs any pairmux command and shows its readable output. Human-only. On Windows it
+  needs Windows Terminal or a 1809+ console with VT input (otherwise `E_BAD_ARGS`).
 - `pairmux watch [--interval 2s]` — a self-refreshing dashboard until `Ctrl-C`. `!!` flags
   awaiting-input, `xx` flags dead.
 - `pairmux note <name> <text...>` — record a message for the agent; surfaces in the agent's next

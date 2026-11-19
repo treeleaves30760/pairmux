@@ -12,25 +12,14 @@ import (
 	"github.com/treeleaves30760/pairmux/internal/state"
 )
 
-// isTTY reports whether pairmux's stdout is an interactive terminal. A terminal
-// is a character device, which pipes and regular files are not; the check is
-// intentionally dependency-free (no ioctl, no build tags) so it compiles the
-// same everywhere. It is a package var so tests can override it. The rare
-// false positive (/dev/null is also a char device) is harmless: tmux refuses a
-// non-terminal itself, and the built-in attach fails to switch it to raw mode.
-var isTTY = func() bool { return isCharDevice(os.Stdout) }
+// isTTY reports whether pairmux's stdout is an interactive terminal (see
+// isTerminal: a character device on Unix, a console on Windows). It is a
+// package var so tests can override it.
+var isTTY = func() bool { return isTerminal(os.Stdout) }
 
 // stdinIsTTY is isTTY for stdin. Only attach needs it — it reads keystrokes —
 // so watch, which only draws, keeps working with a piped stdin.
-var stdinIsTTY = func() bool { return isCharDevice(os.Stdin) }
-
-func isCharDevice(f *os.File) bool {
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
-}
+var stdinIsTTY = func() bool { return isTerminal(os.Stdin) }
 
 // insideTmux reports whether we are already running inside a tmux client (the
 // tmux server exports $TMUX to its panes). Package var for test override.

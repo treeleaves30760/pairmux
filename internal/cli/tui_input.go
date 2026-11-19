@@ -3,17 +3,19 @@ package cli
 import (
 	"errors"
 	"io"
-	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/treeleaves30760/pairmux/internal/muxd"
 )
 
 // This file reads the TUI's input: stdin on its own goroutine, decoded into
 // keys and SGR mouse reports.
 
-// ttyReader reads stdin on its own goroutine. Reads are polled (RawPoll), so
-// park returns within about 100ms with the reader idle and holding nothing.
+// ttyReader reads stdin on its own goroutine. Reads are polled (RawPoll,
+// PollRead), so park returns within about 100ms with the reader idle and no
+// read pending that could take keys meant for an attached pane.
 type ttyReader struct {
 	out     chan []byte
 	parkReq chan chan struct{}
@@ -34,7 +36,7 @@ func (r *ttyReader) loop() {
 			continue
 		default:
 		}
-		n, err := os.Stdin.Read(buf)
+		n, err := muxd.PollRead(buf)
 		if n > 0 {
 			b := append([]byte(nil), buf[:n]...)
 			select {
