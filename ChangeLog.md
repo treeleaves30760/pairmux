@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-11-22
+
 ### Security
 
 - **Stored text can no longer drive a person's terminal.** A note, a command line or an event text
@@ -865,7 +867,8 @@ Codex terminals and fixing what broke.
   `E_TMUX`, `E_INTERNAL`).
 
 [#7]: https://github.com/treeleaves30760/pairmux/issues/7
-[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/treeleaves30760/pairmux/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/treeleaves30760/pairmux/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/treeleaves30760/pairmux/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/treeleaves30760/pairmux/compare/v1.2.0...v1.3.0
