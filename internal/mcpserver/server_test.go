@@ -1018,3 +1018,40 @@ func resultMap(t *testing.T, response map[string]any) map[string]any {
 	}
 	return result
 }
+
+// A terminal reference becomes a positional argument of the pairmux child. One
+// that the CLI would parse as a flag must be refused before any child runs.
+func TestFlagLikeTerminalArgumentsAreRejected(t *testing.T) {
+	fake := &fakeExecutor{}
+	messages := []string{
+		request(1, "initialize", initializeParams(ProtocolVersion)),
+		notification("notifications/initialized", map[string]any{}),
+	}
+	tests := []struct {
+		name      string
+		arguments map[string]any
+	}{
+		{"pairmux_kill", map[string]any{"terminal": "--all"}},
+		{"pairmux_wait", map[string]any{"terminal": "--notify"}},
+		{"pairmux_peek", map[string]any{"terminal": "--screen"}},
+		{"pairmux_run", map[string]any{"terminal": "--timeout", "command": "echo hi"}},
+		{"pairmux_send", map[string]any{"terminal": "-enter", "text": "y"}},
+		{"pairmux_log", map[string]any{"terminal": "--grep"}},
+		{"pairmux_note", map[string]any{"terminal": "--", "text": "hello"}},
+	}
+	for i, test := range tests {
+		messages = append(messages, request(i+2, "tools/call", map[string]any{
+			"name": test.name, "arguments": test.arguments,
+		}))
+	}
+	responses, _ := serveMessages(t, fake, messages...)
+	for i, test := range tests {
+		result := resultMap(t, responses[i+1])
+		if result["isError"] != true {
+			t.Errorf("%s %v = %#v, want a tool error", test.name, test.arguments, result)
+		}
+	}
+	if calls := fake.callsSnapshot(); len(calls) != 0 {
+		t.Errorf("flag-like terminal arguments reached a child argv: %#v", calls)
+	}
+}

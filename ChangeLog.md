@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Stored text can no longer drive a person's terminal.** A note, a command line or an event text
+  is written by one party (an agent, a sub-agent using `report`) and read later by another, usually
+  the person supervising it. The human-readable replies (`peek`, `ls`, `run`, `wait`, `log`), the
+  `watch` dashboard and the TUI wrote that text to the terminal as it was, so an ESC in it was
+  executed, not shown: `pairmux note build "$(printf 'ok\033]52;c;...\007\033[1A\033[2K\r...')"`
+  loaded the reader's clipboard (OSC 52) and replaced the row above it, and a command line could
+  hide itself from the activity view the same way. Every control character other than a line feed
+  or tab (C0, DEL, C1, and bytes that are not UTF-8) is now shown as a visible escape such as
+  `\x1b`. `--json` output is unchanged: JSON already escaped these characters, and the value an
+  agent decodes is still the exact text. Shaped program output never contained C0 controls; a raw
+  C1 byte or invalid UTF-8 in it is now shown as `\x9b` in the human block instead of being passed
+  through.
+- **MCP tools refuse a `terminal` argument that starts with `-`.** The value becomes a positional
+  argument of the `pairmux` child, where `--all` or `--notify` was parsed as an option the caller
+  had not set (`pairmux_kill` with `terminal: "--all"` killed every terminal). No terminal name or
+  path starts with `-`.
+- **A journal's event log and lock files are created `0600`, and its directory `0700`.** `new`
+  already forced the terminal directory to `0700`, so these files were not readable by other users
+  in practice; they no longer depend on that. Existing files keep their modes.
+
 ## [1.5.0] - 2026-11-19
 
 ### Added

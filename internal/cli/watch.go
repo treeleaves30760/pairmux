@@ -121,7 +121,7 @@ func (c *Ctx) renderWatchFrame() {
 
 	terms, err := state.ListAt(c.Mux, c.StateDir)
 	if err != nil {
-		fmt.Fprintf(&b, "  error listing terminals: %v\n", err)
+		fmt.Fprintf(&b, "  error listing terminals: %s\n", output.PrintableLine(err.Error()))
 		fmt.Fprint(c.Stdout, b.String())
 		return
 	}
@@ -180,7 +180,9 @@ func writeWatchTable(b *strings.Builder, rows []watchRow) {
 		case core.StatusDead:
 			prefix = "xx "
 		}
-		cmd := r.cmd
+		// The pending command is whatever its sender typed; show it, never run
+		// it as terminal control codes.
+		cmd := output.PrintableLine(r.cmd)
 		if cmd == "" {
 			cmd = "-"
 		}
