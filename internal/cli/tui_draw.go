@@ -8,6 +8,7 @@ import (
 
 	"github.com/treeleaves30760/pairmux/internal/core"
 	"github.com/treeleaves30760/pairmux/internal/mux"
+	"github.com/treeleaves30760/pairmux/internal/output"
 )
 
 // This file draws the TUI. The layout follows btop's lead: every region is a
@@ -86,7 +87,9 @@ func (a *tuiApp) render(l tline, w int, fill string) string {
 		if used >= w {
 			break
 		}
-		t := clip(s.text, w-used)
+		// Row text includes notes, command lines and pane output that other
+		// parties wrote; none of it may reach the terminal as control codes.
+		t := clip(output.PrintableLine(s.text), w-used)
 		used += strWidth(t)
 		b.WriteString(a.sty(s.style, t))
 	}

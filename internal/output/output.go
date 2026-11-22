@@ -134,7 +134,9 @@ func Emit(w io.Writer, jsonMode bool, e Envelope) {
 		_, _ = w.Write(b)
 		return
 	}
-	_, _ = io.WriteString(w, human(e))
+	// The block is text for a person's terminal, and parts of it (notes,
+	// command lines) were written by someone else: see Printable.
+	_, _ = io.WriteString(w, Printable(human(e)))
 }
 
 // Fail emits an error envelope (ok=false, status "error") carrying code, msg and

@@ -125,7 +125,7 @@ func (c *Ctx) cmdAttach(args []string) int {
 	if res.Detached {
 		fmt.Fprintf(c.Stdout, "[detached from %s] tell the agent what you did: pairmux note %s \"...\"\n", name, name)
 	} else if res.Message != "" {
-		fmt.Fprintf(c.Stdout, "[%s]\n", res.Message)
+		fmt.Fprintf(c.Stdout, "[%s]\n", output.PrintableLine(res.Message))
 	}
 	return 0
 }

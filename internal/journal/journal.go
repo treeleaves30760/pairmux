@@ -44,8 +44,15 @@ var ErrLocked = errors.New("journal: write lock held by another process")
 type Journal struct{ Dir string }
 
 // Open ensures the terminal directory exists and returns a Journal for it.
+//
+// A journal holds everything a terminal printed and every command and note
+// sent to it, so the directory and the files below are created for their owner
+// alone. `new` also forces the directory to 0700 whatever the umask; creating
+// it private here means there is no moment in between when it is not, and that
+// a journal opened by any other path is not left to the umask either. Existing
+// directories and files keep the modes they have.
 func Open(dir string) (*Journal, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("journal: mkdir %q: %w", dir, err)
 	}
 	return &Journal{Dir: dir}, nil
@@ -147,7 +154,7 @@ func (j *Journal) AppendEvent(ev core.Event) error {
 	}
 	line = append(line, '\n')
 
-	f, err := os.OpenFile(j.indexPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(j.indexPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("journal: open index.jsonl: %w", err)
 	}
@@ -281,7 +288,7 @@ func (j *Journal) WriteMeta(m core.Meta) error {
 // AcquireWriteLock in the same process — using a distinct descriptor — still
 // conflicts.
 func (j *Journal) AcquireWriteLock() (release func(), err error) {
-	f, err := os.OpenFile(j.lockPath(), os.O_RDWR|os.O_CREATE, 0o644)
+	f, err := os.OpenFile(j.lockPath(), os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("journal: open write.lock: %w", err)
 	}
@@ -357,7 +364,7 @@ const sendLockPoll = 10 * time.Millisecond
 // short. A caller that cannot get it inside sendLockWait gets ErrLocked and the
 // holder's pid.
 func (j *Journal) AcquireSendLock() (release func(), err error) {
-	f, err := os.OpenFile(j.sendLockPath(), os.O_RDWR|os.O_CREATE, 0o644)
+	f, err := os.OpenFile(j.sendLockPath(), os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("journal: open send.lock: %w", err)
 	}

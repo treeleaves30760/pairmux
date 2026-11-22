@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 type toolDefinition struct {
@@ -260,7 +261,7 @@ func buildRun(a arguments) ([]string, error) {
 	if err := a.allow("terminal", "command", "timeout", "head", "tail"); err != nil {
 		return nil, err
 	}
-	terminal, err := a.requiredString("terminal")
+	terminal, err := a.terminalRef()
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +289,7 @@ func buildPeek(a arguments) ([]string, error) {
 	if err := a.allow("terminal", "screen", "tail"); err != nil {
 		return nil, err
 	}
-	terminal, err := a.requiredString("terminal")
+	terminal, err := a.terminalRef()
 	if err != nil {
 		return nil, err
 	}
@@ -317,7 +318,7 @@ func buildWait(a arguments) ([]string, error) {
 	if err := a.allow("terminal", "idle_ms", "pattern", "note", "human", "done", "notify", "timeout"); err != nil {
 		return nil, err
 	}
-	terminal, err := a.requiredString("terminal")
+	terminal, err := a.terminalRef()
 	if err != nil {
 		return nil, err
 	}
@@ -351,7 +352,7 @@ func buildSend(a arguments) ([]string, error) {
 	if err := a.allow("terminal", "text", "keys", "enter"); err != nil {
 		return nil, err
 	}
-	terminal, err := a.requiredString("terminal")
+	terminal, err := a.terminalRef()
 	if err != nil {
 		return nil, err
 	}
@@ -390,7 +391,7 @@ func buildLog(a arguments) ([]string, error) {
 	if err := a.allow("terminal", "command_id", "grep", "range"); err != nil {
 		return nil, err
 	}
-	terminal, err := a.requiredString("terminal")
+	terminal, err := a.terminalRef()
 	if err != nil {
 		return nil, err
 	}
@@ -424,6 +425,11 @@ func buildKill(a arguments) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	if terminalPresent {
+		if err := positional("terminal", terminal); err != nil {
+			return nil, err
+		}
+	}
 	all, _, err := a.optionalBool("all")
 	if err != nil {
 		return nil, err
@@ -441,7 +447,7 @@ func buildNote(a arguments) ([]string, error) {
 	if err := a.allow("terminal", "text"); err != nil {
 		return nil, err
 	}
-	terminal, err := a.requiredString("terminal")
+	terminal, err := a.terminalRef()
 	if err != nil {
 		return nil, err
 	}
@@ -530,6 +536,28 @@ func (a arguments) allow(names ...string) error {
 	}
 	sort.Strings(unknown)
 	return fmt.Errorf("unknown argument %q", unknown[0])
+}
+
+// terminalRef is the required "terminal" argument, which becomes a positional
+// argument of the pairmux child.
+func (a arguments) terminalRef() (string, error) {
+	terminal, err := a.requiredString("terminal")
+	if err != nil {
+		return "", err
+	}
+	return terminal, positional("terminal", terminal)
+}
+
+// positional refuses a value the pairmux CLI would read as a flag. A tool maps
+// to one command with the options its schema declares; a terminal named
+// "--all" or "--notify" must not turn into an option the caller never set
+// (and that a client showing or approving the call by its arguments never saw).
+// No terminal name or path starts with "-", so nothing valid is refused.
+func positional(name, value string) error {
+	if strings.HasPrefix(value, "-") {
+		return fmt.Errorf("argument %q must not start with \"-\"", name)
+	}
+	return nil
 }
 
 func (a arguments) requiredString(name string) (string, error) {
