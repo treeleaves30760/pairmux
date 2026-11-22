@@ -192,6 +192,35 @@ inventory check already found the six 1.3.0 wheels (the WSL job's PyPI JSON
 still named 1.2.0 as latest); rerunning only those two jobs passed. No tag
 or artifact was rebuilt or overwritten after PyPI publication.
 
+**v1.5.1 published and accepted (2026-11-22).** A security-only patch release:
+the terminal-escape hardening from PR #22 (control characters in human-readable
+output, `watch` and the TUI shown as visible escapes; MCP tools refuse a
+`terminal` argument starting with `-`; journal files `0600` in a `0700`
+directory). The annotated tag is fixed to merged-main commit `ebf5287` (PR #23,
+changelog only), whose
+[CI 45040904925](https://github.com/treeleaves30760/pairmux/actions/runs/45040904925)
+and [Docs deployment 45040904959](https://github.com/treeleaves30760/pairmux/actions/runs/45040904959)
+passed; the full local release checklist also passed on the pre-changelog head
+`ee4f0d1`. The [tap credential check 45040632624](https://github.com/treeleaves30760/pairmux/actions/runs/45040632624)
+passed before tagging. The skill did not change, so no `pairmux-skills` release
+was made; `skills/pairmux/` still matches its `main`.
+[Release run 45040915621](https://github.com/treeleaves30760/pairmux/actions/runs/45040915621)
+passed `validate`, `windows-smoke` and `publish` on its first attempt: nine
+native assets, six PyPI wheels and the Homebrew Cask at 1.5.1. Independently,
+all eight downloaded assets match `checksums.txt`, PyPI's JSON lists the six
+1.5.1 wheels, and the tap's Cask has `version "1.5.1"` with four sha256 values
+equal to `checksums.txt`. A local isolated uv install of the public wheel on
+macOS ARM64 ran `version` (1.5.1) and a healthy `doctor` (tmux backend); its
+binary is identical to the `darwin_arm64` archive's.
+
+[Published-release acceptance 45041330877](https://github.com/treeleaves30760/pairmux/actions/runs/45041330877)
+passed all seven jobs on its second attempt. In the first, dispatched a few
+minutes after the PyPI upload, `public-uv (macos-15)` installed and accepted
+1.5.1 but then failed with `public stable changed during acceptance: expected
+1.5.0, got 1.5.1` because PyPI's cached index answered with the old latest;
+rerunning only that job passed. No tag or artifact was rebuilt or overwritten
+after PyPI publication.
+
 **v1.5.0 published and accepted (2026-11-19).** The annotated tag is fixed to
 merged-main commit `d09c5d5` (PR #20, native Windows parity), whose
 [CI 44429777904](https://github.com/treeleaves30760/pairmux/actions/runs/44429777904)
