@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-27
+
 ### Added
 
 - **Opt-in sub-agent trees in the embedded skill.** When the user explicitly asks (e.g. "use pairmux
@@ -895,7 +897,8 @@ Codex terminals and fixing what broke.
   `E_TMUX`, `E_INTERNAL`).
 
 [#7]: https://github.com/treeleaves30760/pairmux/issues/7
-[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/treeleaves30760/pairmux/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/treeleaves30760/pairmux/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/treeleaves30760/pairmux/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/treeleaves30760/pairmux/compare/v1.3.0...v1.4.0
