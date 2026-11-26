@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **tmux terminals now get the creating command's environment, not the tmux server's.** A tmux pane
+  inherited the server's global environment, which tmux snapshots from whichever process first
+  started the server, and pairmux only added its own `PAIRMUX_*` variables on top. A server first
+  started from inside an agent session that pointed `ANTHROPIC_BASE_URL` and `ANTHROPIC_MODEL` at a
+  local proxy therefore sent every later `claude` started with `pairmux new`, even from a clean
+  shell, to that proxy. In the other direction, a caller's own changes (a virtualenv, an export, a
+  new API key) never reached new panes. A new tmux terminal now starts with the calling `pairmux`
+  process's environment overlaid with pairmux's variables, the same as on the built-in backend.
+  Variables that exist only in the server's environment are gone. The values tmux sets for the pane
+  itself (`TMUX`, `TMUX_PANE`, `TERM`, `COLORTERM`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`, `PWD`)
+  are kept. The environment is passed through an owner-only (`0600`) file in the terminal's state
+  directory. The pane reads that file and deletes it before the program starts. Secrets never appear
+  on the tmux command line or in `ps`. The program is still the pane's own process, so
+  `pane_current_command`, exit status and lifecycle are unchanged. `pairmux doctor`'s live probe
+  starts its panes the same way.
+
 ## [1.5.1] - 2026-11-22
 
 ### Security

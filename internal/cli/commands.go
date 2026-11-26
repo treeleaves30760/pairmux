@@ -174,16 +174,28 @@ func (c *Ctx) cmdNew(args []string) int {
 	req := mux.NewWindowReq{Name: name, Dir: cwd, Env: env, Argv: argv, Gate: gate.Path()}
 	if atomic {
 		req.Journal = j.RawPath()
+	} else {
+		// The pane's environment (this command's, secrets included) is handed
+		// over in the terminal's own 0700 directory; the pane deletes it on
+		// start. See mux.NewWindowReq.EnvFile.
+		req.EnvFile = filepath.Join(j.Dir, paneEnvFile)
+	}
+	abandonEnv := func() {
+		if req.EnvFile != "" {
+			_ = os.Remove(req.EnvFile)
+		}
 	}
 	paneID, err := c.Mux.NewWindow(req)
 	if err != nil {
 		gate.abandon()
+		abandonEnv()
 		return c.muxErr(err)
 	}
 	keepPane := false
 	defer func() {
 		if !keepPane {
 			gate.abandon()
+			abandonEnv()
 			_ = c.Mux.KillWindowOf(paneID)
 		}
 	}()
@@ -256,6 +268,10 @@ func (c *Ctx) cmdNew(args []string) int {
 	keepPane = true
 	return c.emit(output.Envelope{Status: "created", Terminal: name, Mode: string(effMode), Next: next})
 }
+
+// paneEnvFile is the name of the environment hand-off inside a terminal's
+// directory (mux.NewWindowReq.EnvFile).
+const paneEnvFile = ".pane-env"
 
 type closeOnly interface {
 	Close() error

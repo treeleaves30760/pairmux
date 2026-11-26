@@ -31,7 +31,7 @@ type PaneInfo struct {
 type NewWindowReq struct {
 	Name string            // window name
 	Dir  string            // cwd; "" inherits
-	Env  map[string]string // added to (and overriding) the inherited environment
+	Env  map[string]string // added to (and overriding) the calling process's environment
 	Argv []string          // command; empty runs the default shell
 	// Gate is a FIFO the pane blocks on before the command starts. tmux runs a
 	// pane's command the moment the window exists, which is before pipe-pane can
@@ -44,6 +44,14 @@ type NewWindowReq struct {
 	//
 	// A backend that reports AtomicJournal does not need a gate and ignores it.
 	Gate string
+	// EnvFile is where a backend that cannot hand the pane its environment
+	// directly (tmux, whose panes otherwise inherit the server's stale global
+	// environment) writes it for the pane to pick up: a path in a directory
+	// private to the user, normally the terminal's own. The pane consumes and
+	// removes it; the caller removes it if creation is abandoned. "" lets the
+	// backend use a temp file. Backends that set the environment directly
+	// ignore it.
+	EnvFile string
 	// Journal, when set, is the file the pane's output is appended to from the
 	// first byte. Only backends that report AtomicJournal honour it; others
 	// need PipePaneAppend after the window exists.

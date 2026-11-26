@@ -2,12 +2,15 @@ package tmux
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/treeleaves30760/pairmux/internal/core"
+	"github.com/treeleaves30760/pairmux/internal/paneexec"
 )
 
 // recRunner records every argv it is handed and replays canned responses by
@@ -347,5 +350,120 @@ func TestExecRunnerStderrInError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "boom") {
 		t.Errorf("error %q must include stderr text", err.Error())
+	}
+}
+
+// helperClient is a client whose panes start through a stub helper path.
+func helperClient(r *recRunner) *Client {
+	c := newClient(r)
+	c.paneExec = func() (string, bool) { return "/opt/pmx/pairmux", true }
+	return c
+}
+
+func TestNewWindowHandsEnvironmentOffThroughFile(t *testing.T) {
+	t.Setenv("PMX_CALLER_SECRET", "sk-caller-do-not-leak")
+	t.Setenv("TMUX", "/tmp/tmux-1/outer,1,0")
+	envFile := filepath.Join(t.TempDir(), ".pane-env")
+	r := &recRunner{outs: []string{"%11\n"}}
+	id, err := helperClient(r).NewWindow(NewWindowReq{
+		Name:    "work",
+		Dir:     "/repo",
+		Env:     map[string]string{"PAIRMUX_NAME": "work", "API_TOKEN": "tok-extra-do-not-leak"},
+		Argv:    []string{"zsh", "-i"},
+		Gate:    "/s/work/.start-gate",
+		EnvFile: envFile,
+	})
+	if err != nil || id != "%11" {
+		t.Fatalf("NewWindow = %q, %v", id, err)
+	}
+	want := []string{
+		"tmux", "-L", "pairmux", "new-window", "-d", "-P", "-F", "#{pane_id}", "-t", "pairmux:", "-n", "work",
+		"-c", "/repo",
+		"--", "/opt/pmx/pairmux", paneexec.Command, "--env-file", envFile, "--gate", "/s/work/.start-gate",
+		"--", "zsh", "-i",
+	}
+	if !reflect.DeepEqual(r.calls[0], want) {
+		t.Fatalf("argv =\n %q\nwant\n %q", r.calls[0], want)
+	}
+	// No value of the environment — secrets above all — is on tmux's argv.
+	joined := strings.Join(r.calls[0], " ")
+	for _, secret := range []string{"sk-caller-do-not-leak", "tok-extra-do-not-leak", "PAIRMUX_NAME"} {
+		if strings.Contains(joined, secret) {
+			t.Fatalf("tmux argv carries %q: %q", secret, r.calls[0])
+		}
+	}
+	fi, err := os.Stat(envFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
+		t.Fatalf("env file mode = %o, want 600", fi.Mode().Perm())
+	}
+	data, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := paneexec.Decode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	has := map[string]string{}
+	for _, kv := range got {
+		k, v, _ := strings.Cut(kv, "=")
+		has[k] = v
+	}
+	if has["PMX_CALLER_SECRET"] != "sk-caller-do-not-leak" || has["API_TOKEN"] != "tok-extra-do-not-leak" || has["PAIRMUX_NAME"] != "work" {
+		t.Fatalf("env file lacks the caller's or the request's variables: %q", got)
+	}
+	if _, ok := has["TMUX"]; ok {
+		t.Fatalf("env file carries the caller's TMUX: %q", got)
+	}
+}
+
+func TestNewWindowDefaultShellIsLoginShell(t *testing.T) {
+	envFile := filepath.Join(t.TempDir(), ".pane-env")
+	r := &recRunner{outs: []string{"/usr/local/bin/fish\n", "%12"}}
+	if _, err := helperClient(r).NewWindow(NewWindowReq{Name: "sh", EnvFile: envFile}); err != nil {
+		t.Fatal(err)
+	}
+	wantShow := []string{"tmux", "-L", "pairmux", "show-options", "-gv", "default-shell"}
+	if len(r.calls) != 2 || !reflect.DeepEqual(r.calls[0], wantShow) {
+		t.Fatalf("calls = %q, want default-shell lookup first", r.calls)
+	}
+	if tail := r.calls[1][len(r.calls[1])-3:]; !reflect.DeepEqual(tail, []string{"--login", "--", "/usr/local/bin/fish"}) {
+		t.Fatalf("argv = %q, want a login run of the default shell", r.calls[1])
+	}
+}
+
+func TestNewWindowDefaultShellFallsBackToCallerShell(t *testing.T) {
+	t.Setenv("SHELL", "/bin/caller-shell")
+	r := &recRunner{outs: []string{"", "%13"}, errs: []error{errors.New("no server")}}
+	c := helperClient(r)
+	if got := c.defaultShell(); got != "/bin/caller-shell" {
+		t.Fatalf("defaultShell = %q, want the caller's SHELL", got)
+	}
+	t.Setenv("SHELL", "")
+	r2 := &recRunner{outs: []string{"\n"}}
+	if got := helperClient(r2).defaultShell(); got != "/bin/sh" {
+		t.Fatalf("defaultShell = %q, want /bin/sh", got)
+	}
+}
+
+func TestNewWindowFailureRemovesEnvFile(t *testing.T) {
+	envFile := filepath.Join(t.TempDir(), ".pane-env")
+	r := &recRunner{errs: []error{errors.New("new-window failed")}}
+	if _, err := helperClient(r).NewWindow(NewWindowReq{Name: "x", Argv: []string{"true"}, EnvFile: envFile}); err == nil {
+		t.Fatal("NewWindow succeeded on a failing tmux")
+	}
+	if _, err := os.Stat(envFile); !os.IsNotExist(err) {
+		t.Fatalf("env file left behind after a failed create: %v", err)
+	}
+	// An env file that cannot be written fails the create before tmux runs.
+	r2 := &recRunner{}
+	if _, err := helperClient(r2).NewWindow(NewWindowReq{Name: "x", Argv: []string{"true"}, EnvFile: filepath.Join(t.TempDir(), "missing", "f")}); err == nil {
+		t.Fatal("NewWindow succeeded without its env file")
+	}
+	if len(r2.calls) != 0 {
+		t.Fatalf("tmux ran without the env file: %q", r2.calls)
 	}
 }

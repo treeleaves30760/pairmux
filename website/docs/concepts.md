@@ -86,6 +86,17 @@ Either way, attaching does not transfer exclusive ownership; a human leaves a `n
 hand-back signal. `E_TMUX` keeps its historical name but means the backend — tmux or the built-in
 server — failed; built-in failures carry built-in-specific hints.
 
+On either backend a new terminal starts with the environment of the `pairmux` command that created
+it (its `PATH`, virtualenv, exports and credentials), plus pairmux's own `PAIRMUX_*` variables. It
+does not inherit the environment of whatever process happened to start the tmux server, which tmux
+would otherwise hand to every pane. Only the variables that describe the pane itself (`TMUX`,
+`TMUX_PANE`, `TERM`, `COLORTERM`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`, `PWD`) come from tmux. On
+tmux the environment is passed through a short-lived owner-only file in the terminal's state
+directory, never on a command line, so secrets do not show up in `ps`. The pane starts as the hidden
+helper `pairmux __pane-exec`, which reads and deletes that file and then replaces itself with the
+program, so the program is still the pane's own process. To change what a terminal sees, change the
+environment you run `pairmux new` from.
+
 ### Choosing a backend
 
 `PAIRMUX_BACKEND` selects `tmux`, `builtin`, or `auto` (the same as unset). The automatic choice is

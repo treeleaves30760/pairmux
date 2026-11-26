@@ -16,6 +16,7 @@ import (
 	"github.com/treeleaves30760/pairmux/internal/mux"
 	"github.com/treeleaves30760/pairmux/internal/muxd"
 	"github.com/treeleaves30760/pairmux/internal/output"
+	"github.com/treeleaves30760/pairmux/internal/paneexec"
 	"github.com/treeleaves30760/pairmux/internal/shape"
 	"github.com/treeleaves30760/pairmux/internal/state"
 )
@@ -54,7 +55,15 @@ func Main(args []string) int {
 	if len(args) > 0 && args[0] == detect.ConsoleProbeCommand {
 		return detect.ConsoleProbeMain(args[1:])
 	}
+	// And the helper a tmux pane starts through, which gives the pane the
+	// environment of the command that created it (see paneexec). It runs inside
+	// the pane, with the tmux server's environment: dispatched before anything
+	// reads that environment.
+	if len(args) > 0 && args[0] == paneexec.Command {
+		return paneexec.Main(args[1:])
+	}
 	detect.EnableConsoleProbe()
+	paneexec.Enable()
 	socket := os.Getenv("PAIRMUX_SOCKET")
 	rest, jsonMode, socket := stripGlobals(args, false, socket)
 	if socket == "" {
