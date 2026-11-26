@@ -192,6 +192,27 @@ inventory check already found the six 1.3.0 wheels (the WSL job's PyPI JSON
 still named 1.2.0 as latest); rerunning only those two jobs passed. No tag
 or artifact was rebuilt or overwritten after PyPI publication.
 
+**v1.6.0 published and accepted (2026-11-27).** tmux-backend terminals start
+with the creating command's environment instead of the tmux server's stale global
+environment (hand-off through a `0600` `.pane-env` consumed by the hidden
+`pairmux __pane-exec` helper), plus the opt-in sub-agent tree docs. The annotated
+tag is fixed to merged-main commit `f5a2e84` (PR #25), whose
+[CI 45872007409](https://github.com/treeleaves30760/pairmux/actions/runs/45872007409)
+and [Docs deployment 45872007464](https://github.com/treeleaves30760/pairmux/actions/runs/45872007464)
+passed. The [tap credential check 45871953692](https://github.com/treeleaves30760/pairmux/actions/runs/45871953692)
+passed before tagging. The companion skill was released as `pairmux-skills`
+v0.7.0 (PR #9), byte-identical to `skills/pairmux/`.
+[Release run 45872018099](https://github.com/treeleaves30760/pairmux/actions/runs/45872018099)
+passed `validate`, `windows-smoke` and `publish` on its first attempt: nine
+GitHub assets, six PyPI wheels and the Homebrew cask (`version "1.6.0"`). A local
+isolated uv install of the public wheel on macOS ARM64 ran `version` (1.6.0) and a
+healthy `doctor` (tmux backend), and reproduced the original report: a tmux server
+started with stale `ANTHROPIC_*` values no longer leaks them into new shell or
+`--cmd` terminals, the secret is absent from `ps`, and no `.pane-env` remains.
+[Published-release acceptance 45874457897](https://github.com/treeleaves30760/pairmux/actions/runs/45874457897)
+passed all seven jobs on its first attempt (dispatched about 13 minutes after the
+PyPI upload). No tag or artifact was rebuilt or overwritten after PyPI publication.
+
 **v1.5.1 published and accepted (2026-11-22).** A security-only patch release:
 the terminal-escape hardening from PR #22 (control characters in human-readable
 output, `watch` and the TUI shown as visible escapes; MCP tools refuse a
