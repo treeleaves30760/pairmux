@@ -48,8 +48,8 @@ type NewWindowReq struct {
 	// directly (tmux, whose panes otherwise inherit the server's stale global
 	// environment) writes it for the pane to pick up: a path in a directory
 	// private to the user, normally the terminal's own. The pane consumes and
-	// removes it; the caller removes it if creation is abandoned. "" lets the
-	// backend use a temp file. Backends that set the environment directly
+	// removes it; the caller removes it if creation is abandoned. Required
+	// by such a backend (it refuses ""). Backends that set the environment directly
 	// ignore it.
 	EnvFile string
 	// Journal, when set, is the file the pane's output is appended to from the

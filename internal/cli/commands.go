@@ -91,6 +91,9 @@ func (c *Ctx) cmdNew(args []string) int {
 		// older archive, then start fresh.
 		prev := dir + ".prev"
 		_ = os.RemoveAll(prev)
+		// A create killed before its pane started leaves the environment
+		// hand-off (secrets included) behind; never archive it.
+		removePaneEnv(dir)
 		if err := os.Rename(dir, prev); err != nil {
 			return c.fail(output.CodeInternal, "archive previous terminal dir: "+err.Error(), "")
 		}
@@ -272,6 +275,14 @@ func (c *Ctx) cmdNew(args []string) int {
 // paneEnvFile is the name of the environment hand-off inside a terminal's
 // directory (mux.NewWindowReq.EnvFile).
 const paneEnvFile = ".pane-env"
+
+// removePaneEnv deletes a terminal directory's environment hand-off, if a
+// create that died before its pane read it left one behind.
+func removePaneEnv(dir string) {
+	if dir != "" {
+		_ = os.Remove(filepath.Join(dir, paneEnvFile))
+	}
+}
 
 type closeOnly interface {
 	Close() error
@@ -953,6 +964,7 @@ func (c *Ctx) cmdKill(args []string) int {
 	if term.Alive && term.PaneID != "" {
 		_ = c.Mux.KillWindowOf(term.PaneID) // ignore: pane may already be gone
 	}
+	removePaneEnv(term.Dir)
 	if j, err := journal.Open(term.Dir); err == nil {
 		_ = j.AppendEvent(core.Event{Type: core.EvNote, Text: "killed"})
 	}

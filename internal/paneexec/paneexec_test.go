@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/treeleaves30760/pairmux/internal/muxd"
@@ -71,6 +72,10 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 		if _, err := Decode([]byte(bad)); err == nil {
 			t.Errorf("Decode(%q) accepted malformed input", bad)
 		}
+	}
+	// The error must not echo the entry, which may be part of a secret.
+	if _, err := Decode([]byte("sk-secret-fragment\x00")); err == nil || strings.Contains(err.Error(), "sk-secret") {
+		t.Fatalf("Decode error leaks the entry: %v", err)
 	}
 }
 
@@ -153,18 +158,6 @@ func TestWriteEnvFileIsPrivateAndConsumedOnRead(t *testing.T) {
 	}
 	if err := WriteEnvFile(filepath.Join(dir, "missing", "f"), env); err == nil {
 		t.Fatal("WriteEnvFile into a missing directory succeeded")
-	}
-}
-
-func TestWriteTempEnvFile(t *testing.T) {
-	path, err := WriteTempEnvFile([]string{"A=1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Remove(path)
-	got, err := readEnvFile(path)
-	if err != nil || !reflect.DeepEqual(got, []string{"A=1"}) {
-		t.Fatalf("readEnvFile = %q, %v", got, err)
 	}
 }
 

@@ -150,13 +150,12 @@ func (c *Client) NewWindow(r NewWindowReq) (string, error) {
 	}
 	env := paneexec.Env(os.Environ(), r.Env)
 	envFile := r.EnvFile
-	var err error
-	if envFile != "" {
-		err = paneexec.WriteEnvFile(envFile, env)
-	} else {
-		envFile, err = paneexec.WriteTempEnvFile(env)
+	if envFile == "" {
+		// The caller owns the hand-off's location so it can remove it on every
+		// abandon path; a temp file it never learns of could outlive a failure.
+		return "", errors.New("tmux: new-window: no environment file path (NewWindowReq.EnvFile)")
 	}
-	if err != nil {
+	if err := paneexec.WriteEnvFile(envFile, env); err != nil {
 		return "", fmt.Errorf("tmux: write pane environment: %w", err)
 	}
 	args = append(args, "--")

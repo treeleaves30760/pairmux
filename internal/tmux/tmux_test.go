@@ -467,3 +467,13 @@ func TestNewWindowFailureRemovesEnvFile(t *testing.T) {
 		t.Fatalf("tmux ran without the env file: %q", r2.calls)
 	}
 }
+
+func TestNewWindowRequiresEnvFile(t *testing.T) {
+	r := &recRunner{}
+	if _, err := helperClient(r).NewWindow(NewWindowReq{Name: "x", Argv: []string{"true"}}); err == nil {
+		t.Fatal("NewWindow without EnvFile must fail rather than pick a path the caller cannot clean up")
+	}
+	if len(r.calls) != 0 {
+		t.Fatalf("tmux ran without an env file: %q", r.calls)
+	}
+}

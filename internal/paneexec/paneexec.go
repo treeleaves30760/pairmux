@@ -170,7 +170,8 @@ func Decode(data []byte) ([]string, error) {
 	parts := strings.Split(string(data[:len(data)-1]), "\x00")
 	for _, kv := range parts {
 		if k, _, ok := strings.Cut(kv, "="); !ok || k == "" {
-			return nil, fmt.Errorf("malformed environment entry %q", kv)
+			// Never echo the entry: it may hold part of a secret.
+			return nil, errors.New("malformed environment entry")
 		}
 	}
 	return parts, nil
@@ -195,26 +196,6 @@ func WriteEnvFile(path string, env []string) error {
 		return werr
 	}
 	return nil
-}
-
-// WriteTempEnvFile writes env to a fresh 0600 file in the system temp
-// directory, for a create that names no file of its own.
-func WriteTempEnvFile(env []string) (string, error) {
-	f, err := os.CreateTemp("", "pairmux-pane-env-*")
-	if err != nil {
-		return "", err
-	}
-	path := f.Name()
-	_, werr := f.Write(Encode(env))
-	cerr := f.Close()
-	if werr == nil {
-		werr = cerr
-	}
-	if werr != nil {
-		_ = os.Remove(path)
-		return "", werr
-	}
-	return path, nil
 }
 
 // readEnvFile reads the env file and unlinks it at once: the secrets it holds
@@ -329,7 +310,12 @@ func Main(args []string) int {
 	fileEnv, err := readEnvFile(o.EnvFile)
 	if err != nil {
 		// Running with the server's environment instead is exactly the failure
-		// this helper exists to prevent, so refuse.
+		// this helper exists to prevent, so refuse. Wait for the gate first so
+		// the creating command is not left waiting for it and the message
+		// reaches the journal (pipe-pane is attached once the gate opens).
+		if o.Gate != "" {
+			waitGate(o.Gate)
+		}
 		fmt.Fprintf(os.Stderr, "pairmux %s: read environment: %v\n", Command, err)
 		return 126
 	}
