@@ -144,6 +144,11 @@ anything above or beside it** — such calls fail with `E_SCOPE` by design; neve
 `send` the task (include "run `pairmux report` when done"), then `wait a,b --note` — or watch the
 whole subtree with `events --tree --wait` instead of polling. `kill` ends a worker and its subtree.
 
+**Replacing your host's sub-agents is opt-in.** Keep delegating through your host's native sub-agent
+mechanism (e.g. Claude Code's Task/Agent tool) as usual. Build a pairmux sub-agent tree instead only
+when the user explicitly asks — e.g. "use pairmux to build a hierarchy of sub-agents" or
+「使用 pairmux 來構建階層式的管理 Subagents」 — then follow [hierarchy.md](references/hierarchy.md#opt-in-pairmux-in-place-of-native-sub-agents).
+
 ## Reading replies
 
 In a CLI envelope, `schema:"pairmux.v1"` and `ok` are always present; other fields are contextual.
@@ -179,13 +184,6 @@ pairmux wait build --done --idle 800 --timeout 30s
 {"schema":"pairmux.v1","ok":true,"status":"done","terminal":"build","mode":"hooks","exit_code":0,"output":"BUILD SUCCESSFUL"}
 ```
 
-Known non-secret confirmation: read the question and choose the authorized answer, once:
-
-```bash
-pairmux send deploy --text yes --enter
-pairmux wait deploy --done --idle 800 --timeout 30s
-```
-
 Program terminal: send a REPL line; a prompt observation still requires checking the result:
 
 ```bash
@@ -216,5 +214,5 @@ pairmux peek repl
 - [references/commands.md](references/commands.md) — flags, backend/shell selection, envelope and errors.
 - [references/interactive.md](references/interactive.md) — prompt inference, secrets, REPLs, TUIs and keys.
 - [references/collaboration.md](references/collaboration.md) — handoff outcomes, privacy limits, reporting from a pane.
-- [references/hierarchy.md](references/hierarchy.md) — full recipe: sub-agents, paths, scope (`E_SCOPE`), `report`, `ls --tree`, `events --wait`.
+- [references/hierarchy.md](references/hierarchy.md) — full recipe: sub-agents, paths, scope (`E_SCOPE`), `report`, `ls --tree`, `events --wait`; opt-in sub-agent tree.
 - [references/troubleshooting.md](references/troubleshooting.md) — busy/dead panes, in-place recovery, waits and backends.

@@ -359,9 +359,14 @@ func probeShell(cl mux.Mux, stateDir string, idx int, shell string) shellTierRes
 	req := mux.NewWindowReq{Name: name, Dir: stateDir, Env: env, Argv: argv}
 	if cl.AtomicJournal() {
 		req.Journal = j.RawPath()
+	} else {
+		req.EnvFile = filepath.Join(dir, paneEnvFile) // as cmdNew
 	}
 	paneID, err := cl.NewWindow(req)
 	if err != nil {
+		if req.EnvFile != "" {
+			_ = os.Remove(req.EnvFile)
+		}
 		res.err = "new-window: " + err.Error()
 		return res
 	}

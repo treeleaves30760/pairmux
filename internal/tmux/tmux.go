@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/treeleaves30760/pairmux/internal/core"
 	"github.com/treeleaves30760/pairmux/internal/mux"
+	"github.com/treeleaves30760/pairmux/internal/paneexec"
 )
 
 // runner executes a fully-formed tmux argv (argv[0] == "tmux") and returns
@@ -27,6 +29,8 @@ type runner func(argv []string) (string, error)
 type Client struct {
 	Socket string
 	runner runner
+	// paneExec overrides paneexec.Executable, for tests.
+	paneExec func() (string, bool)
 }
 
 // ErrInvalidSocket is returned before exec when a -L socket name could escape
@@ -122,11 +126,73 @@ type NewWindowReq = mux.NewWindowReq
 
 // NewWindow creates a detached window in the pairmux session and returns its
 // pane id (e.g. "%3").
+//
+// The pane's environment is the calling process's own overlaid with r.Env —
+// not the tmux server's global environment, which is whatever the process
+// that first started the server happened to carry. It travels through a 0600
+// file (r.EnvFile, or a temp file) read by this executable's paneexec helper,
+// never on tmux's argv; see package paneexec. A process that cannot serve as
+// the helper (a library user or a test binary) falls back to passing r.Env
+// with -e over the server's environment.
 func (c *Client) NewWindow(r NewWindowReq) (string, error) {
 	args := []string{"new-window", "-d", "-P", "-F", "#{pane_id}", "-t", core.SessionName + ":", "-n", r.Name}
 	if r.Dir != "" {
 		args = append(args, "-c", r.Dir)
 	}
+	exe, ok := c.helper()
+	if !ok {
+		return c.newWindowLegacy(args, r)
+	}
+	argv, login := r.Argv, false
+	if len(argv) == 0 {
+		// tmux would start its default shell as a login shell; do the same.
+		argv, login = []string{c.defaultShell()}, true
+	}
+	env := paneexec.Env(os.Environ(), r.Env)
+	envFile := r.EnvFile
+	if envFile == "" {
+		// The caller owns the hand-off's location so it can remove it on every
+		// abandon path; a temp file it never learns of could outlive a failure.
+		return "", errors.New("tmux: new-window: no environment file path (NewWindowReq.EnvFile)")
+	}
+	if err := paneexec.WriteEnvFile(envFile, env); err != nil {
+		return "", fmt.Errorf("tmux: write pane environment: %w", err)
+	}
+	args = append(args, "--")
+	args = append(args, paneexec.Argv(exe, paneexec.Options{EnvFile: envFile, Gate: r.Gate, Login: login, Argv: argv})...)
+	out, err := c.run(args...)
+	if err != nil {
+		_ = os.Remove(envFile)
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// helper returns the executable panes are started through, if any.
+func (c *Client) helper() (string, bool) {
+	if c.paneExec != nil {
+		return c.paneExec()
+	}
+	return paneexec.Executable()
+}
+
+// defaultShell resolves the shell tmux would run for a window with no command:
+// its default-shell option, else the caller's SHELL, else /bin/sh.
+func (c *Client) defaultShell() string {
+	if out, err := c.run("show-options", "-gv", "default-shell"); err == nil {
+		if sh := strings.TrimSpace(out); sh != "" {
+			return sh
+		}
+	}
+	if sh := os.Getenv("SHELL"); sh != "" {
+		return sh
+	}
+	return "/bin/sh"
+}
+
+// newWindowLegacy starts the pane without the helper: r.Env is passed with -e
+// on top of the server's global environment, and a gate is held by sh.
+func (c *Client) newWindowLegacy(args []string, r NewWindowReq) (string, error) {
 	for _, k := range sortedKeys(r.Env) {
 		args = append(args, "-e", k+"="+r.Env[k])
 	}

@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-27
+
+### Added
+
+- **Opt-in sub-agent trees in the embedded skill.** When the user explicitly asks (e.g. "use pairmux
+  to build a hierarchy of sub-agents" / 「使用 pairmux 來構建階層式的管理 Subagents」), an agent runs
+  its sub-agents as pairmux terminals instead of its host's native sub-agents: an explicit `--model`
+  per child, a task that ends in `pairmux report` and may recurse, `wait --note` /
+  `events --tree --wait` instead of sleeping, and `kill` when done. Otherwise agents keep their
+  native mechanism. The skill also covers inherited `ANTHROPIC_*` proxy variables and how to check
+  them without printing secrets. New docs guide: Sub-agent trees (opt-in).
+
+### Fixed
+
+- **tmux terminals now get the creating command's environment, not the tmux server's.** A tmux pane
+  inherited the server's global environment, which tmux snapshots from whichever process first
+  started the server, and pairmux only added its own `PAIRMUX_*` variables on top. A server first
+  started from inside an agent session that pointed `ANTHROPIC_BASE_URL` and `ANTHROPIC_MODEL` at a
+  local proxy therefore sent every later `claude` started with `pairmux new`, even from a clean
+  shell, to that proxy. In the other direction, a caller's own changes (a virtualenv, an export, a
+  new API key) never reached new panes. A new tmux terminal now starts with the calling `pairmux`
+  process's environment overlaid with pairmux's variables, the same as on the built-in backend.
+  Variables that exist only in the server's environment are gone. The values tmux sets for the pane
+  itself (`TMUX`, `TMUX_PANE`, `TERM`, `COLORTERM`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`, `PWD`)
+  are kept. The environment is passed through an owner-only (`0600`) file in the terminal's state
+  directory. The pane reads that file and deletes it before the program starts. Secrets never appear
+  on the tmux command line or in `ps`. The program is still the pane's own process, so
+  `pane_current_command`, exit status and lifecycle are unchanged. `pairmux doctor`'s live probe
+  starts its panes the same way.
+
 ## [1.5.1] - 2026-11-22
 
 ### Security
@@ -867,7 +897,8 @@ Codex terminals and fixing what broke.
   `E_TMUX`, `E_INTERNAL`).
 
 [#7]: https://github.com/treeleaves30760/pairmux/issues/7
-[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/treeleaves30760/pairmux/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/treeleaves30760/pairmux/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/treeleaves30760/pairmux/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/treeleaves30760/pairmux/compare/v1.3.0...v1.4.0

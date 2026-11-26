@@ -19,6 +19,7 @@ const sidebars: SidebarsConfig = {
         'guides/human-collaboration',
         'guides/multi-agent-sharing',
         'guides/agent-hierarchy',
+        'guides/subagent-tree',
         'guides/tui',
       ],
     },
