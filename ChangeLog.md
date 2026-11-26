@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Opt-in sub-agent trees in the embedded skill.** When the user explicitly asks (e.g. "use pairmux
+  to build a hierarchy of sub-agents" / 「使用 pairmux 來構建階層式的管理 Subagents」), an agent runs
+  its sub-agents as pairmux terminals instead of its host's native sub-agents: an explicit `--model`
+  per child, a task that ends in `pairmux report` and may recurse, `wait --note` /
+  `events --tree --wait` instead of sleeping, and `kill` when done. Otherwise agents keep their
+  native mechanism. The skill also covers inherited `ANTHROPIC_*` proxy variables and how to check
+  them without printing secrets. New docs guide: Sub-agent trees (opt-in).
+
 ### Fixed
 
 - **tmux terminals now get the creating command's environment, not the tmux server's.** A tmux pane

@@ -13,6 +13,8 @@ credential handoffs retain their separate, at-least-300-second wait policy.
 It recommends a persistent `uv tool install pairmux` setup and, from v0.6.0, `pairmux update`
 only with explicit user authorization; agents must not install or self-update during terminal
 workflows on their own. See [Getting Started](./getting-started.mdx#install) for CLI installation.
+Agents keep their host's native sub-agents unless you explicitly ask for a pairmux sub-agent tree;
+see [Sub-agent trees (opt-in)](./guides/subagent-tree.md).
 
 ## Install
 

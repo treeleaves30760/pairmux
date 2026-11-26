@@ -109,3 +109,74 @@ pairmux report "GET /users done; 6 tests pass; see services/api/users.py"
 (a `--socket` copied from a hint, log, or instructions; or `PAIRMUX_SOCKET` changed). Run
 `pairmux ls --tree` to see what you may drive, and `pairmux report "..."` to ask your owner for
 anything outside it.
+
+---
+
+## Opt-in: pairmux in place of native sub-agents
+
+**Not the default.** Keep using your host's own sub-agent mechanism (Claude Code's Task/Agent tool,
+Codex's sub-agents, …) as usual. Switch to this recipe only when the user explicitly asks for it,
+e.g. "use pairmux to build a hierarchy of sub-agents", "manage sub-agents hierarchically with
+pairmux", or 「使用 pairmux 來構建階層式的管理 Subagents」. Do not suggest it unprompted.
+
+Why users ask for it: native sub-agents are usually one level deep (a sub-agent cannot start its
+own). Here every node is a full agent CLI in its own terminal, so any node can open the next layer —
+a tree of arbitrary depth. The human can `attach` to any node and take over; results flow up only
+through `report`; control flows only down (`E_SCOPE` above or beside).
+
+### Parent loop
+
+```bash
+# 1. One terminal per child, with the model and flags stated explicitly (never rely on inheritance).
+pairmux new --name api --cwd ./services/api --cmd "claude --model <model-id>"
+pairmux new --name web --cwd ./web --cmd "codex --model <model-id>"
+# 2. Verify startup: at its input prompt, banner shows the intended model, no trust/login dialog left.
+pairmux peek api
+# 3. Hand over the task, the completion signal, and permission to recurse — one line.
+pairmux send api --text "Implement GET /users with tests. You are a pairmux sub-agent: when done run pairmux report \"<outcome; evidence; next step>\" and stop. If a part is big, start your own sub-agents the same way (pairmux new --name <n> --cmd \"<agent> --model <id>\"), wait for their reports and fold them into yours." --enter
+# 4. Block on reports instead of sleeping or polling peek.
+pairmux wait api,web --note --timeout 1800s
+pairmux events --tree --wait --status awaiting-input,dead --timeout 30m   # who needs attention, at any depth
+# 5. Read the report (notes) and check the evidence it names before trusting it.
+pairmux peek api
+# 6. Close finished children; kill also ends their subtree.
+pairmux kill api
+```
+
+- A child's permission or trust prompt shows as `awaiting-input`: answer it only within what the
+  user authorized; otherwise hand it to the human (`wait <name> --human --notify`).
+- Give each child a distinct `--cwd` or file set so siblings do not edit the same files.
+- Kill a child only after its report (or with the user's consent): mid-turn work is lost.
+
+### Grandchildren
+
+The child does the same from inside its pane; its plain `pairmux new` lands one layer down. You see
+the whole tree and can read any node by path, but leave driving to its owner:
+
+```bash
+# inside api's terminal
+pairmux new --name tests --cmd "claude --model <model-id>"
+pairmux wait tests --note --timeout 1800s
+pairmux report "GET /users done; tests (via api/tests) pass; see services/api/users.py"
+# at the top
+pairmux ls --tree                          # api, api/tests, web …
+pairmux peek api/tests
+```
+
+### Environment hygiene
+
+A child inherits its creator's environment. Proxies and wrappers (e.g. `alc`) export
+`ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`, and similar, so a child may silently run another model or
+endpoint. Always pass the model explicitly, clear variables you do not intend in `--cmd` (POSIX:
+`--cmd "env -u ANTHROPIC_BASE_URL -u ANTHROPIC_MODEL claude --model <model-id>"`), and verify: ask the
+child to state its model, or check names (never secret values) in a plain shell terminal of the
+same layer:
+
+```bash
+pairmux new --name envcheck
+pairmux run envcheck "env | cut -d= -f1 | grep '^ANTHROPIC_'; printenv ANTHROPIC_BASE_URL" --timeout 10s
+pairmux kill envcheck
+```
+
+Unexpected names there, with pairmux 1.5.1 or older on tmux: see
+[troubleshooting.md](troubleshooting.md#a-child-agent-runs-the-wrong-model-or-endpoint).

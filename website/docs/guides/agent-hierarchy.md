@@ -144,3 +144,6 @@ pairmux report "API done; tests green"
 # lead can also reach api's helper directly
 pairmux peek api/tests
 ```
+
+To have an agent run its sub-agents this way instead of its host's native sub-agents, ask it
+explicitly; see [Sub-agent trees (opt-in)](./subagent-tree.md).

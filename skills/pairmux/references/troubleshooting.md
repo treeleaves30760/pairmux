@@ -167,6 +167,28 @@ read `<socket>.log` in that directory (the error names it) and run `pairmux doct
 Keep the same `PAIRMUX_BACKEND`, `PAIRMUX_TMPDIR`/`TMUX_TMPDIR`, `PAIRMUX_SOCKET`, and
 `PAIRMUX_STATE_DIR` in every process that needs to share a terminal.
 
+## A child agent runs the wrong model or endpoint
+
+A terminal inherits its creator's environment, including proxy settings such as
+`ANTHROPIC_BASE_URL` / `ANTHROPIC_MODEL` exported by wrappers like `alc`. Pass the model explicitly
+in `--cmd`, clear unintended variables there (`env -u VAR …` on POSIX), and check variable **names**
+in a fresh shell terminal (`env | cut -d= -f1 | grep '^ANTHROPIC_'`), never secret values.
+
+**pairmux 1.5.1 and older, tmux backend:** new terminals got the tmux server's *global* environment —
+captured from whichever process first started that server (e.g. a stale `alc --codex claude`
+session) — instead of the caller's. Fixed in pairmux 1.6.0. On older versions, with the same
+`TMUX_TMPDIR`, inspect and clear the stale variables (socket `pairmux` is the top layer; a nested
+layer's socket is its `PAIRMUX_SOCKET` / the `[layer:…]` badge in `ls`):
+
+```bash
+tmux -L pairmux show-environment -g | cut -d= -f1 | grep '^ANTHROPIC_'
+tmux -L pairmux set-environment -g -u ANTHROPIC_BASE_URL
+```
+
+This affects terminals created afterwards. Alternatively restart the server
+(`tmux -L pairmux kill-server`) — only when `pairmux ls --tree` shows no work running in it; it
+ends every terminal on that socket.
+
 ## A terminal I created is missing from `ls`
 
 The two backends keep separate terminals and state, and `ls` lists only the selected backend's
