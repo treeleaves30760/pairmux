@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-28
+
 ### Added
 
 - **The TUI fits a full-screen program to its preview.** Terminals are 220x50 so agents' output
@@ -951,7 +953,8 @@ Codex terminals and fixing what broke.
   `E_TMUX`, `E_INTERNAL`).
 
 [#7]: https://github.com/treeleaves30760/pairmux/issues/7
-[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.6.1...HEAD
+[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/treeleaves30760/pairmux/compare/v1.6.1...v1.7.0
 [1.6.1]: https://github.com/treeleaves30760/pairmux/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/treeleaves30760/pairmux/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/treeleaves30760/pairmux/compare/v1.5.0...v1.5.1
