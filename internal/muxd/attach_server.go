@@ -151,6 +151,7 @@ func (s *Server) attach(conn net.Conn, req request) {
 		return
 	}
 	p.clients[c] = struct{}{}
+	p.endFitLocked() // an attached human owns the size from now on
 	p.resizeLocked(req.Cols, req.Rows)
 	c.requestRedraw() // the first thing a new client sees is the whole screen
 	p.mu.Unlock()

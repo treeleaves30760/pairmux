@@ -120,6 +120,14 @@ type pane struct {
 	cols    int
 	rows    int
 
+	// A fit (see fit.go): the TUI's preview size, held while nobody is
+	// attached and only for as long as its lease is renewed.
+	fitted   bool
+	baseCols int // the size before the fit, restored when it ends
+	baseRows int
+	fitTimer *time.Timer
+	fitGen   int
+
 	inMu    sync.Mutex
 	inCond  *sync.Cond
 	inQueue [][]byte
@@ -443,8 +451,17 @@ func (s *Server) handle(req request) response {
 		n := len(p.clients)
 		p.mu.Unlock()
 		return response{OK: true, Attached: n, Active: n > 0}
+	case "screen":
+		return p.screenInfo()
+	case "fit":
+		return p.fit(req.Cols, req.Rows, req.LeaseMS)
+	case "unfit":
+		p.mu.Lock()
+		p.unfitLocked()
+		p.mu.Unlock()
+		return response{OK: true}
 	}
-	return fail("unknown operation %q", req.Op)
+	return fail(errUnknownOp+" %q", req.Op)
 }
 
 func openJournal(path string) (*os.File, error) {

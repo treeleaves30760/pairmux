@@ -111,6 +111,13 @@ func (c *Ctx) cmdAttach(args []string) int {
 	}
 
 	if !builtin {
+		// A TUI may have fitted windows to its preview box (resize-window,
+		// which leaves a window's size manual); an attached human must get
+		// their own terminal's size on every window they can switch to — also
+		// when the TUI that fitted them died without cleaning up.
+		if fs, ok := c.Mux.(mux.FitSweeper); ok {
+			_ = fs.ReleaseFits(nil)
+		}
 		return c.execTmuxAttach()
 	}
 	if insideBuiltinPane() == c.Mux.SocketName()+"/"+paneID {

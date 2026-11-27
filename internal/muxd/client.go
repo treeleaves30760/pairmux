@@ -368,3 +368,43 @@ func (c *Client) PaneAudience(paneID string) (int, bool, error) {
 	}
 	return resp.Attached, resp.Active, nil
 }
+
+// PaneScreen reports the pane's size and screen modes. A server from an older
+// pairmux does not know the request: ErrFitUnsupported.
+func (c *Client) PaneScreen(paneID string) (mux.ScreenInfo, error) {
+	resp, err := c.call(request{Op: "screen", Pane: paneID})
+	if err != nil {
+		return mux.ScreenInfo{}, fitErr(err)
+	}
+	if resp.Screen == nil {
+		return mux.ScreenInfo{}, mux.ErrFitUnsupported
+	}
+	return *resp.Screen, nil
+}
+
+// FitPane gives the pane a preview size for mux.FitLease; see mux.Mux.
+func (c *Client) FitPane(paneID string, cols, rows int) error {
+	_, err := c.call(request{Op: "fit", Pane: paneID, Cols: cols, Rows: rows, LeaseMS: int(mux.FitLease / time.Millisecond)})
+	return fitErr(err)
+}
+
+// UnfitPane ends a fit, restoring the pane's size from before it.
+func (c *Client) UnfitPane(paneID string) error {
+	_, err := c.call(request{Op: "unfit", Pane: paneID})
+	return fitErr(err)
+}
+
+// fitErr maps the server's refusals onto the mux sentinels. Errors arrive as
+// text, so they are matched as text; errUnknownOp is what every older server
+// answers a request it does not know.
+func fitErr(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case strings.Contains(err.Error(), errUnknownOp):
+		return mux.ErrFitUnsupported
+	case strings.Contains(err.Error(), errWatched):
+		return mux.ErrPaneWatched
+	}
+	return err
+}

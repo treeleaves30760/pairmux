@@ -37,20 +37,35 @@ type request struct {
 	Val     string   `json:"val,omitempty"`
 	Cols    int      `json:"cols,omitempty"`
 	Rows    int      `json:"rows,omitempty"`
+	// LeaseMS is how long a "fit" lasts without renewal (0: mux.FitLease).
+	LeaseMS int `json:"lease_ms,omitempty"`
 }
 
 type response struct {
-	OK       bool           `json:"ok"`
-	Error    string         `json:"error,omitempty"`
-	Proto    int            `json:"proto"`
-	Version  string         `json:"version,omitempty"`
-	Pid      int            `json:"pid,omitempty"`
-	Pane     string         `json:"pane,omitempty"`
-	Text     string         `json:"text,omitempty"`
-	Panes    []mux.PaneInfo `json:"panes,omitempty"`
-	Attached int            `json:"attached,omitempty"`
-	Active   bool           `json:"active,omitempty"`
+	OK       bool            `json:"ok"`
+	Error    string          `json:"error,omitempty"`
+	Proto    int             `json:"proto"`
+	Version  string          `json:"version,omitempty"`
+	Pid      int             `json:"pid,omitempty"`
+	Pane     string          `json:"pane,omitempty"`
+	Text     string          `json:"text,omitempty"`
+	Panes    []mux.PaneInfo  `json:"panes,omitempty"`
+	Attached int             `json:"attached,omitempty"`
+	Active   bool            `json:"active,omitempty"`
+	Screen   *mux.ScreenInfo `json:"screen,omitempty"`
 }
+
+// Operations added after protoVersion 1 was fixed. They are additions, not
+// changes of meaning, so the version stays: a server from an older pairmux
+// answers them with errUnknownOp, which clients read as "not supported".
+//
+//	screen  the pane's size and screen modes (mux.ScreenInfo)
+//	fit     a temporary preview size for a pane nobody is attached to
+//	unfit   end a fit, restoring the size the pane had before it
+const (
+	errUnknownOp = "unknown operation"
+	errWatched   = "a human is attached to this pane"
+)
 
 func writeMsg(w io.Writer, v any) error {
 	body, err := json.Marshal(v)
