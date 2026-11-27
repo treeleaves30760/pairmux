@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-11-27
+
+### Added
+
+- **`pairmux skill install` supports many more agents.** New targets: `antigravity` (Google
+  Antigravity / `agy`, installs to `~/.gemini/config/skills/`; aliases `agy`, `antigravity-cli`),
+  `qwen-code`, `goose`, `crush`, `augment`, `continue`, `junie`, `trae`, `trae-cn`, `qoder`,
+  `codebuddy`, `iflow`, `lingma`, `openhands`, `mistral-vibe`, `devin`, `rovodev`, `tabnine`,
+  `forgecode`, `zencoder`, `command-code`, `grok`, `hermes` and `cortex`, plus `kimi`, `warp`, `zed`
+  and `pi`, which read the shared `~/.agents/skills/` directory. Aliases `qwen`, `vibe`, `factory`
+  and `kimi-code` are accepted too.
+
+### Fixed
+
+- **`skill install -t all` now detects agents by their own home directory where it differs from the
+  skills directory.** Codex is found through `~/.codex` (not only an existing `~/.agents`), and
+  Antigravity through `~/.gemini/antigravity-cli` or `~/.gemini/antigravity`, so a fresh install of
+  either is no longer skipped.
+
 ## [1.6.0] - 2026-11-27
 
 ### Added
@@ -897,7 +916,8 @@ Codex terminals and fixing what broke.
   `E_TMUX`, `E_INTERNAL`).
 
 [#7]: https://github.com/treeleaves30760/pairmux/issues/7
-[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/treeleaves30760/pairmux/compare/v1.6.1...HEAD
+[1.6.1]: https://github.com/treeleaves30760/pairmux/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/treeleaves30760/pairmux/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/treeleaves30760/pairmux/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/treeleaves30760/pairmux/compare/v1.4.0...v1.5.0
