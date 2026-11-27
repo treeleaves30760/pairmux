@@ -1,5 +1,9 @@
 # pairmux
 
+<p align="center">
+  <img src="assets/promo/banner-1280x640.png" alt="pairmux: your agent drives the terminal, you take over when it matters. An agent tree in the pairmux TUI and an ssh password prompt handed to a human" width="100%">
+</p>
+
 **Let AI agents drive interactive terminal programs — and hand off to a human when they can't.**
 
 [Home](https://pairmux.treeleaves30760.com) ·
