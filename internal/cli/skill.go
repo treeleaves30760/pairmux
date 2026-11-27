@@ -18,65 +18,138 @@ import (
 // (module root skills_embed.go).
 const skillEmbedRoot = "skills/pairmux"
 
-// skillTargetNames is the ordered list of installable targets, paths per
+// skillTarget is one installable agent: where its user-level skills directory
+// lives (relative to $HOME, or to the project for projectRelative targets) and
+// which directories prove the agent is installed for `--target all`. Paths per
 // pairmux-skills/install-map.md.
-var skillTargetNames = []string{
-	"claude-code",
-	"codex",
-	"gemini",
-	"cursor",
-	"opencode",
-	"copilot",
-	"windsurf",
-	"kiro",
-	"amp",
-	"cline",
-	"roo-code",
-	"kilo-code",
-	"droid",
-	"agents",
+type skillTarget struct {
+	name string
+	// skillsDir is the agent's skills directory relative to $HOME; pairmux
+	// installs into <skillsDir>/pairmux.
+	skillsDir string
+	// detect lists directories (relative to $HOME) whose existence means the
+	// agent is present. Empty means the parent of skillsDir.
+	detect          []string
+	projectRelative bool
+}
+
+// skillTargets is the ordered registry of installable targets.
+var skillTargets = []skillTarget{
+	{name: "claude-code", skillsDir: ".claude/skills"},
+	{name: "codex", skillsDir: ".agents/skills", detect: []string{".codex", ".agents"}},
+	{name: "gemini", skillsDir: ".gemini/skills"},
+	{name: "antigravity", skillsDir: ".gemini/config/skills", detect: []string{".gemini/antigravity-cli", ".gemini/antigravity", ".gemini/config"}},
+	{name: "cursor", skillsDir: ".cursor/skills", projectRelative: true},
+	{name: "opencode", skillsDir: ".config/opencode/skills"},
+	{name: "copilot", skillsDir: ".copilot/skills"},
+	{name: "windsurf", skillsDir: ".codeium/windsurf/skills"},
+	{name: "kiro", skillsDir: ".kiro/skills"},
+	{name: "amp", skillsDir: ".config/amp/skills"},
+	{name: "cline", skillsDir: ".cline/skills"},
+	{name: "roo-code", skillsDir: ".roo/skills"},
+	{name: "kilo-code", skillsDir: ".kilo/skills"},
+	{name: "droid", skillsDir: ".factory/skills"},
+	{name: "qwen-code", skillsDir: ".qwen/skills"},
+	{name: "goose", skillsDir: ".config/goose/skills"},
+	{name: "crush", skillsDir: ".config/crush/skills"},
+	{name: "augment", skillsDir: ".augment/skills"},
+	{name: "continue", skillsDir: ".continue/skills"},
+	{name: "junie", skillsDir: ".junie/skills"},
+	{name: "trae", skillsDir: ".trae/skills"},
+	{name: "trae-cn", skillsDir: ".trae-cn/skills"},
+	{name: "qoder", skillsDir: ".qoder/skills"},
+	{name: "codebuddy", skillsDir: ".codebuddy/skills"},
+	{name: "iflow", skillsDir: ".iflow/skills"},
+	{name: "lingma", skillsDir: ".lingma/skills"},
+	{name: "openhands", skillsDir: ".openhands/skills"},
+	{name: "mistral-vibe", skillsDir: ".vibe/skills"},
+	{name: "devin", skillsDir: ".config/devin/skills"},
+	{name: "rovodev", skillsDir: ".rovodev/skills"},
+	{name: "tabnine", skillsDir: ".tabnine/agent/skills", detect: []string{".tabnine"}},
+	{name: "forgecode", skillsDir: ".forge/skills"},
+	{name: "zencoder", skillsDir: ".zencoder/skills"},
+	{name: "command-code", skillsDir: ".commandcode/skills"},
+	{name: "grok", skillsDir: ".grok/skills"},
+	{name: "hermes", skillsDir: ".hermes/skills"},
+	{name: "cortex", skillsDir: ".snowflake/cortex/skills"},
+	// Agents whose user-level skills directory is the shared ~/.agents/skills
+	// standard. They resolve to the same destination as codex/agents; named
+	// targets exist so `all` finds them and users can ask for them by name.
+	{name: "kimi", skillsDir: ".agents/skills", detect: []string{".kimi", ".kimi-code"}},
+	{name: "warp", skillsDir: ".agents/skills", detect: []string{".warp"}},
+	{name: "zed", skillsDir: ".agents/skills", detect: []string{".config/zed"}},
+	{name: "pi", skillsDir: ".agents/skills", detect: []string{".pi/agent"}},
+	{name: "agents", skillsDir: ".agents/skills"},
+}
+
+// skillTargetAliases maps accepted shorthand to a registry name.
+var skillTargetAliases = map[string]string{
+	"agy":             "antigravity",
+	"antigravity-cli": "antigravity",
+	"qwen":            "qwen-code",
+	"factory":         "droid",
+	"vibe":            "mistral-vibe",
+	"kimi-code":       "kimi",
+}
+
+// skillTargetNames is the ordered list of installable target names.
+var skillTargetNames = func() []string {
+	names := make([]string, len(skillTargets))
+	for i, t := range skillTargets {
+		names[i] = t.name
+	}
+	return names
+}()
+
+func lookupSkillTarget(name string) (skillTarget, bool) {
+	if canonical, ok := skillTargetAliases[name]; ok {
+		name = canonical
+	}
+	for _, t := range skillTargets {
+		if t.name == name {
+			return t, true
+		}
+	}
+	return skillTarget{}, false
 }
 
 // skillTargetDir resolves a target to the skills/pairmux directory it installs
 // into. projectRelative marks targets resolved against the current project
 // directory rather than $HOME (cursor).
 func skillTargetDir(target string) (dir string, projectRelative bool, err error) {
-	if target == "cursor" {
-		return filepath.Join(".cursor", "skills", "pairmux"), true, nil
+	t, ok := lookupSkillTarget(target)
+	if !ok {
+		return "", false, fmt.Errorf("unknown target %q", target)
+	}
+	rel := filepath.Join(filepath.FromSlash(t.skillsDir), "pairmux")
+	if t.projectRelative {
+		return rel, true, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", false, fmt.Errorf("resolve home dir: %w", err)
 	}
-	switch target {
-	case "claude-code":
-		return filepath.Join(home, ".claude", "skills", "pairmux"), false, nil
-	case "codex":
-		return filepath.Join(home, ".agents", "skills", "pairmux"), false, nil
-	case "gemini":
-		return filepath.Join(home, ".gemini", "skills", "pairmux"), false, nil
-	case "opencode":
-		return filepath.Join(home, ".config", "opencode", "skills", "pairmux"), false, nil
-	case "copilot":
-		return filepath.Join(home, ".copilot", "skills", "pairmux"), false, nil
-	case "windsurf":
-		return filepath.Join(home, ".codeium", "windsurf", "skills", "pairmux"), false, nil
-	case "kiro":
-		return filepath.Join(home, ".kiro", "skills", "pairmux"), false, nil
-	case "amp":
-		return filepath.Join(home, ".config", "amp", "skills", "pairmux"), false, nil
-	case "cline":
-		return filepath.Join(home, ".cline", "skills", "pairmux"), false, nil
-	case "roo-code":
-		return filepath.Join(home, ".roo", "skills", "pairmux"), false, nil
-	case "kilo-code":
-		return filepath.Join(home, ".kilo", "skills", "pairmux"), false, nil
-	case "droid":
-		return filepath.Join(home, ".factory", "skills", "pairmux"), false, nil
-	case "agents":
-		return filepath.Join(home, ".agents", "skills", "pairmux"), false, nil
+	return filepath.Join(home, rel), false, nil
+}
+
+// skillTargetPresent reports whether the agent behind target looks installed,
+// and the directory that was checked first (for the skip message).
+func skillTargetPresent(target, dir string) (bool, string) {
+	t, _ := lookupSkillTarget(target)
+	if len(t.detect) == 0 || t.projectRelative {
+		base := filepath.Dir(filepath.Dir(dir)) // <base>/skills/pairmux -> <base>
+		return isDir(base), base
 	}
-	return "", false, fmt.Errorf("unknown target %q", target)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false, "~"
+	}
+	for _, d := range t.detect {
+		if isDir(filepath.Join(home, filepath.FromSlash(d))) {
+			return true, ""
+		}
+	}
+	return false, filepath.Join(home, filepath.FromSlash(t.detect[0]))
 }
 
 // cmdSkill routes the skill subcommand family (currently only install).
@@ -112,15 +185,12 @@ func (c *Ctx) cmdSkillInstall(args []string) int {
 		target = "claude-code"
 	}
 
-	valid := target == "all"
-	for _, n := range skillTargetNames {
-		if n == target {
-			valid = true
-		}
+	if canonical, ok := skillTargetAliases[target]; ok {
+		target = canonical
 	}
-	if !valid {
+	if _, ok := lookupSkillTarget(target); !ok && target != "all" {
 		return c.fail(output.CodeBadArgs, fmt.Sprintf("unknown target %q", target),
-			"valid targets: "+strings.Join(skillTargetNames, " ")+" all")
+			"valid targets: "+strings.Join(skillTargetNames, " ")+" all (aliases: "+skillAliasList()+")")
 	}
 
 	files, err := skillFiles()
@@ -149,9 +219,8 @@ func (c *Ctx) cmdSkillInstall(args []string) int {
 			return c.fail(output.CodeInternal, err.Error(), "")
 		}
 		if skipMissing {
-			agentBase := filepath.Dir(filepath.Dir(dir)) // <base>/skills/pairmux -> <base>
-			if !isDir(agentBase) {
-				lines = append(lines, fmt.Sprintf("skipped %s: %s not found (agent not installed?)", tgt, agentBase))
+			if present, checked := skillTargetPresent(tgt, dir); !present {
+				lines = append(lines, fmt.Sprintf("skipped %s: %s not found (agent not installed?)", tgt, checked))
 				continue
 			}
 		}
@@ -192,6 +261,16 @@ func (c *Ctx) cmdSkillInstall(args []string) int {
 			"pairmux skill install --target all",
 		},
 	})
+}
+
+// skillAliasList renders the accepted aliases as "alias=target" pairs.
+func skillAliasList() string {
+	pairs := make([]string, 0, len(skillTargetAliases))
+	for alias, name := range skillTargetAliases {
+		pairs = append(pairs, alias+"="+name)
+	}
+	sort.Strings(pairs)
+	return strings.Join(pairs, " ")
 }
 
 // writeSkillFile atomically replaces one file without following an existing

@@ -31,6 +31,34 @@ func TestSkillTargetDirs(t *testing.T) {
 		{"roo-code", filepath.FromSlash("/fakehome/.roo/skills/pairmux"), false},
 		{"kilo-code", filepath.FromSlash("/fakehome/.kilo/skills/pairmux"), false},
 		{"droid", filepath.FromSlash("/fakehome/.factory/skills/pairmux"), false},
+		{"antigravity", filepath.FromSlash("/fakehome/.gemini/config/skills/pairmux"), false},
+		{"qwen-code", filepath.FromSlash("/fakehome/.qwen/skills/pairmux"), false},
+		{"goose", filepath.FromSlash("/fakehome/.config/goose/skills/pairmux"), false},
+		{"crush", filepath.FromSlash("/fakehome/.config/crush/skills/pairmux"), false},
+		{"augment", filepath.FromSlash("/fakehome/.augment/skills/pairmux"), false},
+		{"continue", filepath.FromSlash("/fakehome/.continue/skills/pairmux"), false},
+		{"junie", filepath.FromSlash("/fakehome/.junie/skills/pairmux"), false},
+		{"trae", filepath.FromSlash("/fakehome/.trae/skills/pairmux"), false},
+		{"trae-cn", filepath.FromSlash("/fakehome/.trae-cn/skills/pairmux"), false},
+		{"qoder", filepath.FromSlash("/fakehome/.qoder/skills/pairmux"), false},
+		{"codebuddy", filepath.FromSlash("/fakehome/.codebuddy/skills/pairmux"), false},
+		{"iflow", filepath.FromSlash("/fakehome/.iflow/skills/pairmux"), false},
+		{"lingma", filepath.FromSlash("/fakehome/.lingma/skills/pairmux"), false},
+		{"openhands", filepath.FromSlash("/fakehome/.openhands/skills/pairmux"), false},
+		{"mistral-vibe", filepath.FromSlash("/fakehome/.vibe/skills/pairmux"), false},
+		{"devin", filepath.FromSlash("/fakehome/.config/devin/skills/pairmux"), false},
+		{"rovodev", filepath.FromSlash("/fakehome/.rovodev/skills/pairmux"), false},
+		{"tabnine", filepath.FromSlash("/fakehome/.tabnine/agent/skills/pairmux"), false},
+		{"forgecode", filepath.FromSlash("/fakehome/.forge/skills/pairmux"), false},
+		{"zencoder", filepath.FromSlash("/fakehome/.zencoder/skills/pairmux"), false},
+		{"command-code", filepath.FromSlash("/fakehome/.commandcode/skills/pairmux"), false},
+		{"grok", filepath.FromSlash("/fakehome/.grok/skills/pairmux"), false},
+		{"hermes", filepath.FromSlash("/fakehome/.hermes/skills/pairmux"), false},
+		{"cortex", filepath.FromSlash("/fakehome/.snowflake/cortex/skills/pairmux"), false},
+		{"kimi", filepath.FromSlash("/fakehome/.agents/skills/pairmux"), false},
+		{"warp", filepath.FromSlash("/fakehome/.agents/skills/pairmux"), false},
+		{"zed", filepath.FromSlash("/fakehome/.agents/skills/pairmux"), false},
+		{"pi", filepath.FromSlash("/fakehome/.agents/skills/pairmux"), false},
 		{"agents", filepath.FromSlash("/fakehome/.agents/skills/pairmux"), false},
 		{"cursor", filepath.Join(".cursor", "skills", "pairmux"), true},
 	}
@@ -381,8 +409,14 @@ func TestSkillInstallAllRefreshesBundle(t *testing.T) {
 		}
 		dirs[dir] = true
 	}
-	if len(dirs) != len(skillTargetNames)-1 { // codex and agents share one destination
-		t.Fatalf("expected %d distinct install destinations, got %d", len(skillTargetNames)-1, len(dirs))
+	shared := 0 // targets writing the shared ~/.agents/skills standard
+	for _, st := range skillTargets {
+		if st.skillsDir == ".agents/skills" {
+			shared++
+		}
+	}
+	if want := len(skillTargetNames) - shared + 1; len(dirs) != want {
+		t.Fatalf("expected %d distinct install destinations, got %d", want, len(dirs))
 	}
 	custom := []string{"local-notes.txt", "references/local-notes.txt"}
 	for dir := range dirs {
@@ -552,4 +586,60 @@ func setHome(t *testing.T, dir string) {
 	t.Helper()
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
+}
+
+func TestSkillTargetAliases(t *testing.T) {
+	for alias, name := range skillTargetAliases {
+		if _, ok := lookupSkillTarget(name); !ok {
+			t.Errorf("alias %q points at unknown target %q", alias, name)
+		}
+		for _, n := range skillTargetNames {
+			if n == alias {
+				t.Errorf("alias %q shadows a target name", alias)
+			}
+		}
+	}
+	home := t.TempDir()
+	setHome(t, home)
+	var buf bytes.Buffer
+	c := newTestCtx(&buf, true)
+	if rc := c.cmdSkill([]string{"install", "-t", "agy"}); rc != 0 {
+		t.Fatalf("rc = %d, output = %s", rc, buf.String())
+	}
+	e := decode(t, &buf)
+	if !strings.Contains(e.Output, "antigravity: "+filepath.Join(home, ".gemini", "config", "skills", "pairmux", "SKILL.md")) {
+		t.Fatalf("agy should install the antigravity target:\n%s", e.Output)
+	}
+}
+
+func TestSkillInstallAllDetectsByAgentHome(t *testing.T) {
+	home := t.TempDir()
+	setHome(t, home)
+	t.Chdir(t.TempDir())
+	// Antigravity CLI keeps state in ~/.gemini/antigravity-cli; its skills dir
+	// (~/.gemini/config/skills) may not exist yet. Codex has ~/.codex but no
+	// ~/.agents. Both must still be detected.
+	for _, d := range []string{".gemini/antigravity-cli", ".codex"} {
+		if err := os.MkdirAll(filepath.Join(home, filepath.FromSlash(d)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var buf bytes.Buffer
+	c := newTestCtx(&buf, true)
+	if rc := c.cmdSkill([]string{"install", "-t", "all"}); rc != 0 {
+		t.Fatalf("rc = %d, output = %s", rc, buf.String())
+	}
+	e := decode(t, &buf)
+	for _, want := range []string{
+		filepath.Join(home, ".gemini", "config", "skills", "pairmux", "SKILL.md"),
+		filepath.Join(home, ".agents", "skills", "pairmux", "SKILL.md"),
+		filepath.Join(home, ".gemini", "skills", "pairmux", "SKILL.md"), // ~/.gemini exists too
+	} {
+		if _, err := os.Stat(want); err != nil {
+			t.Errorf("not installed: %s\n%s", want, e.Output)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude")); !os.IsNotExist(err) {
+		t.Errorf("must not create ~/.claude (stat err = %v)", err)
+	}
 }
