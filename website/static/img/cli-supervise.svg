@@ -65,7 +65,8 @@
 <text x="236.4" y="273.5" fill="#d6dde6" textLength="58.8" lengthAdjust="spacingAndGlyphs">running</text>
 <text x="303.6" y="273.5" fill="#d6dde6" textLength="8.4" lengthAdjust="spacingAndGlyphs">→</text>
 <text x="320.4" y="273.5" fill="#d6dde6" textLength="117.6" lengthAdjust="spacingAndGlyphs">awaiting-input</text>
-<text x="454.8" y="273.5" fill="#d6dde6" textLength="67.2" lengthAdjust="spacingAndGlyphs">(status)</text>
+<text x="454.8" y="273.5" fill="#d6dde6" textLength="67.2" lengthAdjust="spacingAndGlyphs">(status,</text>
+<text x="530.4" y="273.5" fill="#d6dde6" textLength="100.8" lengthAdjust="spacingAndGlyphs">lock_holder)</text>
 <text x="18.0" y="290.5" fill="#d6dde6" textLength="42.0" lengthAdjust="spacingAndGlyphs">next:</text>
 <text x="34.8" y="307.5" fill="#d6dde6" textLength="58.8" lengthAdjust="spacingAndGlyphs">pairmux</text>
 <text x="102.0" y="307.5" fill="#d6dde6" textLength="33.6" lengthAdjust="spacingAndGlyphs">peek</text>

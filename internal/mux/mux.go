@@ -10,7 +10,11 @@
 // native Windows. Package backend chooses between them.
 package mux
 
-import "regexp"
+import (
+	"errors"
+	"regexp"
+	"time"
+)
 
 // Backend names, as reported by Mux.Backend and accepted by PAIRMUX_BACKEND.
 const (
@@ -87,7 +91,50 @@ type Mux interface {
 	KillServer() error
 	PaneTTY(paneID string) (string, error)
 	PaneAudience(paneID string) (attached int, active bool, err error)
+
+	// PaneScreen reports a pane's size and the screen modes its program has
+	// set. ErrFitUnsupported when the multiplexer cannot tell (a built-in
+	// server started by an older pairmux).
+	PaneScreen(paneID string) (ScreenInfo, error)
+	// FitPane gives a pane nobody is attached to a temporary size: the human's
+	// TUI preview box, so a full-screen program redraws to fit what the human
+	// is shown. The size the pane had before the first FitPane is remembered
+	// by the multiplexer itself (UnfitPane restores it), so a later fit, or a
+	// fit from another TUI, never mistakes a preview size for the real one.
+	// Attached humans always own the size: FitPane returns ErrPaneWatched
+	// while anyone is attached, and an attach ends the fit. ErrFitUnsupported
+	// means this multiplexer cannot do it; callers just skip the fit.
+	//
+	// On the built-in backend a fit is a lease that lapses on its own unless
+	// renewed (FitLease), so a TUI that dies cannot leave a pane small.
+	FitPane(paneID string, cols, rows int) error
+	// UnfitPane ends a fit: the pane gets back the size it had before, or, if
+	// a human attached meanwhile, simply keeps following their terminal. A
+	// pane that is not fitted is left alone.
+	UnfitPane(paneID string) error
 }
+
+// ScreenInfo is a pane's size and the modes that tell a full-screen,
+// self-redrawing program from a line-oriented one.
+type ScreenInfo struct {
+	Cols, Rows   int
+	AltScreen    bool // the program switched to the alternate screen
+	CursorHidden bool // the program hid the terminal cursor (?25l)
+	Mouse        bool // the program asked for mouse reports
+	Attached     int  // humans attached (tmux: clients on the session)
+	Fitted       bool // a FitPane is in effect
+}
+
+// FitLease is how long a built-in fit lasts without being renewed. A TUI
+// renews the fit of the pane it previews well within it.
+const FitLease = 20 * time.Second
+
+var (
+	// ErrFitUnsupported reports a multiplexer that cannot fit panes.
+	ErrFitUnsupported = errors.New("pane fitting is not supported by this multiplexer")
+	// ErrPaneWatched reports a pane a human is attached to: its size is theirs.
+	ErrPaneWatched = errors.New("a human is attached to this pane")
+)
 
 var socketNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 
@@ -96,3 +143,11 @@ var socketNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 // turns the name into a file name, so argv separation alone does not prevent
 // directory traversal.
 func ValidSocketName(socket string) bool { return socketNameRe.MatchString(socket) }
+
+// FitSweeper is implemented by multiplexers whose fits outlive the process
+// that made them (tmux, where a fit is a window option): ReleaseFits ends
+// every fit whose owner keep does not vouch for (nil keep: every fit). The
+// built-in server needs none — its fits are leases that lapse on their own.
+type FitSweeper interface {
+	ReleaseFits(keep func(owner int) bool) error
+}

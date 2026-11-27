@@ -16,12 +16,21 @@ import (
 // control shows the key that triggers it highlighted — so the screen is its
 // own key reference — and is also a button the mouse can click.
 //
-//	 pairmux  default · tmux   ● 2 running  ◆ 1 needs input          15:04:05
-//	╭┐terminals 4┌──────────────┐/ filter┌╮╭┐¹screen┌┐²activity┌ boss/a ─┐open┌╮
-//	│   name          status        age   ││ $ make test                       │
-//	│▌▾ ● boss        running       2s    ││ ok   ./...                        │
-//	╰┘new┌┘child┌┘delete┌┘x prune┌───────╯╰┘attach┌┘input┌┘m note┌───────────╯
-//	 hint or last action                           : command  ? help  q quit
+//	 pairmux  default · tmux   ● 2 running  ◆ 1 needs input              15:04:05
+//	╭┐terminals 4┌───┐/ filter┌╮╭┐¹screen┌┐²activity┌ boss/a ● running ─┐open┌╮
+//	│   name       state age  co││ $ make test -run TestLongName ./internal/…  │
+//	│▌▾ ● boss     run   2s   ma││ created 3m ago · zsh · drives 2 below       │
+//	│  ├─ ◆ a      input 9s   np││ ok   ./...                                 │
+//	╰┘new┌┘child┌┘delete┌─────╯╰┘attach┌┘input┌┘m note┌───────────────────────╯
+//	 hint or last action                               : command  ? help  q quit
+//
+// Side by side, the list is the smaller box (listWidth); its state column is
+// a short word next to the coloured glyph, and the command is only a teaser
+// in whatever cells are left — the preview shows it in full, on one line,
+// above the selected terminal's screen. A name too long for its column
+// scrolls as a marquee on the selected row (marquee). While a full-screen
+// program's terminal is selected, its pane is resized to the preview's
+// content area so the program draws for the box (tui_fit.go).
 
 // --- primitives --------------------------------------------------------------
 
@@ -129,6 +138,22 @@ const (
 	stBoxView    = "38;5;179"
 	stBoxPopup   = "38;5;250"
 )
+
+// statusShort is the list's word for a status: the glyph carries most of it,
+// so it fits a column of statusW cells.
+func statusShort(s core.Status) string {
+	switch s {
+	case core.StatusRunning:
+		return "run"
+	case core.StatusAwaitingInput:
+		return "input"
+	case core.StatusIdle:
+		return "idle"
+	case core.StatusDead:
+		return "dead"
+	}
+	return clip(string(s), statusW-1)
+}
 
 // statusLook is a status's one-cell glyph, colour and words.
 func statusLook(s core.Status) (glyph, style, label string) {
@@ -282,6 +307,109 @@ func (a *tuiApp) bodyHeight() int { return max(6, max(a.h, 10)-2) }
 
 func (a *tuiApp) wide() bool { return max(a.w, 40) >= 110 }
 
+// The terminals box is the smaller side of the wide layout: about 38% of the
+// width, at least what a name, the state and the age need at the narrowest
+// wide terminal (110 columns), and at most what a long tree path can use on
+// a very wide one — the rest is the preview, which is what a person reads.
+const (
+	listPct  = 38
+	minListW = 42
+	maxListW = 84
+)
+
+// listWidth is the terminals box's width in the wide layout.
+func listWidth(w int) int { return max(minListW, min(maxListW, w*listPct/100)) }
+
+// previewBox is the preview box's size, borders included, in the current
+// layout.
+func (a *tuiApp) previewBox() (w, h int) {
+	tw := max(a.w, 40)
+	if a.wide() {
+		return tw - listWidth(tw), a.bodyHeight()
+	}
+	return tw, a.bodyHeight() - a.listBoxHeight()
+}
+
+// previewHeads reports which of the preview's two head lines a box of height
+// h has room for: the command, always when there is a body at all, and the
+// meta line once at least four rows are left for the screen. It depends on
+// the height only, so the content area a program is fitted to does not
+// change as meta comes and goes.
+func previewHeads(h int) (cmd, meta bool) {
+	inner := h - 2
+	return inner >= 2, inner >= 6
+}
+
+// Column widths in the list.
+const (
+	statusW = 6 // "input" and a space
+	ageW    = 5 // "59m", "120d" and a space
+	// teaserMin is the fewest cells worth a command teaser; fewer are left
+	// blank rather than showing a letter or two.
+	teaserMin = 6
+)
+
+// Marquee timing: a name rests at its start, then scrolls one cell per step,
+// with a gap before it comes round again.
+const (
+	marqueeStep  = 150 * time.Millisecond
+	marqueePause = 1500 * time.Millisecond
+	marqueeGap   = "   "
+)
+
+// marquee is s scrolled into exactly w cells, elapsed after it started: at
+// rest for marqueePause, then moving left one cell per marqueeStep and
+// wrapping around after marqueeGap, then at rest again. A wide rune cut by
+// either edge becomes a space, so the result is always w cells as this
+// terminal draws them. s that fits is just padded.
+func marquee(s string, w int, elapsed time.Duration) string {
+	if w <= 0 {
+		return ""
+	}
+	if strWidth(s) <= w {
+		return pad(s, w)
+	}
+	loop := s + marqueeGap
+	n := strWidth(loop)
+	cycle := marqueePause + time.Duration(n)*marqueeStep
+	off := 0
+	if e := elapsed % cycle; e >= marqueePause {
+		off = int((e - marqueePause) / marqueeStep)
+	}
+	var b strings.Builder
+	pos, used := 0, 0 // pos: cell of the current rune in loop+loop
+	for _, r := range loop + loop {
+		rw := runeCells(r)
+		switch {
+		case used >= w:
+		case pos+rw <= off: // before the window
+		case pos < off: // a wide rune cut by the left edge
+			for i := 0; i < pos+rw-off && used < w; i++ {
+				b.WriteByte(' ')
+				used++
+			}
+		case used+rw > w: // a wide rune cut by the right edge
+			b.WriteString(strings.Repeat(" ", w-used))
+			used = w
+		default:
+			b.WriteRune(r)
+			used += rw
+		}
+		pos += rw
+	}
+	return b.String()
+}
+
+// firstLine is the first line of a command, ending in … when more follow, with
+// tabs as spaces: a command is always shown on exactly one line.
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		s = strings.TrimSpace(s[:i]) + " " + gl("…", "~")
+	}
+	return strings.ReplaceAll(s, "\t", " ")
+}
+
 // listBoxHeight is the terminals box's height including its borders.
 func (a *tuiApp) listBoxHeight() int {
 	if a.wide() {
@@ -299,6 +427,7 @@ func (a *tuiApp) draw() {
 	w, h := max(a.w, 40), max(a.h, 10)
 	a.hits = a.hits[:0]
 	a.listRect = rect{}
+	a.marqueeLive = false
 	lines := make([]string, 0, h)
 	lines = append(lines, a.drawHeader(w))
 
@@ -308,7 +437,7 @@ func (a *tuiApp) draw() {
 	case a.viewer != nil && (a.mode == modeView || a.mode == modeForm && a.form != nil && a.form.title == commandTitle):
 		lines = append(lines, a.drawViewer(1, w, bodyH)...)
 	case a.wide():
-		listW := w * 52 / 100
+		listW := listWidth(w)
 		left := a.drawList(vis, 1, 0, listW, bodyH)
 		right := a.drawPreview(vis, 1, listW, w-listW, bodyH)
 		for i := 0; i < bodyH; i++ {
@@ -461,6 +590,10 @@ func (a *tuiApp) drawList(vis []visRow, y0, x0, w, h int) []string {
 	}
 	a.offset = max(0, min(a.offset, max(0, len(vis)-rows)))
 
+	// The name column takes what the longest name needs, up to two thirds of
+	// what state and age leave; longer names scroll on the selected row. The
+	// command teaser gets whatever remains.
+	fixed := 1 + 2 + statusW + ageW // mark, gap, state, age
 	nameW := 12
 	for _, r := range vis {
 		shown := r.node.Term.Name
@@ -469,10 +602,17 @@ func (a *tuiApp) drawList(vis []visRow, y0, x0, w, h int) []string {
 		}
 		nameW = max(nameW, strWidth(r.prefix)+4+strWidth(shown))
 	}
-	nameW = min(nameW, max(16, inner/2))
+	nameW = max(1, min(nameW, max(16, (inner-fixed)*2/3), inner-fixed))
+	teaserW := inner - fixed - nameW
 
-	body := []string{a.render(tline{{"   " + pad("name", nameW-2) + "  ", stHead}, {pad("status", 13), stHead},
-		{pad("age", 6), stHead}, {"command", stHead}}, inner, "")}
+	head := tline{{"   " + pad("name", nameW-2) + "  ", stHead}, {pad("state", statusW), stHead}, {pad("age", ageW), stHead}}
+	if teaserW >= teaserMin {
+		head = append(head, seg{"command", stHead})
+	}
+	body := []string{a.render(head, inner, "")}
+	if a.marqueeRow != a.selPath {
+		a.marqueeRow, a.marqueeAt = a.selPath, time.Now()
+	}
 	if len(vis) == 0 {
 		msg := "  no terminals yet — press n (or click new) to create one"
 		if a.filter != "" {
@@ -483,7 +623,7 @@ func (a *tuiApp) drawList(vis []visRow, y0, x0, w, h int) []string {
 	for i := a.offset; i < len(vis) && len(body) <= rows; i++ {
 		r := vis[i]
 		n := r.node
-		g, st, label := statusLook(n.Status)
+		g, st, _ := statusLook(n.Status)
 		fold := " "
 		if n.Child != "" {
 			fold = gl("▾", "v")
@@ -511,19 +651,30 @@ func (a *tuiApp) drawList(vis []visRow, y0, x0, w, h int) []string {
 		if n.Child != "" && a.collapsed[n.Path] {
 			badges = append(badges, fmt.Sprintf("+%d", a.descendants(n)))
 		}
+		nameCell := max(1, nameW-strWidth(r.prefix)-4)
+		shown := pad(name, nameCell)
+		if selected && strWidth(name) > nameCell {
+			shown = marquee(name, nameCell, time.Since(a.marqueeAt))
+			a.marqueeLive = true
+		}
 		l := tline{
 			{mark, stKey},
 			{r.prefix, stBorder},
 			{fold + " ", stDim},
 			{g + " ", st},
-			{pad(name, max(1, nameW-strWidth(r.prefix)-4)) + "  ", ""},
-			{pad(label, 13), st},
-			{pad(age, 6), stDim},
+			{shown + "  ", ""},
+			{pad(statusShort(n.Status), statusW), st},
+			{pad(age, ageW), stDim},
 		}
-		if len(badges) > 0 {
-			l = append(l, seg{strings.Join(badges, " ") + " ", stAwait})
+		rest := teaserW
+		if len(badges) > 0 && rest > 0 {
+			bs := clip(strings.Join(badges, " ")+" ", rest)
+			l = append(l, seg{bs, stAwait})
+			rest -= strWidth(bs)
 		}
-		l = append(l, seg{n.Pending, stDim})
+		if rest >= teaserMin && n.Pending != "" {
+			l = append(l, seg{clip(firstLine(n.Pending), rest), stDim})
+		}
 		fill := ""
 		if selected {
 			for k := range l {
@@ -560,16 +711,31 @@ func (a *tuiApp) drawPreview(vis []visRow, y0, x0, w, h int) []string {
 		topL = append(topL, it)
 	}
 	var body []string
+	cmdHead, metaHead := previewHeads(h)
 	if a.sel < len(vis) && len(vis) > 0 {
 		n := vis[a.sel].node
 		g, st, label := statusLook(n.Status)
 		topL = append(topL, bItem{text: tline{{" " + n.Path + " ", ""}, {g + " " + label + " ", st}}})
+		// The command in full, on exactly one line: cut with … when it is
+		// wider than the box, its first line only when it has several.
+		if cmdHead {
+			cmd := tline{{" no command running", stDim}}
+			if n.Term.Meta.Shell == "" && n.Term.Meta.Name != "" {
+				// A program terminal has no command line to show: it was
+				// started as one program, and that program is still it.
+				cmd = tline{{" runs its own program", stDim}}
+			}
+			if n.Pending != "" {
+				cmd = tline{{" $ ", stKey}, {firstLine(n.Pending), stTitle}}
+			}
+			body = append(body, a.render(cmd, inner, ""))
+		}
+		if metaHead {
+			body = append(body, a.render(tline{{" " + a.previewMeta, stDim}}, inner, ""))
+		}
 	}
 	topR := []bItem{a.btn("o", "open")}
 	botL := []bItem{a.btn("⏎", "attach"), a.btn("i", "input"), a.btn("m", "note")}
-	if a.previewMeta != "" && h > 4 {
-		body = append(body, a.render(tline{{" " + a.previewMeta, stDim}}, inner, ""))
-	}
 	room := h - 2 - len(body)
 	src := a.preview
 	if len(src) > room {
@@ -682,6 +848,9 @@ func helpLines() []string {
 		"o               open it full screen: whole output history / activity",
 		":               run any pairmux command; {} = the selected path",
 		"r               refresh now            q  Ctrl-C  quit",
+		"",
+		"A selected full-screen program (Claude Code, vim…) is resized to the",
+		"preview while you look at it; quitting gives it back its size.",
 		"",
 		"Mouse: click a row to select it, click it again to attach; click any",
 		"label in a box border to press it; the wheel scrolls.",

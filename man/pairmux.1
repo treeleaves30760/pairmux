@@ -163,7 +163,13 @@ Show a live dashboard of all terminals; Ctrl\-C quits.
 .TP
 .BR tui " [\fB\-\-interval\fR \fIDUR\fR]"
 Interactive session manager: the layer tree with live status and a preview of
-the selected terminal. Enter attaches and returns to the manager on detach;
+the selected terminal, headed by its running command. While a terminal running
+a full\-screen program (on the alternate screen, or a program terminal or
+foreground job that reads raw keys and hides the cursor) is selected, its pane
+is resized to the preview box so the program redraws to fit; shells and builds
+are never resized, a pane someone is attached to keeps their size, and every
+pane gets its size back when the TUI quits. Enter attaches and returns to the
+manager on detach;
 .B n
 creates a terminal,
 .B c

@@ -188,13 +188,6 @@ func TestProbeWidths(t *testing.T) {
 	}
 }
 
-func boolInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}
-
 // A terminal that does not answer costs one short timeout, not one per glyph,
 // keeps today's widths, and loses no keystroke.
 func TestProbeWithoutAnswerFallsBack(t *testing.T) {

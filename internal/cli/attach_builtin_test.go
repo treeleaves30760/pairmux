@@ -32,6 +32,11 @@ func (f *fakeBuiltin) HasSession() bool                           { return true 
 func (f *fakeBuiltin) KillServer() error                          { return nil }
 func (f *fakeBuiltin) PaneTTY(string) (string, error)             { return "", nil }
 func (f *fakeBuiltin) PaneAudience(string) (int, bool, error)     { return 0, false, nil }
+func (f *fakeBuiltin) PaneScreen(string) (mux.ScreenInfo, error) {
+	return mux.ScreenInfo{}, mux.ErrFitUnsupported
+}
+func (f *fakeBuiltin) FitPane(string, int, int) error { return mux.ErrFitUnsupported }
+func (f *fakeBuiltin) UnfitPane(string) error         { return nil }
 
 // withBuiltinAttach records attach calls instead of taking over a terminal.
 func withBuiltinAttach(t *testing.T, self string, res muxd.AttachResult) *[]string {
