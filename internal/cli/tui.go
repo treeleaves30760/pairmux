@@ -171,6 +171,18 @@ type tuiApp struct {
 	w, h int
 	quit bool
 
+	// fit is the preview fit of the selected pane (tui_fit.go); layerFn, when
+	// set by a test, stands in for the multiplexer of each endpoint.
+	fit     fitState
+	layerFn func(socket string) mux.Mux
+
+	// marquee scrolls the selected row's name when it is wider than its
+	// column (tui_draw.go): since when, for which row, and whether the last
+	// frame had anything to scroll.
+	marqueeAt   time.Time
+	marqueeRow  string
+	marqueeLive bool
+
 	// Mouse targets, rebuilt by every draw.
 	hits          []hit
 	listRect      rect
@@ -202,9 +214,18 @@ func (a *tuiApp) run() (err error) {
 	a.restoreTTY = restore
 	io.WriteString(a.out, tuiEnter)
 	defer func() {
+		r := recover()
+		// Agents get their wide screens back however the TUI ends — first,
+		// before anything is written to a terminal that may be gone (its
+		// window closed: SIGHUP). A panic in the cleanup itself must not hide
+		// the one being reported.
+		func() {
+			defer func() { _ = recover() }()
+			a.cleanupFits()
+		}()
 		io.WriteString(a.out, tuiLeave)
 		a.restoreTTY()
-		if r := recover(); r != nil {
+		if r != nil {
 			panic(r)
 		}
 	}()
@@ -225,18 +246,55 @@ func (a *tuiApp) run() (err error) {
 	})
 	defer stopResize()
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM, syscall.SIGHUP)
+	// SIGINT too: in raw mode Ctrl-C is a key, so one arrives only from kill,
+	// and quitting through the loop is what undoes the preview fits.
+	signal.Notify(sig, syscall.SIGTERM, syscall.SIGHUP, os.Interrupt)
 	defer signal.Stop(sig)
 
 	a.w, a.h = muxd.TermSize()
 	a.refresh()
+	a.releaseStaleFits()
 	for _, k := range parseKeys(early) {
 		a.handleKey(k)
 	}
 	tick := time.NewTicker(a.interval)
 	defer tick.Stop()
+	// wake runs the fit timers (tui_fit.go); anim redraws a scrolling name.
+	// Both exist only while needed, so an idle TUI wakes once per interval.
+	wake := time.NewTimer(time.Hour)
+	defer wake.Stop()
+	var anim *time.Ticker
+	defer func() {
+		if anim != nil {
+			anim.Stop()
+		}
+	}()
 	for !a.quit {
 		a.draw()
+		now := time.Now()
+		a.noteFitTarget(now)
+		var wakeC <-chan time.Time
+		if t := a.fitWake(); !t.IsZero() {
+			if !wake.Stop() {
+				select {
+				case <-wake.C:
+				default:
+				}
+			}
+			wake.Reset(max(0, t.Sub(now)))
+			wakeC = wake.C
+		}
+		var animC <-chan time.Time
+		switch {
+		case a.marqueeLive && anim == nil:
+			anim = time.NewTicker(marqueeStep)
+			animC = anim.C
+		case a.marqueeLive:
+			animC = anim.C
+		case anim != nil:
+			anim.Stop()
+			anim = nil
+		}
 		select {
 		case b := <-a.reader.out:
 			for _, k := range parseKeys(b) {
@@ -246,6 +304,13 @@ func (a *tuiApp) run() (err error) {
 			a.applyResult(r)
 		case <-tick.C:
 			a.refresh()
+			if a.fitSettled() {
+				a.applyFit(time.Now())
+			}
+		case <-wakeC:
+			a.fitTimers(time.Now())
+		case <-animC:
+			// only the frame changes: no refresh, no walk of the tree
 		case <-resized:
 			a.w, a.h = muxd.TermSize()
 		case <-sig:
@@ -257,15 +322,34 @@ func (a *tuiApp) run() (err error) {
 			a.attach(n)
 			a.w, a.h = muxd.TermSize()
 			a.refresh()
+			a.fit.target = "" // fit the selection again once it has rested
 		}
 	}
+	a.cleanupFits()
 	return nil
+}
+
+// cleanupFits undoes every preview fit as the TUI ends. It runs from the loop,
+// not only from a defer: the deferred signal.Stop runs before the deferred
+// cleanup, and the SIGHUP that follows a closed window would kill the process
+// halfway through it. SIGHUP is ignored from here on, which the multiplexer
+// commands it runs inherit — they are in the terminal's process group, and a
+// hangup arriving mid-command would otherwise kill them and leave a pane
+// small (seen with tmux). The process is exiting; nothing else needs it.
+func (a *tuiApp) cleanupFits() {
+	signal.Ignore(syscall.SIGHUP)
+	a.unfitAll()
 }
 
 // attach hands the whole terminal to `pairmux attach` in a child process and
 // takes it back when the human detaches. The reader is parked first so it
 // cannot swallow keystrokes meant for the attached pane.
 func (a *tuiApp) attach(n treeNode) {
+	// The attach takes this pane's size over (the built-in server ends its
+	// fit, pairmux attach on tmux releases every fit); any other pane fitted
+	// gets its size back now rather than while the human is away.
+	a.forgetFit(n.Socket, n.Term.PaneID)
+	a.unfitAll()
 	a.reader.park()
 	io.WriteString(a.out, tuiLeave)
 	a.restoreTTY()
@@ -634,7 +718,7 @@ func (a *tuiApp) loadPreview() {
 	}
 	var text string
 	if n.Term.Alive && n.Term.PaneID != "" {
-		if s, err := a.c.layer(n.Socket).CapturePane(n.Term.PaneID, 0); err == nil {
+		if s, err := a.muxFor(n.Socket).CapturePane(n.Term.PaneID, 0); err == nil {
 			text = s
 		}
 	}
