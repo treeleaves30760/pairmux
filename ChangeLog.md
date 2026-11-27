@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Promo images.** `assets/promo/` holds a README banner and post images for X and Threads,
+  rendered from `promo.html` by `render.sh` (headless Chrome).
+
 ## [1.7.0] - 2026-11-27
 
 ### Added

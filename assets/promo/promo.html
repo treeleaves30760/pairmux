@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>pairmux promo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600;700&display=block" rel="stylesheet">
+<style>
+:root {
+  --bg-0:#0a1113; --bg-1:#0f191c; --bg-2:#152226; --line:#223338; --line-strong:#2f454b;
+  --term-bg:#0b1517; --term-chrome:#121d20;
+  --fg-0:#eaf2f1; --fg-1:#c7d6d4; --fg-2:#8aa0a0;
+  --agent:#2dd4bf; --agent-soft:rgb(45 212 191 / 12%); --agent-line:rgb(45 212 191 / 45%);
+  --human:#f5b544; --human-soft:rgb(245 181 68 / 12%); --human-line:rgb(245 181 68 / 55%);
+  --dead:#ff6b6b; --idle:#87afff;
+  --display:'Bricolage Grotesque',system-ui,sans-serif;
+  --body:'Inter',system-ui,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+}
+* { box-sizing:border-box; margin:0; padding:0; }
+html,body { background:var(--bg-0); }
+body {
+  width:100vw; height:100vh; overflow:hidden; color:var(--fg-1); font-family:var(--body);
+  background:
+    radial-gradient(900px 520px at 8% -10%, rgb(45 212 191 / 13%), transparent 60%),
+    radial-gradient(800px 520px at 105% 110%, rgb(245 181 68 / 10%), transparent 60%),
+    linear-gradient(var(--bg-0), var(--bg-0));
+}
+body::before { /* faint terminal grid */
+  content:""; position:fixed; inset:0; pointer-events:none;
+  background-image:linear-gradient(rgb(255 255 255 / 2.2%) 1px, transparent 1px),
+                   linear-gradient(90deg, rgb(255 255 255 / 2.2%) 1px, transparent 1px);
+  background-size:32px 32px;
+  mask-image:radial-gradient(ellipse at 40% 40%, #000 30%, transparent 85%);
+}
+.page { position:relative; height:100%; padding:52px 60px; display:grid; gap:28px; }
+
+/* brand row */
+.brand { display:flex; align-items:center; justify-content:space-between; }
+.logo { display:flex; align-items:center; gap:14px; font:800 30px/1 var(--display); color:var(--fg-0); letter-spacing:-.01em; }
+.logo svg { width:46px; height:46px; }
+.site { font:500 17px var(--mono); color:var(--fg-2); }
+.ver { font:600 13px var(--mono); color:var(--agent); border:1px solid var(--agent-line); background:var(--agent-soft);
+  padding:4px 10px; border-radius:999px; margin-left:6px; letter-spacing:.02em; }
+
+h1 { font:800 60px/1.03 var(--display); color:var(--fg-0); letter-spacing:-.025em; }
+h1 .a { color:var(--agent); } h1 .h { color:var(--human); }
+.sub { font:400 21px/1.5 var(--body); color:var(--fg-1); max-width:30em; }
+.sub b { color:var(--fg-0); font-weight:600; }
+
+/* terminal cards */
+.term { background:var(--term-bg); border:1px solid var(--line-strong); border-radius:14px; overflow:hidden;
+  box-shadow:0 24px 60px rgb(0 0 0 / 45%); }
+.term.agent { border-color:var(--agent-line); }
+.term.human { border-color:var(--human-line); }
+.bar { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:11px 18px;
+  background:var(--term-chrome); border-bottom:1px solid var(--line); font:600 12.5px var(--mono);
+  letter-spacing:.08em; text-transform:uppercase; color:var(--fg-2); white-space:nowrap; }
+.bar .st { display:flex; align-items:center; gap:8px; }
+.bar .st::before { content:""; width:8px; height:8px; border-radius:50%; background:currentColor; }
+.bar .st.a { color:var(--agent); } .bar .st.h { color:var(--human); }
+.scr { padding:16px 20px; font:400 16px/1.75 var(--mono); color:var(--fg-1); white-space:pre; }
+.p { color:var(--fg-2); } .a { color:var(--agent); } .h { color:var(--human); } .m { color:var(--fg-2); }
+.i { color:var(--idle); } .w { color:var(--fg-0); font-weight:600; }
+.cur { display:inline-block; width:.6em; height:1.1em; background:var(--human); vertical-align:-.2em; }
+.tag { font-size:13px; padding:1px 8px; border-radius:5px; border:1px solid var(--human-line); background:var(--human-soft); color:var(--human); }
+
+/* chips & install */
+.chips { display:flex; flex-wrap:wrap; gap:10px; }
+.chip { font:500 15px var(--body); color:var(--fg-1); background:var(--bg-2); border:1px solid var(--line);
+  padding:8px 14px; border-radius:999px; white-space:nowrap; }
+.chip b { color:var(--agent); font-weight:600; }
+.chip.hu b { color:var(--human); }
+.install { display:inline-flex; align-items:center; gap:14px; font:600 19px var(--mono); color:var(--fg-0);
+  background:var(--bg-1); border:1px solid var(--agent-line); padding:13px 20px; border-radius:12px; white-space:nowrap; }
+.install .p { font-weight:400; }
+.install .alt { font:400 15px var(--mono); color:var(--fg-2); }
+.flow { display:flex; gap:22px; font:600 14px var(--mono); color:var(--fg-2); letter-spacing:.04em; }
+.flow span b { font-weight:700; }
+
+/* ---------- layouts ---------- */
+.L, .P, .O { display:none; }
+body.land .L, body.port .P, body.og .O { display:grid; }
+
+/* land 1200x675 (X / LinkedIn) */
+body.land .page { grid-template-rows:auto 1fr auto; padding:44px 54px 40px; gap:22px; }
+body.land .mid { display:grid; grid-template-columns:1.02fr 1fr; gap:34px; align-items:center; }
+body.land .left { display:grid; gap:22px; align-content:center; }
+body.land h1 { font-size:58px; }
+body.land .sub { font-size:19px; }
+body.land .scr { font-size:14.5px; padding:14px 18px; }
+body.land .stack { display:grid; gap:16px; }
+body.land .foot { display:flex; justify-content:space-between; align-items:center; }
+
+/* port 1080x1350 (Threads / IG) */
+body.port .page.P { display:flex; flex-direction:column; padding:54px 64px 52px; gap:24px; }
+body.port h1 { font-size:68px; }
+body.port .sub { font-size:22px; }
+body.port .scr { font-size:16px; line-height:1.65; }
+body.port .grid4 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+body.port .tile { background:var(--bg-1); border:1px solid var(--line); border-radius:14px; padding:15px 20px; }
+body.port .tile h3 { font:700 20px var(--display); color:var(--fg-0); margin-bottom:6px; }
+body.port .tile h3 .h { color:var(--human); } body.port .tile h3 .a { color:var(--agent); }
+body.port .tile p { font:400 16px/1.45 var(--body); color:var(--fg-2); }
+body.port .tile code { font:500 14.5px var(--mono); color:var(--fg-1); }
+body.port .foot { display:flex; justify-content:space-between; align-items:center; margin-top:auto; }
+
+/* og 1280x640 (README banner / social preview) */
+body.og .page { grid-template-columns:1.08fr 1fr; grid-template-rows:auto 1fr; gap:22px 40px; padding:46px 56px; }
+body.og .brand { grid-column:1 / -1; }
+body.og .left { display:grid; gap:22px; align-content:center; }
+body.og h1 { font-size:60px; }
+body.og .sub { font-size:19px; }
+body.og .right { display:grid; gap:16px; align-content:center; }
+body.og .scr { font-size:14.5px; padding:14px 18px; }
+</style>
+</head>
+<body>
+<template id="logo"><svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#0f191c" stroke="#223338"/><path d="m7 10 5 6-5 6m18-12-5 6 5 6M16 7v18" fill="none" stroke="#2dd4bf" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></template>
+
+<template id="tree"><div class="term agent">
+  <div class="bar"><span>pairmux tui · agent tree</span><span class="st a">control ↓ reports ↑</span></div>
+<div class="scr"><span class="w">lead</span>          <span class="m">claude</span>   <span class="a">● running</span>
+├─ <span class="w">api</span>        <span class="m">codex</span>    <span class="a">● running</span>
+│  ├─ <span class="w">tests</span>   <span class="m">pytest</span>   <span class="i">○ idle</span>
+│  └─ <span class="w">lint</span>    <span class="m">ruff</span>     <span class="i">○ idle</span>
+└─ <span class="w">web</span>        <span class="m">claude</span>   <span class="h">◆ needs input</span></div>
+</div></template>
+
+<template id="handoff"><div class="term human">
+  <div class="bar"><span>deploy — pairmux</span><span class="st h">awaiting-input · secret</span></div>
+<div class="scr"><span class="p">$</span> ssh deploy@staging.internal
+deploy@staging.internal's password: <span class="cur"></span>
+<span class="m">agent:</span> <span class="a">wait --human --notify</span>  <span class="m">you:</span> <span class="h">attach deploy</span></div>
+</div></template>
+
+<template id="brand"><div class="brand">
+  <div class="logo"><slot-logo></slot-logo>pairmux<span class="ver">v1.7</span></div>
+  <div class="site">pairmux.treeleaves30760.com</div>
+</div></template>
+
+<!-- land -->
+<div class="page L">
+  <div data-use="brand"></div>
+  <div class="mid">
+    <div class="left">
+      <h1>Your <span class="a">agent</span> drives<br>the terminal.<br><span class="h">You</span> take over<br>when it matters.</h1>
+      <p class="sub">Real PTYs for AI coding agents: REPLs, TUIs, <b>ssh</b> and <b>sudo</b> prompts, <b>git rebase -i</b>. Agents can open whole trees of sub-agents, and you can attach to any of them.</p>
+      <div class="chips">
+        <span class="chip"><b>●</b> real PTY</span>
+        <span class="chip hu"><b>◆</b> human handoff</span>
+        <span class="chip"><b>├</b> agent trees</span>
+        <span class="chip"><b>⧉</b> macOS · Linux · Windows</span>
+      </div>
+    </div>
+    <div class="stack"><div data-use="tree"></div><div data-use="handoff"></div></div>
+  </div>
+  <div class="foot">
+    <span class="install"><span class="p">$</span> uv tool install pairmux</span>
+    <span class="flow"><span><b class="a">agent</b> drives</span><span><b class="h">human</b> decides</span><span>tmux optional</span></span>
+  </div>
+</div>
+
+<!-- port -->
+<div class="page P">
+  <div data-use="brand"></div>
+  <h1>Your <span class="a">agent</span> drives<br>the terminal.<br><span class="h">You</span> take over<br>when it matters.</h1>
+  <p class="sub">A <b>real terminal</b> for AI coding agents. You watch the same live screen and take over anytime.</p>
+  <div data-use="tree"></div>
+  <div data-use="handoff"></div>
+  <div class="grid4">
+    <div class="tile"><h3><span class="a">Real</span> PTY</h3><p><code>python</code>, <code>psql</code>, <code>vim</code>, pagers, <code>[y/N]</code>: things an exec shell cannot run.</p></div>
+    <div class="tile"><h3><span class="h">Human</span> handoff</h3><p>Secrets and judgment calls go to you. <code>attach</code>, answer, hand back.</p></div>
+    <div class="tile"><h3><span class="a">Agent</span> trees</h3><p>Claude Code, Codex, agy as sub-agents. Control flows down, reports flow up.</p></div>
+    <div class="tile"><h3>Runs <span class="a">anywhere</span></h3><p>tmux or the built-in multiplexer. macOS, Linux, native Windows.</p></div>
+  </div>
+  <div class="foot">
+    <span class="install"><span class="p">$</span> uv tool install pairmux</span>
+    <span class="flow"><span>github.com/treeleaves30760/pairmux</span></span>
+  </div>
+</div>
+
+<!-- og / README banner -->
+<div class="page O">
+  <div data-use="brand"></div>
+  <div class="left">
+    <h1>Your <span class="a">agent</span> drives<br>the terminal.<br><span class="h">You</span> take over<br>when it matters.</h1>
+    <p class="sub">Real PTYs, human handoff and agent trees for Claude Code, Codex and any CLI agent.</p>
+    <div><span class="install"><span class="p">$</span> uv tool install pairmux</span></div>
+  </div>
+  <div class="right"><div data-use="tree"></div><div data-use="handoff"></div></div>
+</div>
+
+<script>
+  const mode = (location.hash || '#land').slice(1);
+  document.body.className = mode;
+  const logo = document.getElementById('logo').innerHTML;
+  document.querySelectorAll('[data-use]').forEach(el => {
+    el.outerHTML = document.getElementById(el.dataset.use).innerHTML.replace('<slot-logo></slot-logo>', logo);
+  });
+</script>
+</body>
+</html>
