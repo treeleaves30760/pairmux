@@ -249,7 +249,9 @@ on its first attempt. No tag or artifact was rebuilt or overwritten after PyPI
 publication. The tagged `ChangeLog.md` dates the release 2026-11-28; it was
 published on 2026-11-27 and the date was corrected on `main` afterwards. The
 homepage repository's copies of the TUI screenshots (`pairmux-website`
-`public/img/tui-*.svg`) still show the old layout.
+`public/img/tui-*.svg` and `cli-supervise.svg`) were replaced with the v1.7.0
+ones on 2026-11-28 (`pairmux-website` PR #7); the deployed files match
+`website/static/img/` here byte for byte.
 
 **v1.5.1 published and accepted (2026-11-22).** A security-only patch release:
 the terminal-escape hardening from PR #22 (control characters in human-readable
