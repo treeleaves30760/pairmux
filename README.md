@@ -602,7 +602,9 @@ and says what to do next.
 
 For humans, `pairmux ls` (or `list`, or `tui`) at an interactive terminal opens the session
 manager: the whole tree with live status, a `screen`/`activity` preview, and single keys to attach,
-create (at the top or under a selected agent), kill, delete stale terminals, note and send. Output
+create (at the top or under a selected agent), kill, delete stale terminals, note and send. A
+selected terminal running a full-screen program (Claude Code, Codex, vim…) is resized to the
+preview box so it redraws to fit, and gets your whole terminal when you attach. Output
 you need to read stays inside it: `o` opens a terminal's full history, and `:` runs any pairmux
 command and shows its result. Agents, pipes and `--json` still get the listing. See [Agent hierarchy](https://pairmux-docs.treeleaves30760.com/guides/agent-hierarchy).
 

@@ -21,12 +21,40 @@ key reference. Every label in a border is also a button.
 | region | what it shows |
 |---|---|
 | **header** | the endpoint and backend (`pmxdemo · tmux`), a count per status, the clock |
-| **terminals** box | the whole tree: fold arrow, status glyph, name, status, time since last output, and the running command. `✉N` marks notes its agent has not read, and `+N` marks the terminals in a folded subtree |
-| **preview** box | the selected terminal, as **¹screen** (what is on it now) or **²activity** (its history of commands, exit codes and notes) |
+| **terminals** box | the whole tree: fold arrow, status glyph, name, a short state word (`run`, `input`, `idle`, `dead`), time since last output, and the start of the running command in whatever room is left. `✉N` marks notes its agent has not read, and `+N` marks the terminals in a folded subtree |
+| **preview** box | the selected terminal: its running command in full on the first line (cut with `…` when it does not fit), then when and how it was created, then **¹screen** (what is on it now) or **²activity** (its history of commands, exit codes and notes) |
 | **footer** | what to do about the selected terminal — or the result of your last action — and the global buttons |
 
 Status glyphs: `●` running, `◆` needs input, `○` idle, `✕` dead. When you select a terminal that
 needs input, the footer turns yellow and says how to answer it.
+
+On a terminal at least 110 columns wide the two boxes sit side by side, and the list is the smaller
+one: about 38% of the width (42 to 84 columns), so the preview gets the room. A narrower terminal
+stacks them. A name too long for its column ends in `…`; on the selected row it scrolls instead,
+after a short pause, so you can read all of it.
+
+### Full-screen programs fit the preview
+
+A full-screen program such as Claude Code, Codex, vim or htop draws for the size of its terminal.
+Terminals are 220x50, so their agents' output does not wrap, and cut into a preview box such a
+program shows only its top-left corner. So while one is selected, the TUI resizes its terminal to
+the preview box and the program redraws to fit. Attaching gives it your whole terminal, as always,
+and coming back fits it to the preview again. Moving on, or quitting, gives it back its size.
+
+Only terminals that run a full-screen program are resized:
+
+- any terminal on the alternate screen (vim, less, htop, most TUIs);
+- a program terminal (`pairmux new --cmd claude`) whose program reads raw keys, hides the cursor
+  or asks for the mouse, which is how Claude Code and Codex draw inline;
+- a shell terminal whose running command reads raw keys and hides the cursor or wants the mouse,
+  such as `claude` typed at the shell.
+
+A shell at its prompt or running a build is never resized, so moving the selection never interrupts
+an agent's command, and nothing is ever typed into a terminal. A terminal that someone is attached
+to keeps their size. Nothing is resized until the selection has rested for a moment, or while the
+preview is smaller than 40x10 or shows the activity view. If the TUI is killed without cleaning up,
+the built-in backend gives the terminal its size back after about 20 seconds; on tmux, the next
+`pairmux tui` or `pairmux attach` does.
 
 ### Terminals that draw symbols double-width
 

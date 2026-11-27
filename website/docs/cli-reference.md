@@ -553,7 +553,9 @@ status bar — on the alternate screen, so the human's own scrollback is preserv
 - With no name, opens the only live terminal; with several, fails with `E_BAD_ARGS` listing them.
 - Works inside tmux (there is no nesting refusal), but refuses to attach a pane to itself.
 - While attached, the pane takes the human's terminal size; with several humans attached, the most
-  recent attach or resize sets it. It returns to 220x50 when the last human detaches.
+  recent attach or resize sets it. It returns to 220x50 when the last human detaches. On tmux,
+  attach first releases any size the TUI set for its preview, so every window you switch to follows
+  your terminal.
 - On detach it prints `[detached from NAME] tell the agent what you did: pairmux note NAME "..."`;
   if the program exits while attached, it prints the exit message instead.
 
@@ -573,7 +575,11 @@ and its **activity** (what it is, then every command with exit code and duration
 whether its agent has seen it). `o` opens either view full screen and scrollable; the screen view
 then shows the whole retained output history. `x` deletes every dead terminal's journal and shows
 what it removed. `:` runs any pairmux command in the background and shows its readable output in the
-same reader; `{}` stands for the selected path, and `↑` recalls the last command. See
+same reader; `{}` stands for the selected path, and `↑` recalls the last command. The preview
+shows the selected terminal's running command on its first line. While a terminal running a
+full-screen program (Claude Code, Codex, vim…) is selected, its pane is resized to the preview box
+so the program redraws to fit; shells and builds are never resized, a terminal someone is attached
+to keeps their size, and the TUI gives every pane back its size when it quits. See
 [The TUI](./guides/tui.md) for a tour and the key map. `tui` needs an interactive terminal. On Windows it runs in Windows Terminal and in
 Windows 10 1809+ conhost; a console without VT input fails with `E_BAD_ARGS` (use `ls --tree`,
 `watch` or `attach` there), and a Git Bash (mintty) window is not a console. With Quick Edit on,

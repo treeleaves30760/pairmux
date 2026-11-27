@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The TUI fits a full-screen program to its preview.** Terminals are 220x50 so agents' output
+  does not wrap, and a full-screen or self-redrawing program (Claude Code, Codex, vim, htop) drawn
+  for that size and cut into the preview box showed only its top-left corner. While such a
+  terminal is selected, the TUI now resizes its pane to the preview box's content area and the
+  program redraws to fit. Attaching gives it the human's whole terminal as before, and coming back
+  fits it again. A terminal counts as a full-screen program when it is on the alternate screen, or
+  when it is a program terminal (`new --cmd`), or a shell's running command, that reads raw keys
+  and hides the cursor or asks for the mouse. Program names are not used. A shell at its prompt or
+  running a build is never resized. Neither is a pane a human is attached to, a dead one, or any
+  pane while the preview is smaller than 40x10 or shows the activity view. The resize waits until
+  the selection has rested for 300 ms, so holding `j` resizes nothing it passes, and it is
+  re-applied when the TUI is resized. Moving on and quitting, including on SIGTERM, SIGHUP or a
+  closed window, give each pane back the size it had. Nothing is typed into any terminal.
+  - Both backends implement it as new `mux.Mux` operations (`PaneScreen`, `FitPane`, `UnfitPane`).
+    On the built-in backend a fit is a lease that the TUI renews. A TUI that dies without cleaning
+    up has its fits lapse after 20 seconds. A built-in server started by an older pairmux does not
+    know the new requests, and the TUI then shows the preview as before. On tmux,
+    `resize-window` would leave a window's size manual, so a later attach would keep the preview
+    size. Each fit therefore records the window's previous size on the window and ends by
+    unsetting `window-size`. `pairmux attach` releases every fit before it attaches, and a starting
+    TUI releases fits left by TUIs that are no longer running.
+
+### Changed
+
+- **The TUI's list is the smaller side and the preview leads with the command.** Side by side, the
+  terminals box takes about 38% of the width (42 to 84 columns) instead of 52%. Its state column is
+  a 6-cell word (`run`, `input`, `idle`, `dead`) next to the coloured glyph. The header, preview
+  title and hints keep the full words. The command column is now only a teaser in the cells left
+  over, and is dropped when too few remain. The preview's first line shows the selected terminal's
+  running command in full, on one line, cut with `…` (`~` on terminals that draw it double-width),
+  above the created/shell/layer line. A name wider than its column ends in `…`; on the selected
+  row it scrolls as a marquee after a short pause, so the whole name can be read.
+
 ## [1.6.1] - 2026-11-27
 
 ### Added
