@@ -110,6 +110,12 @@ func TestPreviewShowsTheCommandOnOneLine(t *testing.T) {
 	if cmd := previewRow(frameLines(out), 0); !strings.Contains(cmd, "no command running") {
 		t.Errorf("idle command row %q", cmd)
 	}
+	// A program terminal never has a command line; it is not called idle.
+	a.nodes[0].Term.Meta.Name = "claude"
+	a.draw()
+	if cmd := previewRow(frameLines(out), 0); !strings.Contains(cmd, "runs its own program") {
+		t.Errorf("program terminal command row %q", cmd)
+	}
 }
 
 // The teaser is dropped rather than squeezed: name, state and age keep their

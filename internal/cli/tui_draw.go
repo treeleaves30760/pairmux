@@ -720,6 +720,11 @@ func (a *tuiApp) drawPreview(vis []visRow, y0, x0, w, h int) []string {
 		// wider than the box, its first line only when it has several.
 		if cmdHead {
 			cmd := tline{{" no command running", stDim}}
+			if n.Term.Meta.Shell == "" && n.Term.Meta.Name != "" {
+				// A program terminal has no command line to show: it was
+				// started as one program, and that program is still it.
+				cmd = tline{{" runs its own program", stDim}}
+			}
 			if n.Pending != "" {
 				cmd = tline{{" $ ", stKey}, {firstLine(n.Pending), stTitle}}
 			}
