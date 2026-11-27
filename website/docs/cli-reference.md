@@ -763,8 +763,12 @@ pairmux skill install [--target T|all] [--dry-run]
 
 `-t` is an alias for `--target`; for example, `pairmux skill install -t all`.
 
-Targets: `claude-code`, `codex`, `gemini`, `cursor`, `opencode`, `copilot`, `windsurf`, `kiro`,
-`amp`, `cline`, `roo-code`, `kilo-code`, `droid` (Factory), and the cross-agent `agents` directory.
+Targets: `claude-code`, `codex`, `gemini`, `antigravity` (alias `agy`), `cursor`, `opencode`,
+`copilot`, `windsurf`, `kiro`, `amp`, `cline`, `roo-code`, `kilo-code`, `droid` (Factory),
+`qwen-code`, `goose`, `crush`, `augment`, `continue`, `junie`, `trae`, `trae-cn`, `qoder`,
+`codebuddy`, `iflow`, `lingma`, `openhands`, `mistral-vibe`, `devin`, `rovodev`, `tabnine`,
+`forgecode`, `zencoder`, `command-code`, `grok`, `hermes`, `cortex`, the `~/.agents/skills` readers
+`kimi`, `warp`, `zed` and `pi`, and the cross-agent `agents` directory.
 See [Agent Skills](./skills.md) for paths and evals.
 
 ### mcp serve

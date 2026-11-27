@@ -21,6 +21,7 @@ see [Sub-agent trees (opt-in)](./guides/subagent-tree.md).
 ```bash
 pairmux skill install --target agents --dry-run
 pairmux skill install --target opencode
+pairmux skill install -t agy        # Antigravity CLI (alias of antigravity)
 pairmux skill install -t all
 ```
 
@@ -29,6 +30,9 @@ Cline's skill even if its configuration directory does not exist yet.
 
 `all` is conservative: it writes only where an agent's configuration directory already exists.
 Cursor is relative to the current working directory, not a global installation.
+Antigravity (`agy`) is detected by `~/.gemini/antigravity-cli` or `~/.gemini/antigravity`, and Codex
+by `~/.codex` or `~/.agents`. Aliases: `agy` and `antigravity-cli` (→ `antigravity`), `qwen`
+(→ `qwen-code`), `vibe` (→ `mistral-vibe`), `factory` (→ `droid`), `kimi-code` (→ `kimi`).
 
 Installation is offline: it copies the **running executable's embedded bundle**, not the newest
 checkout or a remote skill. Both installation and `--dry-run` identify the CLI version and bundle
@@ -59,10 +63,39 @@ This identifies skill-only changes even when the CLI version has not changed.
 | `roo-code` | `~/.roo/skills/pairmux/` |
 | `kilo-code` | `~/.kilo/skills/pairmux/` |
 | `droid` (Factory) | `~/.factory/skills/pairmux/` |
+| `antigravity` (Antigravity / `agy`) | `~/.gemini/config/skills/pairmux/` |
+| `qwen-code` | `~/.qwen/skills/pairmux/` |
+| `goose` | `~/.config/goose/skills/pairmux/` |
+| `crush` | `~/.config/crush/skills/pairmux/` |
+| `augment` | `~/.augment/skills/pairmux/` |
+| `continue` | `~/.continue/skills/pairmux/` |
+| `junie` | `~/.junie/skills/pairmux/` |
+| `trae` | `~/.trae/skills/pairmux/` |
+| `trae-cn` | `~/.trae-cn/skills/pairmux/` |
+| `qoder` | `~/.qoder/skills/pairmux/` |
+| `codebuddy` | `~/.codebuddy/skills/pairmux/` |
+| `iflow` | `~/.iflow/skills/pairmux/` |
+| `lingma` | `~/.lingma/skills/pairmux/` |
+| `openhands` | `~/.openhands/skills/pairmux/` |
+| `mistral-vibe` | `~/.vibe/skills/pairmux/` |
+| `devin` | `~/.config/devin/skills/pairmux/` |
+| `rovodev` | `~/.rovodev/skills/pairmux/` |
+| `tabnine` | `~/.tabnine/agent/skills/pairmux/` |
+| `forgecode` | `~/.forge/skills/pairmux/` |
+| `zencoder` | `~/.zencoder/skills/pairmux/` |
+| `command-code` | `~/.commandcode/skills/pairmux/` |
+| `grok` | `~/.grok/skills/pairmux/` |
+| `hermes` | `~/.hermes/skills/pairmux/` |
+| `cortex` | `~/.snowflake/cortex/skills/pairmux/` |
+| `kimi` | `~/.agents/skills/pairmux/` (installed by `all` when `~/.kimi` exists) |
+| `warp` | `~/.agents/skills/pairmux/` (installed by `all` when `~/.warp` exists) |
+| `zed` | `~/.agents/skills/pairmux/` (installed by `all` when `~/.config/zed` exists) |
+| `pi` | `~/.agents/skills/pairmux/` (installed by `all` when `~/.pi/agent` exists) |
 | `agents` | `~/.agents/skills/pairmux/` (compatibility alias for the shared standard) |
 
-`codex` and `agents` intentionally resolve to the same open Agent Skills directory; `all` writes that
-destination once. The companion [`pairmux-skills`](https://github.com/treeleaves30760/pairmux-skills)
+`codex`, `kimi`, `warp`, `zed`, `pi` and `agents` intentionally resolve to the same open Agent Skills
+directory; `all` writes that destination once. Antigravity also reads Gemini CLI's `~/.gemini/skills/`
+and shows a same-named skill once, so installing both `gemini` and `antigravity` is harmless. The companion [`pairmux-skills`](https://github.com/treeleaves30760/pairmux-skills)
 repository is the source of truth and includes the full install map. The binary contains a
 release-synchronized embedded copy.
 

@@ -715,11 +715,15 @@ Preview or install one target, or update supported agent directories that alread
 ```bash
 pairmux skill install --target codex --dry-run
 pairmux skill install --target codex
+pairmux skill install -t agy           # Antigravity CLI
 pairmux skill install -t all
 ```
 
-`-t` is an alias for `--target`. Targets include Cline, Roo Code, Kilo Code, and Factory Droid
-alongside Claude Code, Codex, Gemini CLI, Cursor, OpenCode, Copilot, Windsurf, Kiro, and Amp.
+`-t` is an alias for `--target`. Targets cover Claude Code, Codex, Gemini CLI, Antigravity (`agy`),
+Cursor, OpenCode, Copilot, Windsurf, Kiro, Amp, Cline, Roo Code, Kilo Code, Factory Droid, Qwen Code,
+Goose, Crush, Augment, Continue, Junie, Trae, Qoder, CodeBuddy, iFlow, Lingma, OpenHands, Mistral
+Vibe, Devin, Rovo Dev, Tabnine, ForgeCode, Zencoder, Command Code, Grok, Hermes, Snowflake Cortex,
+and agents that read the shared `~/.agents/skills` (Kimi, Warp, Zed, Pi).
 
 Installation is offline and uses the **running executable's embedded skill**, not the latest
 checkout or a remote download. The output identifies the CLI version and bundle SHA-256.
