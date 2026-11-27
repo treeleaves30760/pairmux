@@ -22,7 +22,7 @@
 <text x="614.4" y="52.5" fill="#ff5f5f" textLength="8.4" lengthAdjust="spacingAndGlyphs">✕</text>
 <text x="631.2" y="52.5" fill="#d6dde6" textLength="8.4" lengthAdjust="spacingAndGlyphs">1</text>
 <text x="648.0" y="52.5" fill="#d6dde6" textLength="33.6" lengthAdjust="spacingAndGlyphs">dead</text>
-<text x="1118.4" y="52.5" fill="#8a8a8a" textLength="67.2" lengthAdjust="spacingAndGlyphs">23:05:42</text>
+<text x="1118.4" y="52.5" fill="#8a8a8a" textLength="67.2" lengthAdjust="spacingAndGlyphs">23:40:26</text>
 <text x="18.0" y="69.5" fill="#d7af5f" textLength="25.2" lengthAdjust="spacingAndGlyphs">╭─┐</text>
 <text x="43.2" y="69.5" fill="#eeeeee" class="b" textLength="8.4" lengthAdjust="spacingAndGlyphs">$</text>
 <text x="60.0" y="69.5" fill="#eeeeee" class="b" textLength="58.8" lengthAdjust="spacingAndGlyphs">pairmux</text>
@@ -48,7 +48,7 @@
 <text x="446.4" y="120.5" fill="#d6dde6" textLength="16.8" lengthAdjust="spacingAndGlyphs">up</text>
 <text x="471.6" y="120.5" fill="#d6dde6" textLength="42.0" lengthAdjust="spacingAndGlyphs">--env</text>
 <text x="522.0" y="120.5" fill="#d6dde6" textLength="33.6" lengthAdjust="spacingAndGlyphs">prod</text>
-<text x="572.4" y="120.5" fill="#d6dde6" textLength="184.8" lengthAdjust="spacingAndGlyphs">(2026-11-17T15:05:35Z)</text>
+<text x="572.4" y="120.5" fill="#d6dde6" textLength="184.8" lengthAdjust="spacingAndGlyphs">(2026-11-27T15:40:19Z)</text>
 <text x="1185.6" y="120.5" fill="#d7af5f" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
 <text x="18.0" y="137.5" fill="#d6dde6" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
 <text x="51.6" y="137.5" fill="#d6dde6" textLength="33.6" lengthAdjust="spacingAndGlyphs">lead</text>
@@ -57,7 +57,7 @@
 <text x="379.2" y="137.5" fill="#d6dde6" textLength="8.4" lengthAdjust="spacingAndGlyphs">-</text>
 <text x="404.4" y="137.5" fill="#d6dde6" textLength="75.6" lengthAdjust="spacingAndGlyphs">[notes:1]</text>
 <text x="496.8" y="137.5" fill="#d6dde6" textLength="168.0" lengthAdjust="spacingAndGlyphs">[layer:pmxdemo-lead]</text>
-<text x="681.6" y="137.5" fill="#d6dde6" textLength="184.8" lengthAdjust="spacingAndGlyphs">(2026-11-17T15:05:35Z)</text>
+<text x="681.6" y="137.5" fill="#d6dde6" textLength="184.8" lengthAdjust="spacingAndGlyphs">(2026-11-27T15:40:18Z)</text>
 <text x="1185.6" y="137.5" fill="#d7af5f" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
 <text x="18.0" y="154.5" fill="#d6dde6" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
 <text x="51.6" y="154.5" fill="#d6dde6" textLength="67.2" lengthAdjust="spacingAndGlyphs">lead/api</text>
@@ -65,21 +65,21 @@
 <text x="320.4" y="154.5" fill="#d6dde6" textLength="42.0" lengthAdjust="spacingAndGlyphs">hooks</text>
 <text x="379.2" y="154.5" fill="#d6dde6" textLength="8.4" lengthAdjust="spacingAndGlyphs">-</text>
 <text x="404.4" y="154.5" fill="#d6dde6" textLength="201.6" lengthAdjust="spacingAndGlyphs">[layer:pmxdemo-lead-api]</text>
-<text x="622.8" y="154.5" fill="#d6dde6" textLength="184.8" lengthAdjust="spacingAndGlyphs">(2026-11-17T15:05:35Z)</text>
+<text x="622.8" y="154.5" fill="#d6dde6" textLength="184.8" lengthAdjust="spacingAndGlyphs">(2026-11-27T15:40:18Z)</text>
 <text x="1185.6" y="154.5" fill="#d7af5f" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
 <text x="18.0" y="171.5" fill="#d6dde6" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
 <text x="51.6" y="171.5" fill="#d6dde6" textLength="109.2" lengthAdjust="spacingAndGlyphs">lead/api/lint</text>
 <text x="186.0" y="171.5" fill="#d6dde6" textLength="33.6" lengthAdjust="spacingAndGlyphs">idle</text>
 <text x="320.4" y="171.5" fill="#d6dde6" textLength="42.0" lengthAdjust="spacingAndGlyphs">hooks</text>
 <text x="379.2" y="171.5" fill="#d6dde6" textLength="8.4" lengthAdjust="spacingAndGlyphs">-</text>
-<text x="404.4" y="171.5" fill="#d6dde6" textLength="184.8" lengthAdjust="spacingAndGlyphs">(2026-11-17T15:05:34Z)</text>
+<text x="404.4" y="171.5" fill="#d6dde6" textLength="184.8" lengthAdjust="spacingAndGlyphs">(2026-11-27T15:40:17Z)</text>
 <text x="1185.6" y="171.5" fill="#d7af5f" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
 <text x="18.0" y="188.5" fill="#d6dde6" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
 <text x="51.6" y="188.5" fill="#d6dde6" textLength="117.6" lengthAdjust="spacingAndGlyphs">lead/api/tests</text>
 <text x="186.0" y="188.5" fill="#d6dde6" textLength="33.6" lengthAdjust="spacingAndGlyphs">idle</text>
 <text x="320.4" y="188.5" fill="#d6dde6" textLength="42.0" lengthAdjust="spacingAndGlyphs">hooks</text>
 <text x="379.2" y="188.5" fill="#d6dde6" textLength="8.4" lengthAdjust="spacingAndGlyphs">-</text>
-<text x="404.4" y="188.5" fill="#d6dde6" textLength="184.8" lengthAdjust="spacingAndGlyphs">(2026-11-17T15:05:33Z)</text>
+<text x="404.4" y="188.5" fill="#d6dde6" textLength="184.8" lengthAdjust="spacingAndGlyphs">(2026-11-27T15:40:16Z)</text>
 <text x="1185.6" y="188.5" fill="#d7af5f" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
 <text x="18.0" y="205.5" fill="#d6dde6" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
 <text x="51.6" y="205.5" fill="#d6dde6" textLength="67.2" lengthAdjust="spacingAndGlyphs">lead/web</text>
@@ -88,7 +88,7 @@
 <text x="379.2" y="205.5" fill="#d6dde6" textLength="25.2" lengthAdjust="spacingAndGlyphs">npm</text>
 <text x="412.8" y="205.5" fill="#d6dde6" textLength="25.2" lengthAdjust="spacingAndGlyphs">run</text>
 <text x="446.4" y="205.5" fill="#d6dde6" textLength="25.2" lengthAdjust="spacingAndGlyphs">dev</text>
-<text x="488.4" y="205.5" fill="#d6dde6" textLength="184.8" lengthAdjust="spacingAndGlyphs">(2026-11-17T15:05:34Z)</text>
+<text x="488.4" y="205.5" fill="#d6dde6" textLength="184.8" lengthAdjust="spacingAndGlyphs">(2026-11-27T15:40:17Z)</text>
 <text x="1185.6" y="205.5" fill="#d7af5f" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
 <text x="18.0" y="222.5" fill="#d6dde6" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
 <text x="51.6" y="222.5" fill="#d6dde6" textLength="58.8" lengthAdjust="spacingAndGlyphs">scratch</text>
@@ -96,7 +96,7 @@
 <text x="320.4" y="222.5" fill="#d6dde6" textLength="42.0" lengthAdjust="spacingAndGlyphs">hooks</text>
 <text x="379.2" y="222.5" fill="#d6dde6" textLength="8.4" lengthAdjust="spacingAndGlyphs">-</text>
 <text x="404.4" y="222.5" fill="#d6dde6" textLength="75.6" lengthAdjust="spacingAndGlyphs">[notes:1]</text>
-<text x="496.8" y="222.5" fill="#d6dde6" textLength="184.8" lengthAdjust="spacingAndGlyphs">(2026-11-17T15:05:36Z)</text>
+<text x="496.8" y="222.5" fill="#d6dde6" textLength="184.8" lengthAdjust="spacingAndGlyphs">(2026-11-27T15:40:20Z)</text>
 <text x="1185.6" y="222.5" fill="#d7af5f" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
 <text x="18.0" y="239.5" fill="#d6dde6" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
 <text x="1185.6" y="239.5" fill="#d7af5f" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
