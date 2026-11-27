@@ -213,6 +213,23 @@ started with stale `ANTHROPIC_*` values no longer leaks them into new shell or
 passed all seven jobs on its first attempt (dispatched about 13 minutes after the
 PyPI upload). No tag or artifact was rebuilt or overwritten after PyPI publication.
 
+**v1.6.1 published and accepted (2026-11-27).** `pairmux skill install` gains
+`antigravity` (aliases `agy`, `antigravity-cli`) and 27 more agent targets, and
+`-t all` detects Codex and Antigravity by their own home directories. The
+annotated tag is fixed to merged-main commit `7728dfe` (PR #27), whose
+[CI 45946455341](https://github.com/treeleaves30760/pairmux/actions/runs/45946455341) and [Docs deployment 45946455417](https://github.com/treeleaves30760/pairmux/actions/runs/45946455417) passed. The
+[tap credential check 45946482905](https://github.com/treeleaves30760/pairmux/actions/runs/45946482905) passed before tagging.
+`pairmux-skills` only received docs (PR #10); its skill files are unchanged and
+byte-identical to `skills/pairmux/`, so it was not tagged.
+[Release run 45946511431](https://github.com/treeleaves30760/pairmux/actions/runs/45946511431) passed `validate`, `windows-smoke` and `publish` on its
+first attempt: nine GitHub assets, six PyPI wheels and the Homebrew cask
+(`version "1.6.1"`). A local isolated `uv tool install --refresh pairmux==1.6.1`
+on macOS ARM64 reported 1.6.1 and `skill install -t all` installed into the
+codex, gemini and antigravity destinations of a scratch HOME.
+[Published-release acceptance 45947941395](https://github.com/treeleaves30760/pairmux/actions/runs/45947941395) passed all seven jobs
+on its first attempt (dispatched about 10 minutes after the PyPI upload). No tag
+or artifact was rebuilt or overwritten after PyPI publication.
+
 **v1.5.1 published and accepted (2026-11-22).** A security-only patch release:
 the terminal-escape hardening from PR #22 (control characters in human-readable
 output, `watch` and the TUI shown as visible escapes; MCP tools refuse a
