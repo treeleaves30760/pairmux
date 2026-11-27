@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <title>pairmux promo</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600;700&display=block" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600;700&family=Noto+Sans+TC:wght@400;500;700;900&display=block" rel="stylesheet">
 <style>
 :root {
   --bg-0:#0a1113; --bg-1:#0f191c; --bg-2:#152226; --line:#223338; --line-strong:#2f454b;
@@ -13,9 +13,9 @@
   --agent:#2dd4bf; --agent-soft:rgb(45 212 191 / 12%); --agent-line:rgb(45 212 191 / 45%);
   --human:#f5b544; --human-soft:rgb(245 181 68 / 12%); --human-line:rgb(245 181 68 / 55%);
   --dead:#ff6b6b; --idle:#87afff;
-  --display:'Bricolage Grotesque',system-ui,sans-serif;
-  --body:'Inter',system-ui,sans-serif;
-  --mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+  --display:'Bricolage Grotesque','Noto Sans TC',system-ui,sans-serif;
+  --body:'Inter','Noto Sans TC',system-ui,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,Menlo,'Noto Sans TC',monospace;
 }
 * { box-sizing:border-box; margin:0; padding:0; }
 html,body { background:var(--bg-0); }
@@ -113,13 +113,18 @@ body.og h1 { font-size:60px; }
 body.og .sub { font-size:19px; }
 body.og .right { display:grid; gap:16px; align-content:center; }
 body.og .scr { font-size:14.5px; padding:14px 18px; }
+.sub code { font:600 .92em var(--mono); color:var(--fg-0); }
+.tile code { font:500 .92em var(--mono); color:var(--fg-1); }
+html[lang=zh-Hant] h1 { letter-spacing:.01em; line-height:1.12; font-weight:900; }
+html[lang=zh-Hant] .bar { letter-spacing:.06em; }
+html[lang=zh-Hant] .sub, html[lang=zh-Hant] .tile p { line-height:1.6; }
 </style>
 </head>
 <body>
 <template id="logo"><svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#0f191c" stroke="#223338"/><path d="m7 10 5 6-5 6m18-12-5 6 5 6M16 7v18" fill="none" stroke="#2dd4bf" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></template>
 
 <template id="tree"><div class="term agent">
-  <div class="bar"><span>pairmux tui · agent tree</span><span class="st a">control ↓ reports ↑</span></div>
+  <div class="bar"><span data-t="card_tree_title"></span><span class="st a" data-t="card_tree_status"></span></div>
 <div class="scr"><span class="w">lead</span>          <span class="m">claude</span>   <span class="a">● running</span>
 ├─ <span class="w">api</span>        <span class="m">codex</span>    <span class="a">● running</span>
 │  ├─ <span class="w">tests</span>   <span class="m">pytest</span>   <span class="i">○ idle</span>
@@ -128,7 +133,7 @@ body.og .scr { font-size:14.5px; padding:14px 18px; }
 </div></template>
 
 <template id="handoff"><div class="term human">
-  <div class="bar"><span>deploy — pairmux</span><span class="st h">awaiting-input · secret</span></div>
+  <div class="bar"><span>deploy — pairmux</span><span class="st h" data-t="card_handoff_status"></span></div>
 <div class="scr"><span class="p">$</span> ssh deploy@staging.internal
 deploy@staging.internal's password: <span class="cur"></span>
 <span class="m">agent:</span> <span class="a">wait --human --notify</span>  <span class="m">you:</span> <span class="h">attach deploy</span></div>
@@ -139,43 +144,36 @@ deploy@staging.internal's password: <span class="cur"></span>
   <div class="site">pairmux.treeleaves30760.com</div>
 </div></template>
 
+<template id="h1"><h1 data-t="headline"></h1></template>
+<template id="install"><span class="install"><span class="p">$</span> uv tool install pairmux</span></template>
+
 <!-- land -->
 <div class="page L">
   <div data-use="brand"></div>
   <div class="mid">
     <div class="left">
-      <h1>Your <span class="a">agent</span> drives<br>the terminal.<br><span class="h">You</span> take over<br>when it matters.</h1>
-      <p class="sub">Real PTYs for AI coding agents: REPLs, TUIs, <b>ssh</b> and <b>sudo</b> prompts, <b>git rebase -i</b>. Agents can open whole trees of sub-agents, and you can attach to any of them.</p>
-      <div class="chips">
-        <span class="chip"><b>●</b> real PTY</span>
-        <span class="chip hu"><b>◆</b> human handoff</span>
-        <span class="chip"><b>├</b> agent trees</span>
-        <span class="chip"><b>⧉</b> macOS · Linux · Windows</span>
-      </div>
+      <div data-use="h1"></div>
+      <p class="sub" data-t="sub_land"></p>
+      <div class="chips" data-t="chips"></div>
     </div>
     <div class="stack"><div data-use="tree"></div><div data-use="handoff"></div></div>
   </div>
   <div class="foot">
-    <span class="install"><span class="p">$</span> uv tool install pairmux</span>
-    <span class="flow"><span><b class="a">agent</b> drives</span><span><b class="h">human</b> decides</span><span>tmux optional</span></span>
+    <div data-use="install"></div>
+    <span class="flow" data-t="footer"></span>
   </div>
 </div>
 
 <!-- port -->
 <div class="page P">
   <div data-use="brand"></div>
-  <h1>Your <span class="a">agent</span> drives<br>the terminal.<br><span class="h">You</span> take over<br>when it matters.</h1>
-  <p class="sub">A <b>real terminal</b> for AI coding agents. You watch the same live screen and take over anytime.</p>
+  <div data-use="h1"></div>
+  <p class="sub" data-t="sub_port"></p>
   <div data-use="tree"></div>
   <div data-use="handoff"></div>
-  <div class="grid4">
-    <div class="tile"><h3><span class="a">Real</span> PTY</h3><p><code>python</code>, <code>psql</code>, <code>vim</code>, pagers, <code>[y/N]</code>: things an exec shell cannot run.</p></div>
-    <div class="tile"><h3><span class="h">Human</span> handoff</h3><p>Secrets and judgment calls go to you. <code>attach</code>, answer, hand back.</p></div>
-    <div class="tile"><h3><span class="a">Agent</span> trees</h3><p>Claude Code, Codex, agy as sub-agents. Control flows down, reports flow up.</p></div>
-    <div class="tile"><h3>Runs <span class="a">anywhere</span></h3><p>tmux or the built-in multiplexer. macOS, Linux, native Windows.</p></div>
-  </div>
+  <div class="grid4" data-t="tiles"></div>
   <div class="foot">
-    <span class="install"><span class="p">$</span> uv tool install pairmux</span>
+    <div data-use="install"></div>
     <span class="flow"><span>github.com/treeleaves30760/pairmux</span></span>
   </div>
 </div>
@@ -184,20 +182,124 @@ deploy@staging.internal's password: <span class="cur"></span>
 <div class="page O">
   <div data-use="brand"></div>
   <div class="left">
-    <h1>Your <span class="a">agent</span> drives<br>the terminal.<br><span class="h">You</span> take over<br>when it matters.</h1>
-    <p class="sub">Real PTYs, human handoff and agent trees for Claude Code, Codex and any CLI agent.</p>
-    <div><span class="install"><span class="p">$</span> uv tool install pairmux</span></div>
+    <div data-use="h1"></div>
+    <p class="sub" data-t="sub_banner"></p>
+    <div><div data-use="install"></div></div>
   </div>
   <div class="right"><div data-use="tree"></div><div data-use="handoff"></div></div>
 </div>
 
 <script>
-  const mode = (location.hash || '#land').slice(1);
-  document.body.className = mode;
-  const logo = document.getElementById('logo').innerHTML;
-  document.querySelectorAll('[data-use]').forEach(el => {
-    el.outerHTML = document.getElementById(el.dataset.use).innerHTML.replace('<slot-logo></slot-logo>', logo);
-  });
+/* Copy lives in COPY.en / COPY.zh. In strings, *word* is highlighted and `code` is code. */
+const COPY = /*COPY*/{
+ "en": {
+  "headline": [
+   "Your *agent* drives",
+   "the terminal.",
+   "*You* take over",
+   "when it matters."
+  ],
+  "sub_land": "A real terminal for AI coding agents: `python`, `vim`, ssh/sudo prompts, `git rebase -i`. Agents can launch sub-agents, and you can `attach` to any of them.",
+  "sub_port": "A real terminal for AI coding agents. You watch the same screen live and can take over anytime.",
+  "sub_banner": "A real terminal, human takeover and agent trees for Claude Code, Codex and any CLI agent.",
+  "chips": [
+   "real terminal",
+   "you can take over",
+   "agent trees",
+   "macOS/Linux/Windows"
+  ],
+  "tiles": [
+   {
+    "title": "*Real* terminal",
+    "body": "`python`, `psql`, `vim`, pagers, `[y/N]`: stuff a plain exec shell can't run."
+   },
+   {
+    "title": "*Human* handoff",
+    "body": "Passwords and judgment calls go to you. `attach`, answer, hand back."
+   },
+   {
+    "title": "*Agent* trees",
+    "body": "Claude Code, Codex, agy as sub-agents. Orders go down, reports come up."
+   },
+   {
+    "title": "Runs *anywhere*",
+    "body": "Works with tmux or its own built-in one. macOS, Linux, native Windows."
+   }
+  ],
+  "footer": [
+   "*agent* drives",
+   "*human* decides",
+   "tmux optional"
+  ],
+  "card_tree_title": "pairmux tui · agent tree",
+  "card_tree_status": "orders ↓ reports ↑",
+  "card_handoff_status": "awaiting-input · secret"
+ },
+ "zh": {
+  "headline": [
+   "*agent* 來操作",
+   "真正的終端機",
+   "*你*隨時能接手",
+   "密碼不給它看"
+  ],
+  "sub_land": "給 coding agent 真的終端機：`python`、`vim`、ssh 密碼、`git rebase -i`。你能 `attach` 接手。",
+  "sub_port": "給 AI agent 真的終端機。你看同一個畫面，隨時能接手。",
+  "sub_banner": "給 Claude Code、Codex 等 agent 真終端機，能接手、能分工。",
+  "chips": [
+   "真的終端機",
+   "人隨時接手",
+   "agent 協作",
+   "三平台都能用"
+  ],
+  "tiles": [
+   {
+    "title": "*真的*終端機",
+    "body": "`python`、`psql`、`vim`、`[y/N]` 都能互動。"
+   },
+   {
+    "title": "*人*隨時接手",
+    "body": "密碼、要拍板的事交給你。`attach` 進去處理，再交還。"
+   },
+   {
+    "title": "*Agent* 樹",
+    "body": "Claude Code、Codex、agy 當下屬，指令下、回報上。"
+   },
+   {
+    "title": "*哪都*能跑",
+    "body": "tmux 或內建的都行。macOS、Linux、原生 Windows。"
+   }
+  ],
+  "footer": [
+   "*agent* 操作",
+   "*你*拍板",
+   "tmux 可選"
+  ],
+  "card_tree_title": "agent 樹狀圖",
+  "card_tree_status": "指令↓ 回報↑",
+  "card_handoff_status": "等你輸入 · 密碼"
+ }
+}/*END*/;
+const [mode, lang] = (location.hash || '#land').slice(1).split('-');
+document.body.className = mode;
+const L = COPY[lang === 'zh' ? 'zh' : 'en'];
+document.documentElement.lang = lang === 'zh' ? 'zh-Hant' : 'en';
+const esc = t => t.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+const fmt = (t, hl = 'a') => esc(t).replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*([^*]+)\*/g,`<span class="${hl}">$1</span>`);
+const logo = document.getElementById('logo').innerHTML;
+document.querySelectorAll('[data-use]').forEach(el => {
+  el.outerHTML = document.getElementById(el.dataset.use).innerHTML.replace('<slot-logo></slot-logo>', logo);
+});
+const icons = [['','●'],['hu','◆'],['','├'],['','⧉']];
+const render = {
+  headline: v => v.map((l, i) => fmt(l, i < 2 ? 'a' : 'h')).join('<br>'),
+  chips: v => v.map((c, i) => `<span class="chip ${icons[i][0]}"><b>${icons[i][1]}</b> ${fmt(c)}</span>`).join(''),
+  footer: v => v.map((f, i) => `<span>${fmt(f, i === 1 ? 'h' : 'a')}</span>`).join(''),
+  tiles: v => v.map((t, i) => `<div class="tile"><h3>${fmt(t.title, i === 1 ? 'h' : 'a')}</h3><p>${fmt(t.body)}</p></div>`).join(''),
+};
+document.querySelectorAll('[data-t]').forEach(el => {
+  const k = el.dataset.t, v = L[k];
+  el.innerHTML = render[k] ? render[k](v) : fmt(v);
+});
 </script>
 </body>
 </html>

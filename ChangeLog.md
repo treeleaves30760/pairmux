@@ -9,8 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Promo images.** `assets/promo/` holds a README banner and post images for X and Threads,
-  rendered from `promo.html` by `render.sh` (headless Chrome).
+- **Promo images in English and Traditional Chinese.** `assets/promo/` holds a README banner and
+  post images for X and Threads (`*.png` and `*.zh-TW.png`), rendered from `promo.html` by
+  `render.sh` (headless Chrome). The copy is plainer: "real terminal" instead of PTY jargon.
 
 ## [1.7.0] - 2026-11-27
 
