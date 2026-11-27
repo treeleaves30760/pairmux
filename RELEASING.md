@@ -230,6 +230,27 @@ codex, gemini and antigravity destinations of a scratch HOME.
 on its first attempt (dispatched about 10 minutes after the PyPI upload). No tag
 or artifact was rebuilt or overwritten after PyPI publication.
 
+**v1.7.0 published and accepted (2026-11-27).** `pairmux tui` resizes a
+selected full-screen program's pane (Claude Code, Codex, vim…) to the preview
+box and gives it back on leaving, on both backends; the list is the smaller
+side, the state column is a short word, the running command leads the preview,
+and a long name scrolls on the selected row. The annotated tag is fixed to
+merged-main commit `4aebe5a` (PR #29), whose
+[CI 46028113292](https://github.com/treeleaves30760/pairmux/actions/runs/46028113292) and [Docs deployment 46028113424](https://github.com/treeleaves30760/pairmux/actions/runs/46028113424) passed. The
+tap credential check was not run before tagging this time; the cask update
+below succeeded. `skills/pairmux/` is byte-identical to `pairmux-skills`, which
+was not changed or tagged.
+[Release run 46028571857](https://github.com/treeleaves30760/pairmux/actions/runs/46028571857) passed `validate`, `windows-smoke` and `publish` on its
+first attempt: nine GitHub assets, six PyPI wheels and the Homebrew cask
+(`version "1.7.0"`). A local isolated `uv tool install pairmux==1.7.0` from
+public PyPI on macOS ARM64 reported 1.7.0 with a healthy `doctor`.
+[Published-release acceptance 46029378962](https://github.com/treeleaves30760/pairmux/actions/runs/46029378962) passed all seven jobs
+on its first attempt. No tag or artifact was rebuilt or overwritten after PyPI
+publication. The tagged `ChangeLog.md` dates the release 2026-11-28; it was
+published on 2026-11-27 and the date was corrected on `main` afterwards. The
+homepage repository's copies of the TUI screenshots (`pairmux-website`
+`public/img/tui-*.svg`) still show the old layout.
+
 **v1.5.1 published and accepted (2026-11-22).** A security-only patch release:
 the terminal-escape hardening from PR #22 (control characters in human-readable
 output, `watch` and the TUI shown as visible escapes; MCP tools refuse a
